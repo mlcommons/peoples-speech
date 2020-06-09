@@ -16,3 +16,4 @@
 
 # Import ModelParams to ensure that they are added to the global registry.
 import lingvo.tasks.asr.params.librispeech  # pylint: disable=unused-import
+import lingvo.tasks.asr.params.librispeech_ctc  # pylint: disable=unused-import

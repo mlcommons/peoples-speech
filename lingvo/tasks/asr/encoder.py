@@ -118,6 +118,7 @@ class AsrEncoder(base_layer.BaseLayer):
     p.lstm_tpl.params_init = py_utils.WeightInit.Uniform(0.1)
 
     # Default config for the convolution layer.
+    # What is this 3 for? Delta and delta-delta?
     p.input_shape = [None, None, 80, 3]
     p.conv_filter_shapes = [(3, 3, 3, 32), (3, 3, 32, 32)]
     p.conv_filter_strides = [(2, 2), (2, 2)]
@@ -168,6 +169,7 @@ class AsrEncoder(base_layer.BaseLayer):
         params_conv_layers.append(conv_p)
       self.CreateChildren('conv', params_conv_layers)
 
+      # Beautiful way to infer the output shape. Use this for looped compilation!
       conv_output_shape = p.input_shape
       for i in range(p.num_cnn_layers):
         conv_output_shape = self.conv[i].OutShape(conv_output_shape)

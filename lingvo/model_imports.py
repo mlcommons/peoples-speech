@@ -88,6 +88,8 @@ def ImportParams(model_name,
   for task in sorted(task_dirs):
     if model_module.startswith(task + '.'):
       path = model_module[len(task) + 1:]
+      # lingvo.tasks.asr.librispeech.Librispeech960Base
+      # so --model=asr.librispeech.Librispeech960Base in this case. Hmm
       success = _Import('{}.{}.params.{}'.format(task_root, task,
                                                  path)) or success
 

@@ -79,7 +79,8 @@ def _ReadTranscriptions():
   Returns:
     A map of utterance id to upper case transcription.
   """
-  tar = tarfile.open(FLAGS.input_tarball, mode='r:gz')
+  file_obj = tf.io.gfile.GFile(FLAGS.input_tarball, mode='rb')
+  tar = tarfile.open(fileobj=file_obj, mode='r:gz')
   n = 0
   tf.logging.info('First pass: loading text files...')
   # TODO(drpng): there's more information in the following files:
@@ -105,24 +106,27 @@ def _ReadTranscriptions():
     f = tar.extractfile(tarinfo)
     u = 0
     for l in f.readlines():
-      uttid, txt = l.strip(b'\n').split(b' ', 1)
+      l = l.decode('utf-8')
+      uttid, txt = l.strip('\n').split(' ', 1)
       trans[uttid] = txt
       u += 1
     tf.logging.info('[%s] = %d utterances', key, u)
     f.close()
+  tar.close()
+  file_obj.close()
   return trans
 
 
 def _DumpTranscripts():
   trans = _ReadTranscriptions()
-  with open(FLAGS.transcripts_filepath, 'w') as f:
+  with tf.io.gfile.GFile(FLAGS.transcripts_filepath, 'w') as f:
     for uttid in sorted(trans):
       f.write('%s %s\n' % (uttid, trans[uttid]))
 
 
 def _LoadTranscriptionsFromFile():
   trans = {}
-  with open(FLAGS.transcripts_filepath, 'r') as f:
+  with tf.io.gfile.GFile(FLAGS.transcripts_filepath, 'r') as f:
     for line in f.readlines():
       uttid, txt = line.strip('\n').split(' ', 1)
       trans[uttid] = txt
@@ -170,7 +174,8 @@ def _CreateAsrFeatures():
   tf_bytes = tf.placeholder(dtype=tf.string)
   log_mel = audio_lib.ExtractLogMelFeatures(tf_bytes)
   # Second pass: transcode the flac.
-  tar = tarfile.open(FLAGS.input_tarball, mode='r:gz')
+  file_obj = tf.io.gfile.GFile(FLAGS.input_tarball, mode='rb')
+  tar = tarfile.open(fileobj=file_obj, mode='r:gz')
   n = 0
   recordio_writers = _OpenSubShards()
   tfconf = tf.config_pb2.ConfigProto()
@@ -195,6 +200,7 @@ def _CreateAsrFeatures():
       outf = _SelectRandomShard(recordio_writers)
       outf.write(ex.SerializeToString())
     tar.close()
+  file_obj.close()
   _CloseSubShards(recordio_writers)
 
 

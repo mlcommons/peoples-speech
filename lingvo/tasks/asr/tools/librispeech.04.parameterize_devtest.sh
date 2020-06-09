@@ -18,13 +18,13 @@ set -eu
 
 . librispeech_lib.sh
 
-mkdir -p "${ROOT}/devtest"
-
 for subset in {dev,test}-{clean,other}; do
   set -x
-  python3 -m lingvo.tools.create_asr_features \
-    --logtostderr \
-    --input_tarball="${ROOT}/raw/${subset}.tar.gz" --generate_tfrecords \
+  # python3 -m lingvo.tools.create_asr_features \
+  # --run_under=$(which ipdb3)  
+  bazel_ run -c opt //lingvo/tools:create_asr_features -- \
+    --generate_tfrecords \
+    --input_tarball="${ROOT}/raw/${subset}.tar.gz"  \
     --shard_id=0 --num_shards=1 --num_output_shards=1 \
     --output_range_begin=0 --output_range_end=1 \
     --output_template="${ROOT}/devtest/${subset}.tfrecords-%5.5d-of-%5.5d"

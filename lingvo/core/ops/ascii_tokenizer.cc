@@ -95,6 +95,10 @@ const CharTokenizer* CreateTokenizer() {
                      {69, "_"},     {70, "{"},         {71, "|"},
                      {72, "}"},     {73, "<epsilon>"}, {74, "<text_only>"},
                      {75, "<sorw>"}};
+  // What is a "block" for an RNN-T? It is presumably what is emitted
+  // by the RNN-T model to signal that it is time to switch from
+  // prediction to encoder.
+
   // kEpsilonWord: end-of-block for neural transducer.
   for (const std::pair<const int32, string>& p : ct->id_to_token) {
     CHECK_LE(p.first, kMaxTokenId);

@@ -44,6 +44,8 @@ from tensorflow.python.platform import app
 # pylint: enable=g-direct-tensorflow-import
 # pylint: enable=unused-import, g-bad-import-order, g-import-not-at-top
 
+tf1.disable_eager_execution()
+
 if tf1.executing_eagerly():
   logging.warning("Lingvo does not support eager execution yet. Please disable "
                   "eager execution with tf.compat.v1.disable_eager_execution() "

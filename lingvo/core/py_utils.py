@@ -2660,6 +2660,8 @@ def _AddVN(p, x, step=None):
   seed = p.vn.seed
   if seed and step:
     seed += step * 203984
+  # So a seed is provided based on the step. So how does TPU generate
+  # random numbers then? Would be good to dig intot he xla implementation.
   noises = tf.cast(p.vn.scale, x.dtype) * tf.random.normal(
       tf.shape(x), stddev=1.0, seed=seed, dtype=x.dtype)
   return x + noises
