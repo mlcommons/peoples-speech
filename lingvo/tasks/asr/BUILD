@@ -214,6 +214,24 @@ py_library(
     ],
 )
 
+py_library(
+    name = "ctc_model",
+    srcs = ["ctc_model.py"],
+    srcs_version = "PY2AND3",
+    deps = [
+        ":encoder",
+        ":frontend",
+        "//lingvo:compat",
+        "//lingvo/core:base_layer",
+        "//lingvo/core:base_model",
+        "//lingvo/core:metrics",
+        "//lingvo/core:py_utils",
+        "//lingvo/core:schedule",
+        "//lingvo/tools:audio_lib",
+        # Implicit six dependency.
+    ],
+)
+
 py_test(
     name = "model_test",
     srcs = ["model_test.py"],

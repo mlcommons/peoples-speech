@@ -214,19 +214,35 @@ class MelAsrFrontend(BaseAsrFrontend):
     p.lower_edge_hertz = float(p.lower_edge_hertz)
     p.upper_edge_hertz = float(p.upper_edge_hertz)
 
-    window_size = 0.02
-    window_stride = 0.01
-    self._frame_step = int(p.sample_rate * window_stride)
-    self._frame_size = int(p.sample_rate * window_size)
-    self._fft_size = 512
+    self._frame_step = int(round(p.sample_rate * p.frame_step_ms / 1000.0))
+    self._frame_size = (int(round(p.sample_rate * p.frame_size_ms / 1000.0)) + 1
+                       )  # +1 for the preemph
+    # Overdrive means double FFT size.
+    # Note: 2* because of overdrive
+    self._fft_size = 2 * int(max(512, _NextPowerOfTwo(self._frame_size)))
 
     self._CreateWindowFunction()
 
-  def _CreateWindowFunction(self):
-    def _HanningWindow(frame_size, dtype):
-      return tf.signal.hann_window(frame_size, dtype=dtype)
+    # Mean/stddev.
+    if p.per_bin_mean is None:
+      p.per_bin_mean = [0.0] * p.num_bins
+    if p.per_bin_stddev is None:
+      p.per_bin_stddev = [1.0] * p.num_bins
+    assert len(p.per_bin_mean) == p.num_bins
+    assert len(p.per_bin_stddev) == p.num_bins
 
-    self._window_fn = _HanningWindow
+  def _CreateWindowFunction(self):
+    p = self.params
+    if p.window_fn is None:
+      self._window_fn = None
+    elif p.window_fn == 'HANNING':
+
+      def _HanningWindow(frame_size, dtype):
+        return tf.signal.hann_window(frame_size, dtype=dtype)
+
+      self._window_fn = _HanningWindow
+    else:
+      raise ValueError('Illegal value %r for window_fn param' % (p.window_fn,))
 
   @property
   def window_frame_size(self):
@@ -422,12 +438,11 @@ class MelAsrFrontend(BaseAsrFrontend):
 
     mel_spectrogram = self._MelSpectrogram(windowed_signal)
 
-    output_floor = 1e-20
-    mel_spectrogram += output_floor
-    mel_spectrogram_log = tf.math.log(mel_spectrogram)
+    output_floor = 1.0
+    mel_spectrogram_log = tf.math.log(
+        tf.maximum(float(output_floor), mel_spectrogram))
 
     # Mean and stddev.
-    mean = tf.zeros(tf.shape(emel_spectrogram_log), dtype=emel_spectrogram_log.dtype)
     mel_spectrogram_norm = (
         (mel_spectrogram_log - tf.convert_to_tensor(p.per_bin_mean)) /
         tf.convert_to_tensor(p.per_bin_stddev))
@@ -446,8 +461,6 @@ class MelAsrFrontend(BaseAsrFrontend):
     # FFT.
     real_frequency_spectrogram = tf.signal.rfft(signal, [self._fft_size])
     magnitude_spectrogram = tf.abs(real_frequency_spectrogram)
-    dither = 1e-5
-    magnitude_spectrogram += dither ** 2
 
     # Shape of magnitude_spectrogram is num_frames x (fft_size/2+1)
     # Mel_weight is [num_spectrogram_bins, num_mel_bins]

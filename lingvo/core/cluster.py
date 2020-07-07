@@ -46,6 +46,7 @@ class _Cluster(object):
     p = hyperparams.Params()
     # By default, we use /job:localhost so that most of tests can just
     # work out of the box. trainer.py will then set job names accordingly.
+    # Is this being redefined?
     p.Define('name', '/job:localhost',
              'TensorFlow job spec, e.g., /job:trainer, /job:ps')
     p.Define('replicas', replicas, 'The number of tasks of a job.')

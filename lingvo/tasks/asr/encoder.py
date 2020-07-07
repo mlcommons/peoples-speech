@@ -219,6 +219,7 @@ class AsrEncoder(base_layer.BaseLayer):
         forward_p.num_output_nodes = p.lstm_cell_size
         backward_p = forward_p.Copy()
         backward_p.name = 'bak_rnn_L%d' % (i)
+        # Bidirectional RNNs probably 
         rnn_p = self.CreateBidirectionalRNNParams(forward_p, backward_p)
         rnn_p.name = 'brnn_L%d' % (i)
         params_rnn_layers.append(rnn_p)
