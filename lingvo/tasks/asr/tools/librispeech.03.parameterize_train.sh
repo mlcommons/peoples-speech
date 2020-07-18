@@ -18,8 +18,6 @@ set -eu
 
 . librispeech_lib.sh
 
-mkdir -p "${ROOT}/train"
-
 # To save space, we don't unpack to intermediate files. The first pass collects
 # all transcription files from the tarball. The second pass unpacks the audio,
 # decompresses it, and encodes MFCC frames in memory, then writes a tf.Example
@@ -28,7 +26,9 @@ mkdir -p "${ROOT}/train"
 # This takes about 10 minutes per set.
 for subset in train-clean-100 train-clean-360 train-other-500; do
   echo "=== First pass, collecting transcripts: ${subset}"
-  python3 -m lingvo.tools.create_asr_features --logtostderr \
+  qsub_run \
+    $(git rev-parse --show-toplevel)/bazel-bin/lingvo/tools/create_asr_features \
+    --logtostderr \
     --input_tarball="${ROOT}/raw/${subset}.tar.gz" --dump_transcripts \
     --transcripts_filepath="${ROOT}/train/${subset}.txt"
 done
@@ -50,10 +50,11 @@ subset=train-clean-100
 echo "=== Second pass, parameterization: ${subset}"
 for subshard in $(seq 0 9); do
   set -x
-  nice -n 20 python3 -m lingvo.tools.create_asr_features \
+  # nice -n 20 python3 -m lingvo.tools.create_asr_features \
+    qsub_run \
+    $(git rev-parse --show-toplevel)/bazel-bin/lingvo/tools/create_asr_features \
     --logtostderr \
     --input_tarball="${ROOT}/raw/${subset}.tar.gz" --generate_tfrecords \
-    --transcripts_filepath="${ROOT}/train/${subset}.txt" \
     --shard_id="${subshard}" --num_shards=10 --num_output_shards=100 \
     --output_range_begin="${subshard}" --output_range_end="$((subshard + 1))" \
     --output_template="${ROOT}/train/train.tfrecords-%5.5d-of-%5.5d" || touch FAILED &
@@ -66,10 +67,10 @@ subset=train-clean-360
 echo "=== Second pass, parameterization: ${subset}"
 for subshard in $(seq 0 9); do
   set -x
-  nice -n 20 python3 -m lingvo.tools.create_asr_features \
+    qsub_run \
+    $(git rev-parse --show-toplevel)/bazel-bin/lingvo/tools/create_asr_features \
     --logtostderr \
     --input_tarball="${ROOT}/raw/${subset}.tar.gz" --generate_tfrecords \
-    --transcripts_filepath="${ROOT}/train/${subset}.txt" \
     --shard_id="${subshard}" --num_shards=10 --num_output_shards=100 \
     --output_range_begin="$((10 + 4 * subshard))" \
     --output_range_end="$((10 + 4 * subshard + 4))" \
@@ -83,10 +84,10 @@ subset=train-other-500
 echo "=== Second pass, parameterization: ${subset}"
 for subshard in $(seq 0 9); do
   set -x
-  nice -n 20 python3 -m lingvo.tools.create_asr_features \
+    qsub_run \
+    $(git rev-parse --show-toplevel)/bazel-bin/lingvo/tools/create_asr_features \
     --logtostderr \
     --input_tarball="${ROOT}/raw/${subset}.tar.gz" --generate_tfrecords \
-    --transcripts_filepath="${ROOT}/train/${subset}.txt" \
     --shard_id="${subshard}" --num_shards=10 --num_output_shards=100 \
     --output_range_begin="$((50 + 5 * subshard))" \
     --output_range_end="$((50 + 5 * subshard + 5))" \

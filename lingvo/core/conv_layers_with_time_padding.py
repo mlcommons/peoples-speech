@@ -27,6 +27,7 @@ from lingvo.core import symbolic
 from lingvo.core import tshape
 
 
+# Yummy!
 def ComputeConvOutputShape(in_shape,
                            t_stride,
                            f_stride,

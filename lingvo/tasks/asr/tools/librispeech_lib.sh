@@ -14,7 +14,8 @@
 # limitations under the License.
 # ==============================================================================
 
-ROOT=/tmp/librispeech
+# ROOT=/tmp/librispeech
+ROOT=gs://the-peoples-speech-west-europe/Librispeech
 
 # From:
 # http://www.openslr.org/12/
@@ -22,3 +23,33 @@ SOURCE=http://www.openslr.org/resources/12
 
 # If in China, use this mirror:
 # http://cn-mirror.openslr.org/resources/12
+
+# conda activate galvasr
+
+# My home directory in on an NFS mount, which bazel dislikes, so I need to do this.
+bazel_() {
+  bazel --output_user_root=/home/ws15dgalvez/dgalvez-b02/.cache/bazel "$@"
+}
+
+qsub_run() {
+  cat <<EOF  > qsub_script.sh 
+#!/bin/bash
+#$ -cwd
+#$ -j yes
+#$ -l mem_free=5G,ram_free=5G,arch=*64*
+#$ -v PATH
+
+. ./librispeech_lib.sh
+
+export CUDA_VISIBLE_DEVICES=""
+source "$($CONDA_EXE info --base)/etc/profile.d/conda.sh"
+conda activate galvasr
+
+$@
+EOF
+
+qsub qsub_script.sh
+}
+
+# Never instantiate a cuda context.
+export CUDA_VISIBLE_DEVICES=""

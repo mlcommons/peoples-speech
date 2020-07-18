@@ -2694,6 +2694,8 @@ def _AddVN(p, x, step=None):
   seed = p.vn.seed
   if seed and step:
     seed += step * 203984
+  # So a seed is provided based on the step. So how does TPU generate
+  # random numbers then? Would be good to dig intot he xla implementation.
   noises = tf.cast(p.vn.scale, x.dtype) * tf.random.normal(
       tf.shape(x), stddev=1.0, seed=seed, dtype=x.dtype)
   return x + noises
@@ -3210,6 +3212,7 @@ def ApplyPadding(padding, x, padded=None, broadcast=True, use_select=True):
   Returns:
     A tensor with the same shape as x with padded values masked.
   """
+  # Interesting dependencies usage
   padding = with_dependencies([
       Assert(
           tf.reduce_all(
@@ -4484,3 +4487,15 @@ def GetExtraArgs():
   if isinstance(g, func_graph.FuncGraph):
     return g.internal_captures
   return function.get_extra_args()
+
+def LengthsFromBitMask(padding_bitmask, time_axis: int):
+  # T, B
+  assert padding_bitmask.dtype == tf.float32, \
+    "This assert is not necessary, but I would like to know when the condition isn't true."
+  lengths = tf.cast(tf.reduce_sum(1.0 - padding_bitmask, axis=time_axis), tf.int32)
+  return lengths
+
+def BitMaskFromLengths(padding_lengths):
+  max_length = tf.shape(padding_lengths)[0]
+  padding = 1.0 - tf.sequence_mask(padding_lengths, max_length, tf.float32)
+  return padding

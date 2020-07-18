@@ -173,6 +173,7 @@ py_library(
         # Implicit network file system dependency.
         "//lingvo:base_runner",
         # Implicit IPython dependency.
+        # So why doesn't bazel complain about these implicit dependencies?
         "//lingvo/core:base_model",
         "//lingvo/core:base_model_params",
         "//lingvo/core:checkpointer_lib",

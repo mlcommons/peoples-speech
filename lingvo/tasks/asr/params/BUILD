@@ -33,5 +33,6 @@ py_library(
         "//lingvo/core:tokenizers",
         "//lingvo/tasks/asr:input_generator",
         "//lingvo/tasks/asr:model",
+        "//lingvo/tasks/asr:ctc_model",
     ],
 )
