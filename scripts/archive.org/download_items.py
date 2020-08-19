@@ -14,8 +14,19 @@ QUERIES = dict(
 )
 
 
-# def download_data(identifier_iter, save_directory):
-#   ia.download(destdir=save_directory)
+def download_data(metadata_file, save_directory):
+  def get_data(identifier):
+    ia.download(identifier,
+                formats=["ASR", "SubRip", "MP3", "Ogg Video"],
+                destdir=save_directory)
+
+  ids = []
+  with gzip.open(metadata_file, "rt") as fh:
+    ids.append(json.load(fh)["identifier"])
+
+  with ThreadPoolExecutor() as executor:
+    list(tqdm(executor.map(get_data, ids), total=len(ids)))
+
 
 def download_metadata(query, save_file):
   search = ia.search_items(query)
@@ -36,7 +47,9 @@ def download_metadata(query, save_file):
       fh.write("\n")
 
 if __name__ == '__main__':
-  for key, query in QUERIES.items():
-    print(f"Dumping metadata for {key}")
-    save_file = key + ".jsonl.gz"
-    download_metadata(query, save_file)
+  # for key, query in QUERIES.items():
+  #   print(f"Dumping metadata for {key}")
+  #   save_file = key + ".jsonl.gz"
+  #   download_metadata(query, save_file)
+
+  download_data("CAPTIONED_DATA.jsonl.gz", "CAPTIONED_DATA")
