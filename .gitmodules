@@ -1,3 +1,6 @@
 [submodule "third_party/DSAlign"]
 	path = third_party/DSAlign
 	url = git@github.com:mozilla/DSAlign.git
+[submodule "third_party/internetarchive"]
+	path = third_party/internetarchive
+	url = git@github.com:galv/internetarchive.git

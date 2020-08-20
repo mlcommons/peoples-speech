@@ -8,7 +8,7 @@ from tqdm import tqdm
 LICENSE_WHITELIST = "(licenseurl:*creativecommons.org\/publicdomain\/zero\/1.0* OR licenseurl:*creativecommons.org\/licenses\/by\/4.0* OR licenseurl:*creativecommons.org\/licenses\/by\/3.0* OR licenseurl:*creativecommons.org\/licenses\/by\/2.0* OR licenseurl:*creativecommons.org\/licenses\/by\/1.0*)" #pylint: disable=line-too-long,anomalous-backslash-in-string
 
 QUERIES = dict(
-  CAPTIONED_DATA = f"{LICENSE_WHITELIST} and format:ASR",
+#  CAPTIONED_DATA = f"{LICENSE_WHITELIST} and format:ASR",
   AUDIO = f"{LICENSE_WHITELIST} and mediatype:audio",
   MOVIES = f"{LICENSE_WHITELIST} and mediatype:movies"
 )
@@ -17,12 +17,22 @@ QUERIES = dict(
 def download_data(metadata_file, save_directory):
   def get_data(identifier):
     ia.download(identifier,
-                formats=["ASR", "SubRip", "MP3", "Ogg Video"],
-                destdir=save_directory)
+                formats=["ASR", "SubRip", "MP3"], #, "Ogg Video"],
+                destdir=save_directory,
+                # Very import to set this. tf.io.gfile uses mtime in
+                # nanoseconds, while archive.org uses mtime in seconds
+                # (as far as I can tell). I could convert the
+                # nanoseconds to seconds, of course, but don't want to
+                # make an error.
+                ignore_existing=True,
+                # tf.io.gfile does not expose any functionality like os.utime
+                no_change_timestamp=True,
+                ignore_errors=True)
 
   ids = []
   with gzip.open(metadata_file, "rt") as fh:
-    ids.append(json.load(fh)["identifier"])
+    for line in fh:
+      ids.append(json.loads(line)["identifier"])
 
   with ThreadPoolExecutor() as executor:
     list(tqdm(executor.map(get_data, ids), total=len(ids)))
@@ -52,4 +62,7 @@ if __name__ == '__main__':
   #   save_file = key + ".jsonl.gz"
   #   download_metadata(query, save_file)
 
-  download_data("CAPTIONED_DATA.jsonl.gz", "CAPTIONED_DATA")
+  # download_data("CAPTIONED_DATA.jsonl.gz", "gs://the-peoples-speech-west-europe/archive_org/Aug_18_2020/CAPTIONED_DATA")
+  download_data("MOVIES.jsonl.gz", "gs://the-peoples-speech-west-europe/archive_org/Aug_19_2020/MOVIES")
+  download_data("AUDIO.jsonl.gz", "gs://the-peoples-speech-west-europe/archive_org/Aug_19_2020/AUDIO")
+  # download_data("one_line.jsonl", "CAPTIONED_DATA")
