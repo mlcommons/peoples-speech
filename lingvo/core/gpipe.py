@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,10 +29,6 @@ More examples in machine translation, image classifications and others
 will be included.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import contextlib
 import copy
 
@@ -42,7 +38,6 @@ from lingvo.core import builder_layers
 from lingvo.core import py_utils
 from lingvo.core import recurrent
 from lingvo.core import tshape
-from six.moves import range
 
 
 _MICRO_BATCH_STATE_NAME = 'micro_batch_state'
@@ -120,7 +115,7 @@ class FeatureExtractionLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(FeatureExtractionLayer, cls).Params()
+    p = super().Params()
     p.Define('variable_name_prefix', '',
              'Prefix for variable names in sub layers')
     p.Define('sub', [], 'A list of layers\' params.')
@@ -131,7 +126,7 @@ class FeatureExtractionLayer(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(FeatureExtractionLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.num_act_inputs >= 0
     assert p.num_act_outputs >= 0
@@ -259,19 +254,28 @@ class SeqLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(SeqLayer, cls).Params()
+    p = super().Params()
     p.Define('before_tpl', [],
              'Config for the CNN layers that runs before pipelining.')
     p.Define('cell_tpl', [], 'A list of FeatureExtractionLayer layers.')
     return p
 
   def __init__(self, params):
-    super(SeqLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
-    assert p.name
-    num_cells = len(p.cell_tpl)
     self._before_layers = []
     self._cells = []
+    for l in p.before_tpl:
+      self.CreateChild(l.name, l)
+      self._before_layers.append((l.name, self.children[l.name]))
+    for l in p.cell_tpl:
+      self.CreateChild(l.name, l)
+      self._cells.append((l.name, self.children[l.name]))
+
+  def _CreateChildrenVariables(self):
+    p = self.params
+
+    num_cells = len(p.cell_tpl)
     before_tpl_device = ''
     cell_devices = [''] * num_cells
     if py_utils.use_tpu():
@@ -280,16 +284,16 @@ class SeqLayer(base_layer.BaseLayer):
       cell_devices = [
           cluster.WorkerDeviceInModelSplit(i) for i in range(num_cells)
       ]
-    for l in p.before_tpl:
+
+    for unused_name, l in self._before_layers:
       with tf.device(before_tpl_device):
-        assert l.name
-        self.CreateChild(l.name, l)
-        self._before_layers.append((l.name, self.children[l.name]))
-    for i, l in enumerate(p.cell_tpl):
+        l.InstantiateVariables()
+
+    for i, (unused_name, l) in enumerate(self._cells):
       with tf.device(cell_devices[i]):
-        assert l.name
-        self.CreateChild(l.name, l)
-        self._cells.append((l.name, self.children[l.name]))
+        l.InstantiateVariables()
+
+    super()._CreateChildrenVariables()
 
   def FProp(self, theta, *args):
     """Round-robin every children cells in cell_tpl among worker devices.
@@ -324,7 +328,7 @@ class PipeliningLayer(SeqLayer):
 
   @classmethod
   def Params(cls):
-    p = super(PipeliningLayer, cls).Params()
+    p = super().Params()
     p.Define('num_micro_batches', 1, 'Number of micro batches.')
     p.Define('micro_batch_size', None, 'Size of a micro batch.')
     p.Define('batch_dim', 0, 'The batch dimension.')
@@ -429,7 +433,7 @@ class PipeliningLayer(SeqLayer):
     """
     # TODO(huangyp): handle optional None inputs.
     p = self.params
-    if self.do_eval:
+    if self.do_eval and self.cluster.num_devices_per_split == 1:
       outputs = copy.copy(args)
       for (name, l) in self._before_layers + self._cells:
         outputs = _ToTuple(outputs)

@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,11 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Common conv layers."""
+"""Common conv layers.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
+WARNING: Strided convolutions are buggy. Consider using v2_padding=True.
+"""
 
 import lingvo.compat as tf
 from lingvo.core import base_layer
@@ -68,9 +67,14 @@ def ComputeConvOutputShape(in_shape,
   return [n, ot, of, outc]
 
 
-def ComputeConvOutputPadding(paddings, window, stride,
-                             padding_algorithm='SAME'):
+def ComputeConvOutputPadding(paddings,
+                             window,
+                             stride,
+                             padding_algorithm='SAME',
+                             v2_padding=False):
   """Computes paddings for convolution and pooling output.
+
+  WARNING: This implementation is buggy prefer using ComputeConvOutputPaddingV2.
 
   out_padding[i] == 1 iff any in_padding corresponding to that output is 1.
 
@@ -79,10 +83,16 @@ def ComputeConvOutputPadding(paddings, window, stride,
     window: The size of the windows.
     stride: The time-stride between adjacent windows.
     padding_algorithm: 'SAME' or 'VALID'.
+    v2_padding: Prefer setting to True. The default implementation is buggy for
+    strided convolutions.
 
   Returns:
     out_padding, The new padding tensor of size [batch, ceil(time / stride)].
   """
+  if v2_padding:
+    return _ComputeConvOutputPaddingV2(paddings, window, stride,
+                                       padding_algorithm)
+
   if stride == 1:
     return paddings
 
@@ -100,12 +110,98 @@ def ComputeConvOutputPadding(paddings, window, stride,
   return tf.squeeze(out_padding, -1)
 
 
+def _ComputeConvOutputPaddingV2(paddings,
+                                window,
+                                stride,
+                                padding_algorithm='SAME'):
+  """Computes paddings for convolution and pooling output.
+
+  - If padding_algorithm='SAME': out_padding[i] == 0 if the in_padding
+    corresponding to that output is 0. This prevents the output from shrinking
+    unnecessarily when striding.
+  - If padding algorithm='VALID': out_padding[i] == 1 iff any in_padding
+    corresponding to that output is 1.
+
+  Args:
+    paddings: The paddings tensor. It is expected to be of shape [batch, time].
+    window: The size of the windows.
+    stride: The time-stride between adjacent windows.
+    padding_algorithm: 'SAME' or 'VALID'.
+
+  Returns:
+    out_padding, The new padding tensor of size [batch, ceil(time / stride)].
+  """
+  if stride == 1 and padding_algorithm == 'SAME':
+    return paddings
+
+  paddings, slice_len = _PadForLengthCompatibleStridesV2(
+      paddings, stride, padding_algorithm, 1.0)
+
+  expanded_paddings = tf.expand_dims(paddings, -1)
+
+  if padding_algorithm == 'SAME':
+    # Using a strided conv1d of size 1x1 we find all non-padded positions for
+    # the specified stride.
+    out_paddings = tf.nn.conv1d(
+        expanded_paddings,
+        filters=tf.ones([1, 1, 1], paddings.dtype),
+        stride=stride,
+        padding='SAME',
+        name='padding_conv')
+  elif padding_algorithm == 'VALID':
+    out_paddings = tf.nn.pool(
+        expanded_paddings, [window],
+        'MAX',
+        padding=padding_algorithm,
+        strides=[stride])
+  out_paddings = tf.squeeze(out_paddings, -1)
+  if stride > 1:
+    slice_end = py_utils.GetShape(out_paddings)[1] - slice_len
+    out_paddings = out_paddings[:, :slice_end]
+  return out_paddings
+
+
+def _PadForLengthCompatibleStridesV2(tensor, stride, padding_algorithm,
+                                     constant_values):
+  """Pads tensor to make strided convolutions start in the first position.
+
+  Tensorflow strided convolutions and Lingvo paddings are incompatible.
+  Strided convolutions always end at the last index of the length dimension.
+  Therefore, the output of a Lingvo padded tensor depends on the length
+  dimension. Here we remove this dependency by pre-padding the tensor so that
+  the first convolution starts in the first position.
+
+  Args:
+    tensor: The tensor to prepare for convolution. [batch, time, ...].
+    stride: The stride in the length dimension.
+    padding_algorithm: 'SAME' or 'VALID'.
+    constant_values: Value to pad 0. for data tensor and 1.0 for padding tensor.
+
+  Returns:
+    A tuple (tensor, padded_length) where tensor is the potentionally padded
+    tensor and padded_length is the number paddings.
+  """
+  if padding_algorithm == 'VALID':
+    return tensor, 0
+
+  input_length = py_utils.GetShape(tensor)[1]
+  pad_len = ((input_length // stride) + 1) * stride - 1 - input_length
+  if pad_len == 0:
+    return tensor, 0
+  tensor = py_utils.PadSequenceDimension(tensor, input_length + pad_len,
+                                         constant_values)
+  return tensor, pad_len
+
+
 class BaseConv2DLayerWithPadding(base_layer.BaseLayer):
-  """Base class for 2D convolution layers."""
+  """Abstract base class for 2D convolution layers.
+
+  WARNING: Strided convolutions are buggy. Prefer using v2_padding=True.
+  """
 
   @classmethod
   def Params(cls):
-    p = super(BaseConv2DLayerWithPadding, cls).Params()
+    p = super().Params()
     p.Define(
         'filter_shape', (0, 0, 0, 0),
         'Filter shape. Must be a sequence of length 4. Elements are in'
@@ -134,11 +230,14 @@ class BaseConv2DLayerWithPadding(base_layer.BaseLayer):
     p.Define(
         'partial_conv', False, 'If true, rescale positions near sequence'
         'boundaries as proposed in https://arxiv.org/abs/1811.11718')
+    p.Define(
+        'v2_padding', False, 'Prefer setting to True. The default '
+        'implementation is incorrect for strided convolutions.')
 
     return p
 
   def __init__(self, params):
-    super(BaseConv2DLayerWithPadding, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.name
     assert len(p.filter_shape) == 4
@@ -163,6 +262,10 @@ class BaseConv2DLayerWithPadding(base_layer.BaseLayer):
   def input_channels(self):
     """The number of input channels for this conv layer."""
     return self.params.filter_shape[2]
+
+  @property
+  def filter_stride(self):
+    return self.params.filter_stride
 
   def OutShape(self, in_shape):
     """Compute the output shape given the input shape."""
@@ -205,17 +308,29 @@ class BaseConv2DLayerWithPadding(base_layer.BaseLayer):
       inputs = _ApplyPadding(inputs, paddings)
 
       # Apply conv on 'inputs'.
-      out = self._ApplyConv(theta, inputs)
+      if p.v2_padding:
+        padded_inputs, slice_len = _PadForLengthCompatibleStridesV2(
+            inputs, p.filter_stride[0], 'SAME', 0.)
+        out = self._ApplyConv(theta, padded_inputs)
+        if p.filter_stride[0] > 1:
+          slice_end = py_utils.GetShape(out)[1] - slice_len
+          out = out[:, :slice_end, :, :]
+      else:
+        out = self._ApplyConv(theta, inputs)
 
       if p.partial_conv:
         out = self._RescaleBoundary(out, paddings)
       # NOTE: this may be slightly inaccurate when p.dilation_rate[0] > 1.
       # But there's likely no real problems. Trying to set it gives an error:
       # pooling with SAME padding is not implemented for dilation_rate > 1.
-      # NOTE: we use window=p.filter_stride[0] to be compatible with legacy
-      # implementation.  Consider updating it to be the actual shape.
-      conv_padding = ComputeConvOutputPadding(
-          paddings, window=p.filter_stride[0], stride=p.filter_stride[0])
+      # implementation. Consider updating it to be the actual shape.
+      if p.v2_padding:
+        conv_padding = _ComputeConvOutputPaddingV2(
+            paddings, window=p.filter_shape[0], stride=p.filter_stride[0])
+      else:
+        conv_padding = ComputeConvOutputPadding(
+            paddings, window=p.filter_stride[0], stride=p.filter_stride[0])
+
       # Assuming padded nodes will be properly zero-ed out if necessary by
       # sub-sequent layers.
       # out = _ApplyPadding(out, conv_padding)
@@ -266,38 +381,36 @@ class Conv2DLayerWithPadding(BaseConv2DLayerWithPadding):
 
   @classmethod
   def Params(cls):
-    p = super(Conv2DLayerWithPadding, cls).Params()
+    p = super().Params()
     p.Define('bias', False, 'Whether or not to apply a bias before activation.')
     return p
 
-  def __init__(self, params):
-    super(Conv2DLayerWithPadding, self).__init__(params)
+  def _CreateLayerVariables(self):
+    super()._CreateLayerVariables()
     p = self.params
-    assert p.name
     w_pc = py_utils.WeightParams(
         shape=p.filter_shape,
         init=p.params_init,
         dtype=p.dtype,
         collections=[self.__class__.__name__ + '_vars'])
-    with tf.variable_scope(p.name):
-      self.CreateVariable('w', w_pc)
-      if p.weight_norm:
-        self.CreateVariable(
-            'g',
-            py_utils.WeightParams(
-                shape=[p.filter_shape[-1]],
-                init=py_utils.WeightInit.Constant(0.0),
-                dtype=p.dtype,
-                collections=[self.__class__.__name__ + '_vars']))
-      if p.bias:
-        # NOTE(jiahuiyu): bias is subject to LP regularization in this version.
-        self.CreateVariable(
-            'b',
-            py_utils.WeightParams(
-                shape=[self.output_channels],
-                init=py_utils.WeightInit.Constant(0.0),
-                dtype=p.dtype,
-                collections=[self.__class__.__name__ + '_vars']))
+    self.CreateVariable('w', w_pc)
+    if p.weight_norm:
+      self.CreateVariable(
+          'g',
+          py_utils.WeightParams(
+              shape=[p.filter_shape[-1]],
+              init=py_utils.WeightInit.Constant(0.0),
+              dtype=p.dtype,
+              collections=[self.__class__.__name__ + '_vars']))
+    if p.bias:
+      # NOTE(jiahuiyu): bias is subject to LP regularization in this version.
+      self.CreateVariable(
+          'b',
+          py_utils.WeightParams(
+              shape=[self.output_channels],
+              init=py_utils.WeightInit.Constant(0.0),
+              dtype=p.dtype,
+              collections=[self.__class__.__name__ + '_vars']))
 
   @classmethod
   def OutputChannels(cls, p):
@@ -338,7 +451,7 @@ class CausalConv2DLayerWithPadding(Conv2DLayerWithPadding):
   """2D conv layer with causal dependency on the time axis."""
 
   def __init__(self, params):
-    super(CausalConv2DLayerWithPadding, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.filter_shape[1] == 1, 'Only 1d causal convolution is supported.'
 
@@ -374,7 +487,7 @@ class DepthwiseConv2DLayer(BaseConv2DLayerWithPadding):
 
   @classmethod
   def Params(cls):
-    p = super(DepthwiseConv2DLayer, cls).Params()
+    p = super().Params()
     # Redefine 'filter_shape' since the semantic of shape elements is different
     # from regular Conv2D.
     p.Delete('filter_shape')
@@ -386,35 +499,33 @@ class DepthwiseConv2DLayer(BaseConv2DLayerWithPadding):
     p.Define('bias', False, 'Whether or not to apply a bias before activation.')
     return p
 
-  def __init__(self, params):
-    super(DepthwiseConv2DLayer, self).__init__(params)
+  def _CreateLayerVariables(self):
+    super()._CreateLayerVariables()
     p = self.params
-    assert p.name
     w_pc = py_utils.WeightParams(
         shape=p.filter_shape,
         init=p.params_init,
         dtype=p.dtype,
         collections=[self.__class__.__name__ + '_vars'])
 
-    with tf.variable_scope(p.name):
-      self.CreateVariable('w', w_pc)
-      if p.weight_norm:
-        self.CreateVariable(
-            'g',
-            py_utils.WeightParams(
-                shape=[p.filter_shape[2], p.filter_shape[3]],
-                init=py_utils.WeightInit.Constant(0.0),
-                dtype=p.dtype,
-                collections=[self.__class__.__name__ + '_vars']))
-      if p.bias:
-        # NOTE(jiahuiyu): bias is subject to LP regularization in this version.
-        self.CreateVariable(
-            'b',
-            py_utils.WeightParams(
-                shape=[self.output_channels],
-                init=py_utils.WeightInit.Constant(0.0),
-                dtype=p.dtype,
-                collections=[self.__class__.__name__ + '_vars']))
+    self.CreateVariable('w', w_pc)
+    if p.weight_norm:
+      self.CreateVariable(
+          'g',
+          py_utils.WeightParams(
+              shape=[p.filter_shape[2], p.filter_shape[3]],
+              init=py_utils.WeightInit.Constant(0.0),
+              dtype=p.dtype,
+              collections=[self.__class__.__name__ + '_vars']))
+    if p.bias:
+      # NOTE(jiahuiyu): bias is subject to LP regularization in this version.
+      self.CreateVariable(
+          'b',
+          py_utils.WeightParams(
+              shape=[self.output_channels],
+              init=py_utils.WeightInit.Constant(0.0),
+              dtype=p.dtype,
+              collections=[self.__class__.__name__ + '_vars']))
 
   @classmethod
   def OutputChannels(cls, p):
@@ -457,7 +568,7 @@ class CausalDepthwiseConv2DLayer(DepthwiseConv2DLayer):
   """Depthwise conv layer with causal dependency on the time axis."""
 
   def __init__(self, params):
-    super(CausalDepthwiseConv2DLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.filter_shape[1] == 1, 'Only 1d causal convolution is supported.'
 
@@ -492,7 +603,7 @@ class NormalizedDepthwiseConv2DLayer(DepthwiseConv2DLayer):
 
   @classmethod
   def Params(cls):
-    p = super(NormalizedDepthwiseConv2DLayer, cls).Params()
+    p = super().Params()
     p.Define('dropconnect_prob', 0.0,
              'Prob at which DropConnect regularization is performed.')
     p.Define('deterministic_dropout', False, 'Use determnisitc dropout or not.')
@@ -503,7 +614,7 @@ class NormalizedDepthwiseConv2DLayer(DepthwiseConv2DLayer):
     return p
 
   def __init__(self, params):
-    super(NormalizedDepthwiseConv2DLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.filter_shape[1] == 1, 'Only 1d convolution is supported.'
     assert p.temperature > 0.0, 'Absolute zero temperature is not possible.'
@@ -583,8 +694,7 @@ class ConvBatchNormLayer(bn_layers.BatchNormLayer):
 
   def FProp(self, theta, inputs, paddings):
     paddings_expanded = tf.expand_dims(tf.expand_dims(paddings, -1), -1)
-    bned = super(ConvBatchNormLayer, self).FProp(
-        theta, inputs, paddings_expanded)
+    bned = super().FProp(theta, inputs, paddings_expanded)
     return bned, paddings
 
 
@@ -596,8 +706,7 @@ class ConvCategoricalBN(bn_layers.CategoricalBN):
 
   def FProp(self, theta, inputs, paddings, class_emb):
     paddings_expanded = tf.expand_dims(tf.expand_dims(paddings, -1), -1)
-    bned = super(ConvCategoricalBN, self).FProp(theta, inputs,
-                                                paddings_expanded, class_emb)
+    bned = super().FProp(theta, inputs, paddings_expanded, class_emb)
     return bned, paddings
 
 
@@ -617,9 +726,8 @@ class ActivationLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(ActivationLayer, cls).Params()
-    p.Define('activation', 'RELU',
-             'The activation function to apply')
+    p = super().Params()
+    p.Define('activation', 'RELU', 'The activation function to apply')
     return p
 
   def FProp(self, theta, inputs, paddings):
@@ -641,7 +749,7 @@ class GlobalPoolingLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(GlobalPoolingLayer, cls).Params()
+    p = super().Params()
     p.Define('pooling_type', 'MAX', 'Pooling type: MAX|AVG')
     return p
 

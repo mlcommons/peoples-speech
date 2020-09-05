@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,19 +14,15 @@
 # limitations under the License.
 """Machine translation input generator."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import lingvo.compat as tf
 from lingvo.core import base_input_generator
 from lingvo.core import generic_input
+from lingvo.core import hyperparams
 from lingvo.core import ops
 from lingvo.core import py_utils
 from lingvo.core import summary_utils
 from lingvo.core import tokenizers
 from lingvo.tasks.mt import text_input_pb2
-import six
 
 from google.protobuf import descriptor_pb2
 
@@ -37,7 +33,7 @@ class NmtInput(base_input_generator.BaseSequenceInputGenerator):
   @classmethod
   def Params(cls):
     """Defaults params for `NmtInput`."""
-    p = super(NmtInput, cls).Params()
+    p = super().Params()
     p.Define(
         'natural_order_model', True,
         'Whether the model consuming the input is a natural order model. Input '
@@ -62,7 +58,7 @@ class NmtInput(base_input_generator.BaseSequenceInputGenerator):
           ('target_weight', tf.io.VarLenFeature(tf.float32)),
       ]
       features = tf.io.parse_single_example(record, dict(outputs))
-      for k, v in six.iteritems(features):
+      for k, v in features.items():
         features[k] = v.values
       bucket_key = tf.cast(
           tf.maximum(
@@ -78,7 +74,7 @@ class NmtInput(base_input_generator.BaseSequenceInputGenerator):
         **self.CommonInputOpArgs())
 
   def __init__(self, params):
-    super(NmtInput, self).__init__(params)
+    super().__init__(params)
     p = self.params
 
     self.natural_order_model = p.natural_order_model
@@ -88,38 +84,37 @@ class NmtInput(base_input_generator.BaseSequenceInputGenerator):
      self._tgt_weights), self._bucket_keys = self._BuildDataSource()
 
     if p.pad_to_max_seq_length:
-      assert p.source_max_length
+      self._PadSequences()
 
-      if min(self.infeed_bucket_batch_limit) == max(
-          self.infeed_bucket_batch_limit):
-        source_shape = [
-            min(self.infeed_bucket_batch_limit), p.source_max_length
-        ]
-        target_shape = [
-            min(self.infeed_bucket_batch_limit), p.target_max_length
-        ]
-      else:
-        source_shape = None
-        target_shape = None
-      self._src_ids = py_utils.PadSequenceDimension(self._src_ids,
-                                                    p.source_max_length, 0,
-                                                    source_shape)
-      self._src_paddings = py_utils.PadSequenceDimension(
-          self._src_paddings, p.source_max_length, 1, source_shape)
-      self._tgt_ids = py_utils.PadSequenceDimension(self._tgt_ids,
-                                                    p.target_max_length, 0,
-                                                    target_shape)
-      self._tgt_paddings = py_utils.PadSequenceDimension(
-          self._tgt_paddings, p.target_max_length, 1, target_shape)
-      self._tgt_labels = py_utils.PadSequenceDimension(self._tgt_labels,
-                                                       p.target_max_length, 0,
+  def _PadSequences(self):
+    p = self.params
+    assert p.source_max_length
+
+    if min(self.infeed_bucket_batch_limit) == max(
+        self.infeed_bucket_batch_limit):
+      source_shape = [min(self.infeed_bucket_batch_limit), p.source_max_length]
+      target_shape = [min(self.infeed_bucket_batch_limit), p.target_max_length]
+    else:
+      source_shape = None
+      target_shape = None
+    self._src_ids = py_utils.PadSequenceDimension(self._src_ids,
+                                                  p.source_max_length, 0,
+                                                  source_shape)
+    self._src_paddings = py_utils.PadSequenceDimension(self._src_paddings,
+                                                       p.source_max_length, 1,
+                                                       source_shape)
+    self._tgt_ids = py_utils.PadSequenceDimension(self._tgt_ids,
+                                                  p.target_max_length, 0,
+                                                  target_shape)
+    self._tgt_paddings = py_utils.PadSequenceDimension(self._tgt_paddings,
+                                                       p.target_max_length, 1,
                                                        target_shape)
-      self._tgt_weights = py_utils.PadSequenceDimension(self._tgt_weights,
-                                                        p.target_max_length, 0,
-                                                        target_shape)
-
-    # TODO(zhifengc): come up more meaningful training sample ids here.
-    self._sample_ids = tf.range(0, self.InfeedBatchSize(), 1)
+    self._tgt_labels = py_utils.PadSequenceDimension(self._tgt_labels,
+                                                     p.target_max_length, 0,
+                                                     target_shape)
+    self._tgt_weights = py_utils.PadSequenceDimension(self._tgt_weights,
+                                                      p.target_max_length, 0,
+                                                      target_shape)
 
   def InfeedBatchSize(self):
     """Override BaseSequenceInputGenerator."""
@@ -158,7 +153,7 @@ class MlPerfInput(base_input_generator.BaseSequenceInputGenerator):
   @classmethod
   def Params(cls):
     """Default params for `MlPerfInput`."""
-    p = super(MlPerfInput, cls).Params()
+    p = super().Params()
 
     p.Define('natural_order_model', True, '')
     p.Define(
@@ -173,7 +168,7 @@ class MlPerfInput(base_input_generator.BaseSequenceInputGenerator):
     return p
 
   def __init__(self, params):
-    super(MlPerfInput, self).__init__(params)
+    super().__init__(params)
     p = self.params
 
     self.natural_order_model = p.natural_order_model
@@ -235,8 +230,6 @@ class MlPerfInput(base_input_generator.BaseSequenceInputGenerator):
                                                         p.target_max_length, 0,
                                                         target_shape)
 
-    self._sample_ids = tf.range(0, self.InfeedBatchSize(), 1)
-
   def InfeedBatchSize(self):
     """Override BaseSequenceInputGenerator."""
     return tf.shape(self._src_ids)[0]
@@ -270,7 +263,7 @@ class MlPerfInput(base_input_generator.BaseSequenceInputGenerator):
       ]
 
       features = tf.io.parse_single_example(record, dict(outputs))
-      for k, v in six.iteritems(features):
+      for k, v in features.items():
         features[k] = v.values
 
       src_ids = features['inputs']
@@ -304,7 +297,7 @@ class MlPerfInput(base_input_generator.BaseSequenceInputGenerator):
           ('targets', tf.io.VarLenFeature(tf.int64)),
       ]
       features = tf.io.parse_single_example(record, dict(outputs))
-      for k, v in six.iteritems(features):
+      for k, v in features.items():
         features[k] = v.values
 
       src_ids = features['inputs']
@@ -489,7 +482,7 @@ class TextPackedInput(base_input_generator.BaseSequenceInputGenerator):
     * Consider enabling multithreading for the trainer job (in the Train()
       method). For example: p.num_batcher_threads = 128.
     """
-    p = super(TextPackedInput, cls).Params()
+    p = super().Params()
 
     p.Define('file_pattern_task_ids', [],
              'task_id corresponding to list of file_patterns.')
@@ -523,10 +516,28 @@ class TextPackedInput(base_input_generator.BaseSequenceInputGenerator):
     p.Define('target_language', '', 'Language on target side.')
     p.Define('mass_layer', None, 'If not None, use the specified layer to do '
              'MASS masking.')
+    p.Define(
+        'mass_task_ids', None, 'List of task IDs for MASS. If None and '
+        'single_column_input=True, apply MASS to all tasks, otherwise '
+        'only apply to the specified tasks.')
+    # Back translation
+    p.Define('bt_task_ids', [], 'List of task ids for back-translation.')
+    # Denoising (https://arxiv.org/pdf/1711.00043)
+    p.Define('denoise', hyperparams.Params(), 'Params for denosing tasks.')
+    p.denoise.Define('task_ids', [], 'List of task IDs for denoising.')
+    p.denoise.Define('noise_sent_prob', 1,
+                     'Probability of noising an input sentence.')
+    p.denoise.Define(
+        'shuffle_tok_range', 3, 'Range of noise for shuffling tokens, following'
+        ' https://arxiv.org/pdf/1711.00043. Note that shuffle_tok_range of 3 '
+        'implies tokens may be permuted at most 3 position.')
+    p.denoise.Define('drop_tok_prob', 0.1, 'Probability of dropping tokens.')
+    p.denoise.Define('blank_tok_prob', 0.1, 'Probability of blanking tokens.')
+    p.denoise.Define('blank_id', 3, 'ID of blank token.')
     return p
 
   def __init__(self, params):
-    super(TextPackedInput, self).__init__(params)
+    super().__init__(params)
     p = self.params
     if not p.natural_order_model:
       raise ValueError('Only p.natural_order_model=True is supported now.')
@@ -576,9 +587,6 @@ class TextPackedInput(base_input_generator.BaseSequenceInputGenerator):
                                base_input_generator.DEFAULT_TOKENIZER_KEY)
     self._tgt_tokenizer = self.tokenizer_dict[self._tgt_tokenizer_key]
 
-    if p.single_column_input and p.mass_layer is None:
-      raise NotImplementedError(
-          'Single column input works only with MASS for now.')
     # TODO(alisonlui): Support single-column Sentence proto input.
     if p.single_column_input and p.input_file_type == 'sentence_proto':
       raise NotImplementedError(
@@ -623,18 +631,21 @@ class TextPackedInput(base_input_generator.BaseSequenceInputGenerator):
     if self.params.file_pattern_task_ids:
       file_task_ids = tf.constant(
           self.params.file_pattern_task_ids, dtype=tf.int32)
-      source_id = tf.gather(file_task_ids, source_id)
-    src_task_id = source_id
-    tgt_task_id = source_id
+      return tf.gather(file_task_ids, source_id)
+    return source_id
+
+  def _GetLangIds(self, source_id):
+    """Look up the correct lang_id from the source_id tensor."""
+    task_id = self._GetTaskIds(source_id)
+    src_lang_id = task_id
+    tgt_lang_id = task_id
     if self.params.task_to_src_lang_map:
-      src_lang_ids = tf.constant(
-          self.params.task_to_src_lang_map, dtype=tf.int32)
-      src_task_id = tf.gather(src_lang_ids, src_task_id)
+      src_langs = tf.constant(self.params.task_to_src_lang_map, dtype=tf.int32)
+      src_lang_id = tf.gather(src_langs, task_id)
     if self.params.task_to_tgt_lang_map:
-      tgt_lang_ids = tf.constant(
-          self.params.task_to_tgt_lang_map, dtype=tf.int32)
-      tgt_task_id = tf.gather(tgt_lang_ids, tgt_task_id)
-    return src_task_id, tgt_task_id
+      tgt_langs = tf.constant(self.params.task_to_tgt_lang_map, dtype=tf.int32)
+      tgt_lang_id = tf.gather(tgt_langs, task_id)
+    return src_lang_id, tgt_lang_id
 
   def _ProcessSingleInput(self, source_id, src, tgt):
     """Performs strings-to-ids on the given input pair via p.tokenizer_dict."""
@@ -655,17 +666,25 @@ class TextPackedInput(base_input_generator.BaseSequenceInputGenerator):
     # non-padded id. Unlike weights, it will not mutate and can be used for
     # determining actual sequence length, for example.
     features.src.ids_indicator = 1 - src_paddings
+    features.src.weights = 1 - src_paddings
+    features.src.paddings = src_paddings
     features.tgt = py_utils.NestedMap()
     features.tgt.ids = tgt_ids
     features.tgt.labels = tgt_labels
     features.tgt.ids_indicator = 1 - tgt_paddings
+    features.tgt.weights = 1 - tgt_paddings
+    features.tgt.paddings = tgt_paddings
 
-    src_task_id, tgt_task_id = self._GetTaskIds(source_id)
+    src_task_id, tgt_task_id = self._GetLangIds(source_id)
     # task_ids are padded with zeros.
     features.src.task_ids = tf.cast(
         features.src.ids_indicator, dtype=tf.int32) * src_task_id
+    features.src.source_ids = tf.cast(
+        features.src.ids_indicator, dtype=tf.int32) * source_id
     features.tgt.task_ids = tf.cast(
         features.tgt.ids_indicator, dtype=tf.int32) * tgt_task_id
+    features.tgt.source_ids = tf.cast(
+        features.tgt.ids_indicator, dtype=tf.int32) * source_id
 
     if not py_utils.use_tpu():
       features.src.strs = src
@@ -674,19 +693,15 @@ class TextPackedInput(base_input_generator.BaseSequenceInputGenerator):
 
   def _ProcessMASSInput(self, source_id, src):
     """Perform MASS input processing."""
-    # TODO(yuancao): By doing so we assume that right now for monolingual
-    # eval/dev sets (xx->xx) are in double-column format (since it bypasses
-    # the Mass op). Ideally we should add a dedicated eval/dev processing
-    # procedure for unsupervised MT cases, so that single-column eval/devs sets
-    # are also supported. This should not be handled by any specific ops like
-    # Mass, but inside the TextPackedInput class.
-    assert not self.do_eval, 'MASS input can only be used for training.'
+    if self.do_eval or self.mass_layer is None:
+      # At eval time, we copy src to tgt
+      return self._ProcessSingleInput(source_id, src, src)
 
     _, labels, paddings = self.StringsToIds(
         tf.reshape(src, [1]), is_source=True, key=self._src_tokenizer_key)
     weights = 1 - paddings
     actual_seq_len = tf.cast(tf.reduce_sum(weights, 1), tf.int32)
-    src_lang_ids, tgt_lang_ids = self._GetTaskIds(source_id)
+    src_lang_ids, tgt_lang_ids = self._GetLangIds(source_id)
 
     mass_out = self.mass_layer.Mask(labels, weights, actual_seq_len)
 
@@ -697,14 +712,16 @@ class TextPackedInput(base_input_generator.BaseSequenceInputGenerator):
     features.src.weights = weights
     features.src.task_ids = tf.cast(
         features.src.weights, dtype=tf.int32) * src_lang_ids
+    features.src.source_ids = tf.cast(
+        features.src.weights, dtype=tf.int32) * source_id
     features.src.ids_indicator = weights
     features.tgt = py_utils.NestedMap()
     features.tgt.ids = mass_out.tgt.ids
     features.tgt.labels = mass_out.tgt.labels
     features.tgt.paddings = paddings
     features.tgt.weights = mass_out.tgt.weights
-    features.tgt.task_ids = tf.ones_like(
-        features.src.task_ids, dtype=tf.int32) * tgt_lang_ids
+    features.tgt.task_ids = tf.cast(weights, dtype=tf.int32) * tgt_lang_ids
+    features.tgt.source_ids = tf.cast(weights, dtype=tf.int32) * source_id
     features.tgt.ids_indicator = weights
 
     if not py_utils.use_tpu():
@@ -767,17 +784,39 @@ class TextPackedInput(base_input_generator.BaseSequenceInputGenerator):
 
     def Processor(source_id, record):
       """Parses a record, which is a line of text."""
+
+      task_id = self._GetTaskIds(source_id)
+
       if self.params.input_file_type == 'tsv':
-        if self.params.single_column_input:
+
+        def _ApplyMass(task_id):
+          mass_task_ids = tf.constant(self.params.mass_task_ids, dtype=tf.int32)
+          return tf.reduce_any(tf.equal(task_id, mass_task_ids))
+
+        def _MASSInput():
           src, filtered = self._ReadRecordTsvSingleColumn(record)
-          features = self._ProcessMASSInput(source_id, src)
-        else:
+          return self._ProcessMASSInput(source_id, src), filtered
+
+        def _SingleInput():
           src, tgt, filtered = self._ReadRecordTsv(record)
-          features = self._ProcessSingleInput(source_id, src, tgt)
+          return self._ProcessSingleInput(source_id, src, tgt), filtered
+
+        if self.params.single_column_input:
+          # For monolingual input, MASS is applied by default.
+          # If mass_task_ids is specified, only apply MASS to specified tasks.
+          if self.params.mass_task_ids is not None:
+            cond = _ApplyMass(task_id)
+            features, filtered = tf.cond(cond, _MASSInput, _SingleInput)
+          else:
+            features, filtered = _MASSInput()
+        else:
+          features, filtered = _SingleInput()
+
       else:
         src, tgt = self._ReadRecordSentencePairProto(record)
         filtered = tf.constant(False, dtype=tf.bool)
         features = self._ProcessSingleInput(source_id, src, tgt)
+
       return features, self._GetBucketKey(features, filtered)
 
     return generic_input.GenericInput(
@@ -837,7 +876,10 @@ class TextPackedInput(base_input_generator.BaseSequenceInputGenerator):
         return ops.apply_packing(x, '\t', src_segment_ids, src_indices_in_input)
       return ops.apply_packing(x, 0, src_segment_ids, src_indices_in_input)
 
+    src_paddings = ops.apply_packing(batch.src.paddings, 1, src_segment_ids,
+                                     src_indices_in_input)
     batch.src = batch.src.Transform(ApplyPackingToSource)
+    batch.src.paddings = src_paddings
     batch.src.segment_ids = tf.cast(src_segment_ids, tf.float32)
     batch.src.segment_pos = src_segment_pos
 
@@ -846,7 +888,10 @@ class TextPackedInput(base_input_generator.BaseSequenceInputGenerator):
         return ops.apply_packing(x, '\t', tgt_segment_ids, tgt_indices_in_input)
       return ops.apply_packing(x, 0, tgt_segment_ids, tgt_indices_in_input)
 
+    tgt_paddings = ops.apply_packing(batch.tgt.paddings, 1, tgt_segment_ids,
+                                     tgt_indices_in_input)
     batch.tgt = batch.tgt.Transform(ApplyPackingToTarget)
+    batch.tgt.paddings = tgt_paddings
     batch.tgt.segment_ids = tf.cast(tgt_segment_ids, tf.float32)
     batch.tgt.segment_pos = tgt_segment_pos
 
@@ -860,9 +905,108 @@ class TextPackedInput(base_input_generator.BaseSequenceInputGenerator):
       scaled_batch_size = scaled_batch_size // cluster.num_tpu_hosts
     return scaled_batch_size
 
+  # TODO(yujieq): create a separate wrapper layer for the noise-adding process
+  def _AddNoise(self, batch):
+    """Adding noise the src (see https://arxiv.org/pdf/1711.00043).
+
+    This function implement 3 types of noise (hyparams defined in
+    self.params.denoise):
+    1) slightly shuffle the sentence following p.shuffle_tok_range
+    2) randomly drop tokens with probability p.drop_tok_prob
+    3) randomly mask tokens with probability p.blank_tok_prob
+    The noises are added to the input with probability p.noise_sent_prob.
+
+    Args:
+      batch: a `.NestedMap` of the input batch.
+    """
+
+    def IsSpecialExample(task_ids, special_task_ids):
+      """A utility function indicates whether inputs belong to specific tasks.
+
+      Args:
+        task_ids: Task ids for the input batch. Tensor of shape [batch].
+        special_task_ids: A list of specified task ids.
+
+      Returns:
+        A tensor indicating whether each sample in the batch belong to the
+        specified task. Return a tensor of size [batch].
+      """
+      batch_size = py_utils.GetShape(task_ids)[0]
+      return tf.reduce_any(
+          tf.equal(
+              tf.expand_dims(task_ids, -1),
+              tf.cast(
+                  tf.broadcast_to(
+                      special_task_ids,
+                      [batch_size, len(special_task_ids)]), tf.int32)), -1)
+
+    p = self.params.denoise
+    batch_size = tf.shape(batch.src.ids)[0]
+    source_max_len = tf.shape(batch.src.ids)[1]
+
+    # Shuffle tokens according to p.shuffle_tok_range
+    noise = tf.random.uniform([batch_size, source_max_len], 0,
+                              p.shuffle_tok_range + 1)
+
+    # Don't shuffle eos or padding
+    shuffle_tok_range = tf.fill([batch_size, source_max_len],
+                                float(p.shuffle_tok_range))
+    shifted_paddings = tf.pad(
+        batch.src.paddings[:, 1:], [[0, 0], [0, 1]], constant_values=1)
+    noise = tf.where(tf.equal(shifted_paddings, 0), noise, shuffle_tok_range)
+    indices = tf.broadcast_to(
+        tf.range(source_max_len, dtype=tf.int32), [batch_size, source_max_len])
+    noisy_indices = tf.cast(indices, dtype=tf.float32) + noise
+    permutations = tf.argsort(noisy_indices)
+    stacked = tf.stack([batch.src.ids, permutations], axis=1)
+    denoise_src_ids = tf.stack(
+        tf.map_fn(lambda x: tf.gather(x[0], x[1]), stacked), axis=0)
+
+    # Select tokens to drop with probability=p.drop_tok_prob
+    random_drop_tok = tf.random.uniform([batch_size, source_max_len])
+    # Don't drop eos token
+    is_keep_tok = tf.math.logical_or(
+        tf.greater(random_drop_tok, p.drop_tok_prob),
+        tf.equal(denoise_src_ids, self._src_tokenizer.eos_id))
+    denoise_src_ids = tf.ragged.boolean_mask(denoise_src_ids,
+                                             is_keep_tok).to_tensor(
+                                                 default_value=0,
+                                                 shape=tf.shape(batch.src.ids))
+    denoise_src_paddings = tf.ragged.boolean_mask(
+        batch.src.paddings, is_keep_tok).to_tensor(
+            default_value=1, shape=tf.shape(batch.src.ids))
+
+    # Select tokens to blank with probability=p.blank_tok_prob
+    # Don't blank eos token
+    random_blank_tok = tf.random.uniform([batch_size, source_max_len])
+    shifted_paddings = tf.pad(
+        denoise_src_paddings[:, 1:], [[0, 0], [0, 1]], constant_values=1)
+    is_blank_tok = tf.math.logical_and(
+        tf.less(random_blank_tok, p.blank_tok_prob),
+        tf.equal(shifted_paddings, 0))
+    blank_id = tf.fill([batch_size, source_max_len], p.blank_id)
+    denoise_src_ids = tf.where(is_blank_tok, blank_id, denoise_src_ids)
+
+    # Select denoising task examples with probability=p.denoise_sent_prob
+    random_uniform_sent = tf.random.uniform([batch_size])
+    is_denoise_sent = tf.math.logical_and(
+        tf.less(random_uniform_sent, p.noise_sent_prob),
+        IsSpecialExample(
+            self._GetTaskIds(batch.src.source_ids[:, 0]), p.task_ids))
+    batch.src.ids = tf.where(is_denoise_sent, denoise_src_ids, batch.src.ids)
+    batch.src.paddings = tf.where(is_denoise_sent, denoise_src_paddings,
+                                  batch.src.paddings)
+    batch.src.ids_indicator = 1 - batch.src.paddings
+    batch.src.weights = batch.src.ids_indicator
+
   def _DataSourceToInputBatch(self):
     """The current input batch as a `.NestedMap` of input tensors."""
     ret, _ = self._BuildDataSource()
+
+    p = self.params
+    if p.denoise.task_ids and p.denoise.noise_sent_prob > 0:
+      self._AddNoise(ret)
+
     self._Pack(ret)
     if 'weights' not in ret.src or 'weights' not in ret.tgt:
       ret.src.weights = ret.src.ids_indicator

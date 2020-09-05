@@ -70,6 +70,7 @@ RUN mkdir /bazel && \
 ARG pip_dependencies=' \
       apache-beam[gcp]>=2.8 \
       contextlib2 \
+      dataclasses \
       google-api-python-client \
       h5py \
       ipykernel \
@@ -99,7 +100,7 @@ RUN python3 -m ipykernel.kernelspec
 # tensorflow from source instead of installing from pip.
 # Ensure we install the correct version by uninstalling first.
 RUN pip3 uninstall -y tensorflow tensorflow-gpu tf-nightly tf-nightly-gpu
-RUN pip3 --no-cache-dir install tensorflow-gpu
+RUN pip3 --no-cache-dir install tensorflow-gpu==2.2.0
 
 RUN jupyter serverextension enable --py jupyter_http_over_ws
 

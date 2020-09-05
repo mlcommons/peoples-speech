@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,10 +15,6 @@
 # ==============================================================================
 """Defines Params base class, used for defining class/function parameters."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import ast
 import copy
 import enum
@@ -27,11 +23,10 @@ import inspect
 import re
 import sys
 
+import dataclasses
 import lingvo.compat as tf
 from lingvo.core import hyperparams_pb2
 from lingvo.core import symbolic
-import six
-from six.moves import range
 
 from google.protobuf import message
 from google.protobuf import text_format
@@ -54,7 +49,7 @@ def _QuoteString(s):
   double_quote_count = s.count('"')
   quote_delim = '\'' if single_quote_count <= double_quote_count else '"'
   # Apply escaping to the chosen quote character and the backslash.
-  encoded = re.sub(r'([%s\\])' % (quote_delim,), r'\\\1', s)
+  encoded = re.sub(r'([%s\\])' % quote_delim, r'\\\1', s)
   return quote_delim + encoded + quote_delim
 
 
@@ -107,7 +102,7 @@ class _SortedDict(dict):
         '%r: %r' % item for item in sorted(self.items())) + '}'
 
 
-class _Param(object):
+class _Param:
   """Stores data for a single parameter."""
 
   def __init__(self, name, default_value, description):
@@ -139,7 +134,7 @@ class _Param(object):
       if isinstance(val, Params):
         return _SortedDict({k: GetRepr(v) for k, v in val.IterParams()})
       if isinstance(val, dict):
-        return _SortedDict({k: GetRepr(v) for k, v in six.iteritems(val)})
+        return _SortedDict({k: GetRepr(v) for k, v in val.items()})
       if isinstance(val, (list, tuple)) and not _IsNamedTuple(val):
         # NB: this constructor signature works for tuples, but not namedtuples.
         return type(val)([GetRepr(v) for v in val])
@@ -153,7 +148,7 @@ class _Param(object):
     if isinstance(self._value, Params):
       # pylint: disable=protected-access
       value_str = self._value._ToString(nested_depth)
-    elif isinstance(self._value, six.string_types):
+    elif isinstance(self._value, str):
       return '%s%s: "%s"' % (nested_indent, self._name, self._value)
     else:
       value_str = str(GetRepr(self._value))
@@ -196,7 +191,7 @@ def CopyFieldsTo(from_p, to_p, skip=None):
   return to_p
 
 
-class Params(object):
+class Params:
   """Stores data for a set of parameters.
 
   Provides attribute-based API, e.g. "params.foo = 5".
@@ -249,8 +244,7 @@ class Params(object):
   def _ToString(self, nested_depth):
     # Note: We use iteritems() below so as to sort by name.
     sorted_param_strs = [
-        v.ToString(nested_depth + 1)
-        for (_, v) in sorted(six.iteritems(self._params))
+        v.ToString(nested_depth + 1) for (_, v) in sorted(self._params.items())
     ]
     nested_indent = '  ' * nested_depth
     return '{\n%s\n%s}' % ('\n'.join(sorted_param_strs), nested_indent)
@@ -317,8 +311,7 @@ class Params(object):
     if self._immutable:
       raise TypeError('This Params instance is immutable.')
     assert name is not None and isinstance(
-        name,
-        six.string_types) and (re.match('^[a-z][a-z0-9_]*$', name) is not None)
+        name, str) and (re.match('^[a-z][a-z0-9_]*$', name) is not None)
     if name in self._params:
       raise AttributeError('Parameter %s is already defined' % name)
     self._params[name] = _Param(name, default_value, description)
@@ -367,7 +360,7 @@ class Params(object):
     """
     if self._immutable:
       raise TypeError('This Params instance is immutable: %s' % self)
-    for name, value in six.iteritems(kwargs):
+    for name, value in kwargs.items():
       # Get nested param.
       param, key = self._GetNested(name)
       # Update the value associated with key.
@@ -430,7 +423,7 @@ class Params(object):
 
   def IterParams(self):
     """Pythonic dict-like iteration."""
-    for name, param in six.iteritems(self._params):
+    for name, param in self._params.items():
       yield (name, param.Get())
 
   def ToProto(self):
@@ -454,11 +447,13 @@ class Params(object):
       elif isinstance(val, list) or isinstance(val, range):
         # The range function is serialized by explicitely calling it.
         param_pb.list_val.items.extend([_ToParamValue(v) for v in val])
-      elif _IsNamedTuple(val):
+      elif dataclasses.is_dataclass(val) or _IsNamedTuple(val):
         val_cls = type(val)
+        vals = val.__dict__.values() if dataclasses.is_dataclass(
+            val) else val._asdict().values()
         param_pb.named_tuple_val.type = inspect.getmodule(
             val_cls).__name__ + '/' + val_cls.__name__
-        param_pb.named_tuple_val.items.extend([_ToParamValue(v) for v in val])
+        param_pb.named_tuple_val.items.extend([_ToParamValue(v) for v in vals])
       elif isinstance(val, tuple):
         param_pb.tuple_val.items.extend([_ToParamValue(v) for v in val])
       elif isinstance(val, dict):
@@ -473,7 +468,7 @@ class Params(object):
         param_pb.string_val = val
       elif isinstance(val, bool):
         param_pb.bool_val = val
-      elif isinstance(val, six.integer_types):
+      elif isinstance(val, int):
         param_pb.int_val = val
       elif isinstance(val, float):
         param_pb.float_val = val
@@ -524,7 +519,8 @@ class Params(object):
         return [_FromParamValue(val) for val in param_pb.list_val.items]
       elif which_oneof == 'named_tuple_val':
         named_tuple_cls = _LoadClass(param_pb.named_tuple_val.type)
-        if not issubclass(named_tuple_cls, tuple):
+        if not dataclasses.is_dataclass(named_tuple_cls) and not issubclass(
+            named_tuple_cls, tuple):
           return None
         return named_tuple_cls(
             *[_FromParamValue(val) for val in param_pb.named_tuple_val.items])
@@ -607,13 +603,14 @@ class Params(object):
       if isinstance(val, Params):
         return _SortedDict({k: GetRepr(v) for k, v in val.IterParams()})
       if isinstance(val, dict):
-        return _SortedDict({k: GetRepr(v) for k, v in six.iteritems(val)})
+        return _SortedDict({k: GetRepr(v) for k, v in val.items()})
+      if dataclasses.is_dataclass(val):
+        return _SortedDict({k: GetRepr(v) for k, v in val.__dict__.items()})
       if _IsNamedTuple(val):
         return _SortedDict({k: GetRepr(v) for k, v in val._asdict().items()})
       if isinstance(val, (list, tuple)):
         return type(val)([GetRepr(v) for v in val])
-      if isinstance(val, (six.integer_types, float, bool, six.string_types,
-                          six.text_type, enum.Enum)):
+      if isinstance(val, (int, float, bool, str, enum.Enum)):
         return val
       if isinstance(val, tf.DType):
         return val.name
@@ -634,7 +631,7 @@ class Params(object):
             all(isinstance(x, Params) for x in p)):
         for i, val in enumerate(p):
           Traverse(val, '%s[%d]' % (prefix, i), kv)
-      elif isinstance(p, (six.string_types, six.text_type)):
+      elif isinstance(p, str):
         kv[prefix] = _QuoteString(p)
         types[prefix[1:]] = 'str'
       else:
@@ -651,10 +648,10 @@ class Params(object):
   def FromText(self, text, type_overrides=None):
     """Merges params specified in 'text' into 'params'.
 
-    'text' follows the simple text format as produced by
-    ParamsToSimpleText.  For a param specified in both 'params' and
-    'text', overwrites the value in 'params' according to 'text'.
-    Params specified in 'text' but not in 'params' are ignored.
+    'text' follows the simple text format as produced by ToText.
+    For a param specified in both 'params' and 'text', overwrites the value in
+    'params' according to 'text'. Params specified in 'text' but not in 'params'
+    are ignored.
 
     Args:
       text: A text representation of params.
@@ -707,7 +704,7 @@ class Params(object):
     def _ValueFromText(key, old_val, val):
       """Returns the new param value from its text representation."""
       val_type = type(old_val).__name__
-      if isinstance(old_val, (six.string_types, six.text_type)):
+      if isinstance(old_val, str):
         val_type = 'str'
       if key in type_overrides:
         val_type = type_overrides[key]
@@ -720,15 +717,17 @@ class Params(object):
         return float(val)
       elif val_type == 'DType':
         return tf.as_dtype(val)
-      elif _IsNamedTuple(old_val):
+      elif dataclasses.is_dataclass(old_val) or _IsNamedTuple(old_val):
         # Maps field name to new value (or its string repr, if non-POD).
         name_to_new_value = ast.literal_eval(val)
         contents = {}
-        for k, old_field_value in old_val._asdict().items():
+        items = old_val.__dict__.items() if dataclasses.is_dataclass(
+            old_val) else old_val._asdict().items()
+        for k, old_field_value in items:
           new_field_value = name_to_new_value[k]
           # Recurse to parse any non-POD contents not converted by
           # literal_eval().
-          if isinstance(new_field_value, six.string_types):
+          if isinstance(new_field_value, str):
             contents[k] = _ValueFromText(k, old_field_value, new_field_value)
           else:
             contents[k] = new_field_value
@@ -777,7 +776,7 @@ class Params(object):
       else:
         raise ValueError('Failed to read a parameter: %r : %r' % (key, val))
 
-    for key, val in six.iteritems(kv):
+    for key, val in kv.items():
       old_val = self.Get(key)
       new_val = _ValueFromText(key, old_val, val)
       self.Set(**{key: new_val})
@@ -845,15 +844,47 @@ class InstantiableParams(Params):
   """
 
   def __init__(self, cls=None):
-    super(InstantiableParams, self).__init__()
+    super().__init__()
     self.Define('cls', cls, 'Cls that this param object is associated with.')
 
-  def Instantiate(self):
-    """Instantiate an instance that this Params is configured for."""
+  def Instantiate(self, **args):
+    """Instantiate an instance that this Params is configured for.
+
+    Example:
+      params = InstantiableParams(cls=MyObject)
+      params.Define('weight', 0.2, 'Training weight.')
+      params.weight = 0.9
+      obj = params.Instantiate()
+
+    It's common for classes to have a classmethod called Params that returns
+    a pre-made InstantiableParams, like this:
+
+      params = MyObject.Params()
+      params.weight = 0.9
+      obj = params.Instantiate()
+
+    By convention, anything that parameterizes the behavior of your class
+    should be stored in this Params object. However, your class may also use
+    shared state objects which aren't really parameters, like a shared lock.
+    These can be passed as extra arguments to Instantiate.
+
+    Example:
+      lock = threading.Lock()
+      params = MyObject.Params()
+      obj_a = params.Instantiate(lock=lock)
+      obj_b = params.Instantiate(lock=lock)
+
+    Args:
+      **args: Additional keyword arguments to pass to the constructor in
+        addition to this Params object.
+
+    Returns:
+      A constructed object where type(object) == cls.
+    """
     assert self.cls is not None
 
     # The class initializer is expected to support initialization using Params.
-    return self.cls(self)
+    return self.cls(self, **args)
 
   def Copy(self):
     """See base class."""

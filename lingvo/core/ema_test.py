@@ -30,16 +30,10 @@ import numpy as np
 class TestTask(base_model.BaseTask):
   """A task with a single 'encoder' child layer."""
 
-  @classmethod
-  def Params(cls):
-    p = super(TestTask, cls).Params()
-    return p
-
   def __init__(self, params):
-    super(TestTask, self).__init__(params)
+    super().__init__(params)
     p = self.params
-    with tf.variable_scope(p.name):
-      self.CreateChild('encoder', p.encoder)
+    self.CreateChild('encoder', p.encoder)
 
 
 class EmaTest(test_utils.TestCase):

@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,21 +14,17 @@
 # limitations under the License.
 # ==============================================================================
 """Common layers for language models."""
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import math
 import lingvo.compat as tf
 from lingvo.core import base_layer
+from lingvo.core import batch_major_attention
 from lingvo.core import layers
 from lingvo.core import layers_with_attention
 from lingvo.core import layers_with_gpipe
 from lingvo.core import py_utils
 from lingvo.core import rnn_cell
 from lingvo.core import rnn_layers
-from six.moves import range
-from six.moves import zip
 
 
 class BaseLanguageModel(base_layer.BaseLayer):
@@ -36,7 +32,7 @@ class BaseLanguageModel(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(BaseLanguageModel, cls).Params()
+    p = super().Params()
     p.Define('vocab_size', 0, 'Number of vocabulary tokens.')
     return p
 
@@ -54,9 +50,6 @@ class BaseLanguageModel(base_layer.BaseLayer):
     """
     p.vocab_size = vocab_size
     return p
-
-  def __init__(self, params):
-    super(BaseLanguageModel, self).__init__(params)
 
   def zero_state(self, theta, batch_size):
     raise NotImplementedError('Abstract method')
@@ -283,7 +276,7 @@ class RnnLmNoEmbedding(BaseLanguageModel):
 
   @classmethod
   def Params(cls):
-    p = super(RnnLmNoEmbedding, cls).Params()
+    p = super().Params()
     p.Define('rnns', rnn_layers.StackedFRNNLayerByLayer.Params(),
              'The stacked-RNNs layer params.')
     p.Define('softmax', layers.SimpleFullSoftmax.Params(),
@@ -296,7 +289,7 @@ class RnnLmNoEmbedding(BaseLanguageModel):
     return p
 
   def __init__(self, params):
-    super(RnnLmNoEmbedding, self).__init__(params)
+    super().__init__(params)
     p = self.params
     if not isinstance(p.rnns.cell_tpl, (list, tuple)):
       p.rnns.cell_tpl = [p.rnns.cell_tpl]
@@ -316,9 +309,8 @@ class RnnLmNoEmbedding(BaseLanguageModel):
           'softmax num of classess %d does not match vocabulary size %d!' %
           (p.softmax.num_classes, p.vocab_size))
 
-    with tf.variable_scope(p.name):
-      self.CreateChild('rnns', p.rnns)
-      self.CreateChild('softmax', p.softmax)
+    self.CreateChild('rnns', p.rnns)
+    self.CreateChild('softmax', p.softmax)
 
   def zero_state(self, theta, batch_size):
     return self.rnns.zero_state(theta.rnns, batch_size)
@@ -482,7 +474,7 @@ class RnnLm(RnnLmNoEmbedding):
 
   @classmethod
   def Params(cls):
-    p = super(RnnLm, cls).Params()
+    p = super().Params()
     p.Define('emb', layers.EmbeddingLayer.Params(),
              'The embedding layer params.')
     p.Define('embedding_dropout_keep_prob', 1.0, 'Embedding dropout keep prob.')
@@ -559,7 +551,7 @@ class RnnLm(RnnLmNoEmbedding):
     return p
 
   def __init__(self, params, verify_sizes=True):
-    super(RnnLm, self).__init__(params)
+    super().__init__(params)
     p = self.params
 
     if verify_sizes:
@@ -569,8 +561,7 @@ class RnnLm(RnnLmNoEmbedding):
           '{} vs. {}'.format(p.emb.embedding_dim,
                              p.rnns.cell_tpl[0].num_input_nodes))
 
-    with tf.variable_scope(p.name):
-      self.CreateChild('emb', p.emb)
+    self.CreateChild('emb', p.emb)
 
   def FProp(self,
             theta,
@@ -616,8 +607,8 @@ class RnnLm(RnnLmNoEmbedding):
           activation,
           rate=1 - p.embedding_dropout_keep_prob,
           seed=p.embedding_dropout_seed)
-    return super(RnnLm, self).FProp(theta, activation, paddings, state0, labels,
-                                    direct_features)
+    return super().FProp(theta, activation, paddings, state0, labels,
+                         direct_features)
 
 
 class ConditionalRnnLm(RnnLmNoEmbedding):
@@ -625,7 +616,7 @@ class ConditionalRnnLm(RnnLmNoEmbedding):
 
   @classmethod
   def Params(cls):
-    p = super(ConditionalRnnLm, cls).Params()
+    p = super().Params()
     p.Define('condition_dim', 128, 'The size of the condition vector.')
     p.Define('emb', layers.EmbeddingLayer.Params(),
              'The embedding layer params.')
@@ -637,7 +628,7 @@ class ConditionalRnnLm(RnnLmNoEmbedding):
     return p
 
   def __init__(self, params):
-    super(ConditionalRnnLm, self).__init__(params)
+    super().__init__(params)
     p = self.params
 
     assert p.emb.vocab_size == p.vocab_size, ('{} vs. {}'.format(
@@ -646,8 +637,7 @@ class ConditionalRnnLm(RnnLmNoEmbedding):
             p.rnns.cell_tpl[0].num_input_nodes), ('{} vs. {}'.format(
                 p.emb.embedding_dim, p.rnns.cell_tpl[0].num_input_nodes))
 
-    with tf.variable_scope(p.name):
-      self.CreateChild('emb', p.emb)
+    self.CreateChild('emb', p.emb)
 
   def FProp(self,
             theta,
@@ -700,8 +690,8 @@ class ConditionalRnnLm(RnnLmNoEmbedding):
           activation,
           rate=1 - p.embedding_dropout_keep_prob,
           seed=p.embedding_dropout_seed)
-    return super(ConditionalRnnLm, self).FProp(theta, activation, paddings,
-                                               state0, labels, direct_features)
+    return super().FProp(theta, activation, paddings, state0, labels,
+                         direct_features)
 
 
 class MoeLm(BaseLanguageModel):
@@ -709,7 +699,7 @@ class MoeLm(BaseLanguageModel):
 
   @classmethod
   def Params(cls):
-    p = super(MoeLm, cls).Params()
+    p = super().Params()
     p.Define(
         'emb',
         layers.EmbeddingLayer.Params().Set(max_num_shards=1),
@@ -726,7 +716,7 @@ class MoeLm(BaseLanguageModel):
     return p
 
   def __init__(self, params):
-    super(MoeLm, self).__init__(params)
+    super().__init__(params)
     p = self.params
     if not isinstance(p.rnns.cell_tpl, (list, tuple)):
       p.rnns.cell_tpl = [p.rnns.cell_tpl]
@@ -740,40 +730,38 @@ class MoeLm(BaseLanguageModel):
       assert p.merge.vocab_size == p.vocab_size, ('{} vs. {}'.format(
           p.merge.vocab_size, p.vocab_size))
 
-    with tf.variable_scope(p.name):
-      # Embeddings
-      if p.shared_emb:
-        self.CreateChild('emb', p.emb)
-      else:
-        # 0-th embedding is for the domain predictor.
-        self.CreateChildren(
-            'emb', [
-                p.emb.Copy().Set(name='emb_%d' % i)
-                for i in range(1 + p.number_of_experts)
-            ])
+    # Embeddings
+    if p.shared_emb:
+      self.CreateChild('emb', p.emb)
+    else:
+      # 0-th embedding is for the domain predictor.
+      self.CreateChildren('emb', [
+          p.emb.Copy().Set(name='emb_%d' % i)
+          for i in range(1 + p.number_of_experts)
+      ])
 
-      # Rnns
-      # 0-th rnns is for the domain predictor.
-      self.CreateChildren(
-          'rnns', [p.rnns.Copy() for i in range(1 + p.number_of_experts)])
+    # Rnns
+    # 0-th rnns is for the domain predictor.
+    self.CreateChildren('rnns',
+                        [p.rnns.Copy() for i in range(1 + p.number_of_experts)])
 
-      # Softmax
-      rnn_output_size = _RnnOutputSize(p.rnns)
-      sm_params = layers.SimpleFullSoftmax.Params()
-      sm_params.name = 'domain_predictor_softmax'
-      sm_params.input_dim = rnn_output_size
-      sm_params.num_classes = p.number_of_experts
-      self.CreateChild('domain_predictor_softmax', sm_params)
+    # Softmax
+    rnn_output_size = _RnnOutputSize(p.rnns)
+    sm_params = layers.SimpleFullSoftmax.Params()
+    sm_params.name = 'domain_predictor_softmax'
+    sm_params.input_dim = rnn_output_size
+    sm_params.num_classes = p.number_of_experts
+    self.CreateChild('domain_predictor_softmax', sm_params)
 
-      # Merge
-      if p.add_postgating_rnn:
-        self.CreateChild('merge', p.merge)
-      else:
-        output_sm_params = layers.SimpleFullSoftmax.Params()
-        output_sm_params.name = 'output_softmax'
-        output_sm_params.input_dim = rnn_output_size
-        output_sm_params.num_classes = p.vocab_size
-        self.CreateChild('output_softmax', output_sm_params)
+    # Merge
+    if p.add_postgating_rnn:
+      self.CreateChild('merge', p.merge)
+    else:
+      output_sm_params = layers.SimpleFullSoftmax.Params()
+      output_sm_params.name = 'output_softmax'
+      output_sm_params.input_dim = rnn_output_size
+      output_sm_params.num_classes = p.vocab_size
+      self.CreateChild('output_softmax', output_sm_params)
 
   def zero_state(self, theta, batch_size):
     p = self.params
@@ -858,7 +846,7 @@ class TransformerLmNoEmbedding(BaseLanguageModel):
 
   @classmethod
   def Params(cls):
-    p = super(TransformerLmNoEmbedding, cls).Params()
+    p = super().Params()
     p.Define('position_emb', layers.PositionalEmbeddingLayer.Params(),
              'Position embedding layer params.')
     p.Define(
@@ -892,32 +880,31 @@ class TransformerLmNoEmbedding(BaseLanguageModel):
     return p
 
   def __init__(self, params):
-    super(TransformerLmNoEmbedding, self).__init__(params)
+    super().__init__(params)
     p = self.params
     p.trans_tpl.tr_atten_tpl.residual_dropout_prob = p.residual_dropout_prob
     p.trans_tpl.tr_atten_tpl.atten_dropout_prob = p.atten_dropout_prob
     p.trans_tpl.tr_fflayer_tpl.residual_dropout_prob = p.residual_dropout_prob
     p.trans_tpl.tr_fflayer_tpl.relu_dropout_prob = p.relu_dropout_prob
 
-    with tf.variable_scope(p.name):
-      p.position_emb.embedding_dim = p.model_dim
-      self.CreateChild('position_emb', p.position_emb)
+    p.position_emb.embedding_dim = p.model_dim
+    self.CreateChild('position_emb', p.position_emb)
 
-      dropout_tpl = layers.DropoutLayer.Params().Set(
-          keep_prob=(1.0 - p.input_dropout_prob))
-      self.CreateChild('input_dropout', dropout_tpl)
+    dropout_tpl = layers.DropoutLayer.Params().Set(
+        keep_prob=(1.0 - p.input_dropout_prob))
+    self.CreateChild('input_dropout', dropout_tpl)
 
-      params_trans_layers = []
-      for i in range(p.num_trans_layers):
-        params = p.trans_tpl.Copy()
-        params.source_dim = p.model_dim
-        params.name = 'layer_%d' % i
-        params_trans_layers.append(params)
-      self.CreateChildren('trans', params_trans_layers)
+    params_trans_layers = []
+    for i in range(p.num_trans_layers):
+      params = p.trans_tpl.Copy()
+      params.source_dim = p.model_dim
+      params.name = 'layer_%d' % i
+      params_trans_layers.append(params)
+    self.CreateChildren('trans', params_trans_layers)
 
-      p.softmax.input_dim = p.model_dim
-      p.softmax.num_classes = p.vocab_size
-      self.CreateChild('softmax', p.softmax)
+    p.softmax.input_dim = p.model_dim
+    p.softmax.num_classes = p.vocab_size
+    self.CreateChild('softmax', p.softmax)
 
   def zero_state(self, theta, batch_size):
     p = self.params
@@ -1054,7 +1041,7 @@ class TransformerLm(TransformerLmNoEmbedding):
 
   @classmethod
   def Params(cls):
-    p = super(TransformerLm, cls).Params()
+    p = super().Params()
     p.Define('emb', layers.EmbeddingLayer.Params(),
              'The embedding layer params.')
     p.emb.max_num_shards = 1
@@ -1143,7 +1130,7 @@ class TransformerLm(TransformerLmNoEmbedding):
     return p
 
   def __init__(self, params):
-    super(TransformerLm, self).__init__(params)
+    super().__init__(params)
     p = self.params
 
     assert p.emb.vocab_size == p.vocab_size, ('{} vs. {}'.format(
@@ -1153,8 +1140,7 @@ class TransformerLm(TransformerLmNoEmbedding):
     assert p.emb.embedding_dim == p.model_dim, ('{} vs. {}'.format(
         p.emb.embedding_dim, p.model_dim))
 
-    with tf.variable_scope(p.name):
-      self.CreateChild('emb', p.emb)
+    self.CreateChild('emb', p.emb)
 
   def FProp(self, theta, inputs, paddings, state0=None, labels=None):
     """Computes xent loss given the language model input activations.
@@ -1183,8 +1169,7 @@ class TransformerLm(TransformerLmNoEmbedding):
     ids = py_utils.HasRank(inputs, 2)
     paddings = py_utils.HasShape(paddings, tf.shape(ids))
     activation = self.emb.EmbLookup(theta.emb, ids)
-    return super(TransformerLm, self).FProp(
-        theta, activation, paddings, labels=labels)
+    return super().FProp(theta, activation, paddings, labels=labels)
 
 
 class GPipeTransformerLm(BaseLanguageModel):
@@ -1192,25 +1177,16 @@ class GPipeTransformerLm(BaseLanguageModel):
 
   @classmethod
   def Params(cls):
-    p = super(GPipeTransformerLm, cls).Params()
+    p = super().Params()
     p.Define('stack', layers_with_gpipe.GPipeTransformerStack.Params(),
              'GPipeTransformerStack Layer params.')
-
-    # Default config for the transformer layers.
-    trans_tpl = p.stack.encoder_tpl
-    trans_tpl.has_aux_atten = False
-    trans_tpl.mask_self_atten = True
-    trans_tpl.tr_atten_tpl.is_masked = True
-    trans_tpl.tr_atten_tpl.num_attention_heads = 8
-    trans_tpl.tr_atten_tpl.atten_tpl.enable_ctx_pre_proj = True
-    trans_tpl.tr_atten_tpl.atten_tpl.enable_ctx_post_proj = True
-    trans_tpl.tr_fflayer_tpl.hidden_dim = 2048
     return p
 
   @classmethod
   def CommonParams(cls,
                    vocab_size,
                    model_dim,
+                   attention_hidden_dim=None,
                    hidden_dim=1024,
                    num_heads=8,
                    num_layers=6,
@@ -1228,6 +1204,7 @@ class GPipeTransformerLm(BaseLanguageModel):
     Args:
       vocab_size: vocab size.
       model_dim: model dimension.
+      attention_hidden_dim: hidden dim for the attention layer.
       hidden_dim: hidden dimension of feed-forward inner layer.
       num_heads: number of attention heads.
       num_layers: number of layers in the transformer LM.
@@ -1258,10 +1235,9 @@ class GPipeTransformerLm(BaseLanguageModel):
     p.stack.num_micro_batches = num_micro_batches
     p.stack.micro_batch_size = micro_batch_size
     p.stack.num_encoder_layers = num_layers
-    p.stack.state_dtype = p.dtype
-    if p.fprop_dtype:
-      p.stack.state_dtype = p.fprop_dtype
+    p.stack.batch_dim = 0
     emb_params_init = py_utils.WeightInit.Gaussian(1.0 / math.sqrt(model_dim))
+    p.stack.emb_tpl.ret_task_ids = True
     p.stack.emb_tpl.token_emb.Set(
         use_matmul=False,
         use_3d_weight_tensor=False,
@@ -1271,17 +1247,20 @@ class GPipeTransformerLm(BaseLanguageModel):
     p.stack.emb_tpl.position_emb.Set(
         embedding_dim=model_dim, trainable_scaling=False)
     p.stack.emb_tpl.input_dropout_prob = input_dropout_prob
-    trans_tpl = p.stack.encoder_tpl
-    trans_tpl.source_dim = model_dim
 
-    trans_tpl.is_decoder = False
+    trans_tpl = batch_major_attention.GPipeTransformerLayer.Params()
     trans_tpl.has_aux_atten = False
     trans_tpl.mask_self_atten = True
+    trans_tpl.input_dim = model_dim
+    trans_tpl.output_dim = model_dim
+    trans_tpl.tr_atten_tpl.input_dim = model_dim
+    trans_tpl.tr_atten_tpl.hidden_dim = attention_hidden_dim or model_dim
     trans_tpl.tr_atten_tpl.is_masked = True
-    trans_tpl.tr_atten_tpl.num_attention_heads = num_heads
-    trans_tpl.tr_atten_tpl.atten_tpl.enable_ctx_pre_proj = True
-    trans_tpl.tr_atten_tpl.atten_tpl.enable_ctx_post_proj = True
+    trans_tpl.tr_atten_tpl.num_heads = num_heads
+    trans_tpl.tr_atten_tpl.atten_tpl.use_bias = False
     trans_tpl.tr_fflayer_tpl.hidden_dim = hidden_dim
+    p.stack.encoder_tpl = trans_tpl
+
     p.stack.softmax_tpl.Set(
         num_classes=vocab_size, input_dim=model_dim, num_shards=num_shards)
     if softmax_max_alloc:
@@ -1291,12 +1270,13 @@ class GPipeTransformerLm(BaseLanguageModel):
     return p
 
   def __init__(self, params):
-    super(GPipeTransformerLm, self).__init__(params)
+    super().__init__(params)
     p = self.params
     p.stack.name = p.name
-
-    with tf.variable_scope(p.name):
-      self.CreateChild('stack', p.stack)
+    p.stack.state_dtype = p.dtype
+    if p.fprop_dtype:
+      p.stack.state_dtype = p.fprop_dtype
+    self.CreateChild('stack', p.stack)
 
   def zero_state(self, theta, batch_size):
     return py_utils.NestedMap()
@@ -1307,14 +1287,14 @@ class GPipeTransformerLm(BaseLanguageModel):
     Args:
       theta: A `.NestedMap` object containing weights' values of this layer and
         its children layers.
-      inputs: Input ids. An int32 tensor of shape [time, batch].
-      paddings: A 0/1 tensor of shape [time, batch].
+      inputs: Input ids. An int32 tensor of shape [batch, time].
+      paddings: A 0/1 tensor of shape [batch, time].
       state0: Not used for Transformer.
       labels: If not None, a `.NestedMap` containing the following fields:  -
-        class_weights, a tensor with shape [time, batch] containing the weights
-        for each target word. - class_ids, a tensor with shape [time, batch] of
+        class_weights, a tensor with shape [batch, time] containing the weights
+        for each target word. - class_ids, a tensor with shape [batch, time] of
         int32 dtype containing the target class labels. - class_probabilities, a
-        tensor with shape [time, batch, vocab_size] of float values indicating
+        tensor with shape [batch, time, vocab_size] of float values indicating
         class-membership probabilities.
 
     Returns:

@@ -15,17 +15,15 @@
 # ==============================================================================
 """Tests for attention."""
 
-
 import math
 from absl.testing import parameterized
 import lingvo.compat as tf
 from lingvo.core import attention
+from lingvo.core import layers
 from lingvo.core import py_utils
 from lingvo.core import quant_utils
 from lingvo.core import test_utils
 import numpy as np
-from six.moves import range
-from six.moves import zip
 
 
 class AttentionTest(test_utils.TestCase, parameterized.TestCase):
@@ -256,8 +254,7 @@ class AttentionTest(test_utils.TestCase, parameterized.TestCase):
       self.assertAllClose(expected_atten_vec_out, atten_vec_out)
 
   def _testSameBatchSize(self, same_batch_size, packed_inputs=False):
-    g = tf.Graph()
-    with g.as_default():
+    with self.session(use_gpu=True, graph=tf.Graph()):
       tf.random.set_seed(398847392)
       params, tensors = self._AdditiveAttentionInputs(packed_inputs, tgt_bs=3)
       source_vecs, source_contexts, source_padding, _, query_vec, _ = tensors
@@ -278,7 +275,6 @@ class AttentionTest(test_utils.TestCase, parameterized.TestCase):
 
       self.assertLen(atten.vars.Flatten(), 3)
 
-    with self.session(use_gpu=True, graph=g):
       self.evaluate(tf.global_variables_initializer())
       atten_vec_out, prob_out = self.evaluate([atten_vec, atten_prob])
     return atten_vec_out, prob_out
@@ -786,6 +782,62 @@ class AttentionTest(test_utils.TestCase, parameterized.TestCase):
           inner_atten_params=iap,
           num_attention_heads=2,
           use_source_vec_as_attention_value=False)
+      atten = params.Instantiate()
+      atten.InitForSourcePacked(atten.theta, source_vecs, source_contexts,
+                                source_padding)
+      self.evaluate(tf.global_variables_initializer())
+      atten_vec, atten_prob, _ = atten.ComputeContextVector(
+          atten.theta, query_vec)
+
+      self._CheckStaticShapes(
+          atten_vec,
+          atten_prob,
+          target_batch_size=query_vec.shape[0],
+          source_length=source_contexts.shape[0],
+          context_dim=source_contexts.shape[2])
+
+      atten_vec_out, prob_out = self.evaluate([atten_vec, atten_prob])
+      print('atten_vec_out', np.sum(atten_vec_out, axis=1))
+      self.assertAllClose([
+          2.84679317, 2.36924601, 3.54831171, 2.86487937, 2.3537426, 3.54308939
+      ], np.sum(atten_vec_out, axis=1))
+      print('atten_vec_out', atten_vec_out)
+      print('prob_out', prob_out)
+      t_batch_size = 6
+      s_batch_size = 3
+      for i in range(t_batch_size):
+        # Test to make sure we didn't mess up indexing.
+        s_index = i % s_batch_size
+        atten.InitForSourcePacked(atten.theta,
+                                  source_vecs[:, s_index:s_index + 1, :],
+                                  source_contexts[:, s_index:s_index + 1, :],
+                                  source_padding[:, s_index:s_index + 1])
+        atten_vec_i, prob_i, _ = atten.ComputeContextVector(
+            atten.theta, query_vec[i:i + 1])
+        atten_vec_i_out, prob_i_out = self.evaluate([atten_vec_i, prob_i])
+        self.assertAllClose(prob_i_out, prob_out[i:i + 1])
+        self.assertAllClose(atten_vec_i_out, atten_vec_out[i:i + 1])
+        padding_i = source_padding_p[s_index]
+        # Check to make sure prob exists only on valid timesteps.
+        self.assertEqual(0.0, np.sum(padding_i * prob_i_out))
+
+  def testMultiHeadedAttentionDotProductNoPerDimScaleNoBias(self):
+    # source_batch:3, target_batch:6. Test n = 2 case.
+    with self.session(use_gpu=True):
+      (source_vecs, source_contexts, source_padding, source_padding_p,
+       query_vec, _, _) = self._MultiHeadedAttentionInputs()
+      iap = attention.DotProductAttention.Params()
+      iap.name = 'dot_atten'
+      params = attention.MultiHeadedAttention.Params().Set(
+          name='multihead_atten',
+          source_dim=4,
+          query_dim=4,
+          hidden_dim=4,
+          inner_atten_params=iap,
+          num_attention_heads=2,
+          use_source_vec_as_attention_value=False,
+          enable_per_dim_scale=False,
+          use_bias=False)
       atten = params.Instantiate()
       atten.InitForSourcePacked(atten.theta, source_vecs, source_contexts,
                                 source_padding)
@@ -2024,6 +2076,48 @@ class AttentionTest(test_utils.TestCase, parameterized.TestCase):
       # pyformat: enable
       # pylint: enable=bad-whitespace
       self.assertEqual(actual_ctx.shape, (batch, n_sources * depth))
+      self.assertAllClose(expected_ctx, actual_ctx, rtol=1e-05, atol=1e-05)
+
+  def testMergerLayerConcatPostProj(self):
+    with self.session(use_gpu=True):
+      np.random.seed(505837249)
+      depth = 4
+      batch = 5
+      n_sources = 3
+      ctxs = [
+          tf.constant(np.random.rand(batch, depth), dtype=tf.float32)
+          for _ in range(n_sources)
+      ]
+      p = attention.MergerLayer.Params()
+      p.name = 'merger_layer'
+      p.merger_op = 'concat'
+      p.source_dim = depth
+      # Post projection to a dimensionality of 4.
+      p.post_proj = layers.ProjectionLayer.Params().Set(
+          name='post_proj',
+          batch_norm=False,
+          weight_norm=False,
+          has_bias=True,
+          input_dim=12,
+          output_dim=4)
+      merger = p.Instantiate()
+      ctx = merger.FProp(merger.theta, ctxs)
+      self.evaluate(tf.global_variables_initializer())
+      actual_ctx = self.evaluate([ctx])[0]
+
+      # pylint: disable=bad-whitespace
+      # pyformat: disable
+      expected_ctx = [
+          [0.05845007, 0.14603308, 2.099096  , 0.03618803],
+          [0.50603   , 0.1128372 , 1.0714196 , 0.3054366 ],
+          [0.        , 0.17477296, 0.        , 0.        ],
+          [0.34721488, 0.        , 0.9593564 , 0.6714128 ],
+          [0.012324  , 0.        , 1.3537602 , 0.16794051]]
+
+      # pyformat: enable
+      # pylint: enable=bad-whitespace
+      tf.logging.info(np.array_repr(actual_ctx))
+      self.assertEqual(actual_ctx.shape, (batch, depth))
       self.assertAllClose(expected_ctx, actual_ctx, rtol=1e-05, atol=1e-05)
 
   def testMergerLayerConcatPreProjections(self):

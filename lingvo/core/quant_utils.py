@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,10 +14,6 @@
 # limitations under the License.
 # ==============================================================================
 """Utilities for model quantization."""
-
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import lingvo.compat as tf
 from lingvo.core import base_layer
@@ -120,33 +116,40 @@ class QuantizableLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(QuantizableLayer, cls).Params()
+    p = super().Params()
     p.Define('qdomain', hyperparams.Params(),
              'Container for quantization domains.')
     p.qdomain.Define('default', None, 'Default quantization domain.')
     return p
 
   def __init__(self, params):
-    super(QuantizableLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
 
     self._tracked_tensors = dict()  # tracked t_name -> (QDomain)
     self._qstate = None  # t_name -> Tensor
 
     # Instantiate quantization domains.
-    with tf.variable_scope(p.name + '/q'):
-      self._qdomains = dict()  # Dict of qdname -> QDomain or None
-      for qdname in dir(p.qdomain):
-        qdparams = p.qdomain.Get(qdname)
-        if qdparams is None:
-          continue
-        assert issubclass(qdparams.cls, QDomain), (
-            'Expected quantized domain %s to extend QDomain' % qdname)
-        qdchild_name = 'qdomain_' + qdname
-        self.CreateChild(qdchild_name, qdparams)
-        self._qdomains[qdname] = self.children[qdchild_name]
+    self._qdomains = dict()  # Dict of qdname -> QDomain or None
+    for qdname in dir(p.qdomain):
+      qdparams = p.qdomain.Get(qdname)
+      if qdparams is None:
+        continue
+      assert issubclass(
+          qdparams.cls,
+          QDomain), ('Expected quantized domain %s to extend QDomain' % qdname)
+      qdchild_name = 'qdomain_' + qdname
+      self.CreateChild(qdchild_name, qdparams)
+      self._qdomains[qdname] = self.children[qdchild_name]
     self._AddQuantizationFunctions()
 
+  def _CreateChildrenVariables(self):
+    # Backwards compatibility: child.InstantiateVariables() in custom scope.
+    p = self.params
+    with tf.variable_scope(p.name + '/q'):
+      for qdomain in self._qdomains.values():
+        qdomain.InstantiateVariables()
+    super()._CreateChildrenVariables()
 
   def QRTanh(self, t, domain='actf'):
     """Quantizes the output of a tanh (-1.0, 1.0)."""
@@ -186,7 +189,7 @@ class QuantizableLayer(base_layer.BaseLayer):
     r"""Creates one or more QTensors for later use.
 
     Any tensor that will later be quantized must be created first, preferably
-    in __init__.
+    in _CreateLayerVariables().
 
     Along with a list of tensor names to create, they can be associated with
     a 'domain'. Most layers are simple enough to only have a single quantization
@@ -372,7 +375,7 @@ class BaseClippingCapSchedule(base_layer.BaseLayer):
   """Base class for clipping cap schedules."""
 
   def __init__(self, params):
-    super(BaseClippingCapSchedule, self).__init__(params)
+    super().__init__(params)
 
   @property
   def is_quantized(self):
@@ -484,7 +487,7 @@ class LinearClippingCapSchedule(BaseClippingCapSchedule):
 
   @classmethod
   def Params(cls):
-    p = super(LinearClippingCapSchedule, cls).Params()
+    p = super().Params()
     p.Define('start_step', 0,
              'We start gradually narrowing clipping cap from start_step.')
     p.Define('end_step', 15000,
@@ -564,7 +567,7 @@ class FakeQuantizationSchedule(BaseClippingCapSchedule):
 
   @classmethod
   def Params(cls):
-    p = super(FakeQuantizationSchedule, cls).Params()
+    p = super().Params()
     p.name = 'FQSchedule'
     p.Define('clip_start_step', 0,
              'We start gradually narrowing clipping cap from start_step.')
@@ -577,7 +580,7 @@ class FakeQuantizationSchedule(BaseClippingCapSchedule):
     return p
 
   def __init__(self, params):
-    super(FakeQuantizationSchedule, self).__init__(params)
+    super().__init__(params)
     p = self.params
     # We may relax this constraint at some point to allow gradual quantization
     # but enforce for now as it is easy to mess up and we have not evaluated
@@ -873,17 +876,16 @@ class SymmetricScheduledClipQDomain(QDomain):
 
   @classmethod
   def Params(cls):
-    p = super(SymmetricScheduledClipQDomain, cls).Params()
+    p = super().Params()
     p.Define('cc_schedule', FakeQuantizationSchedule.Params(),
              'Quantization clipping schedule.')
     return p
 
   def __init__(self, params):
-    super(SymmetricScheduledClipQDomain, self).__init__(params)
+    super().__init__(params)
     p = self.params
 
-    with tf.variable_scope(p.name):
-      self.CreateChild('cc_schedule', p.cc_schedule)
+    self.CreateChild('cc_schedule', p.cc_schedule)
 
   @property
   def bits(self):
@@ -922,7 +924,7 @@ class _CountedMinMaxAccumulator(base_layer.Accumulator):
   """
 
   def __init__(self, dtype):
-    super(_CountedMinMaxAccumulator, self).__init__()
+    super().__init__()
     self.dtype = dtype
 
   def DefaultValue(self):
@@ -950,7 +952,7 @@ class PassiveAsymQDomain(QDomain):
 
   @classmethod
   def Params(cls):
-    p = super(PassiveAsymQDomain, cls).Params()
+    p = super().Params()
     p.Define('bits', 8, 'Default quantized bit depth.')
     p.Define('ema_decay', 0.99, 'Moving average decay.')
     p.Define('default_min', -1.0,
@@ -969,14 +971,14 @@ class PassiveAsymQDomain(QDomain):
     return p
 
   def __init__(self, params):
-    super(PassiveAsymQDomain, self).__init__(params)
-    p = self.params
+    super().__init__(params)
 
     self._t_names = set()  # set of known t_name (from CreateTensor)
     self._qvars = py_utils.NestedMap()  # var_name -> tf.Variable
 
+  def _CreateLayerVariables(self):
     # Save a scope for lazily created variables.
-    with tf.variable_scope(p.name + '/q'):
+    with tf.variable_scope('q'):
       self._qvars_scope = tf.get_variable_scope()
 
   def _MaybeFakeQuant(self, inputs, min_v, max_v, num_bits):
@@ -1109,7 +1111,7 @@ class PassiveAsymQDomain(QDomain):
     return (tf.stop_gradient(batch_min), tf.stop_gradient(batch_max))
 
   def PostTrainingStepUpdate(self, global_step):
-    ops = [super(PassiveAsymQDomain, self).PostTrainingStepUpdate(global_step)]
+    ops = [super().PostTrainingStepUpdate(global_step)]
     for t_name in self._t_names:
       ops.extend(self._RecordTensor(t_name))
       self._SummarizeTensor(t_name)
@@ -1117,10 +1119,10 @@ class PassiveAsymQDomain(QDomain):
 
   def _CreateQStateVar(self, t_name, suffix, params):
     name = t_name + '_' + suffix
-    assert name not in self._qvars, 'QState var already exists: %s' % (name,)
+    assert name not in self._qvars, 'QState var already exists: %s' % name
     var_name = self._qvars_scope.name + '/' + name
     with tf.variable_scope(py_utils.GetGlobalVariableScope()):
-      _, v = py_utils.CreateVariable(var_name, params, trainable=False)
+      v = py_utils.CreateVariable(var_name, params, trainable=False)
     self._qvars[name] = v
     return v
 

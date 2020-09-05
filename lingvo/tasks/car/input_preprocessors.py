@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,10 +15,6 @@
 # ==============================================================================
 """Input preprocessors."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 from lingvo import compat as tf
 from lingvo.core import base_layer
 from lingvo.core import py_utils
@@ -27,9 +23,7 @@ from lingvo.tasks.car import detection_3d_lib
 from lingvo.tasks.car import geometry
 from lingvo.tasks.car import ops
 import numpy as np
-from six.moves import range
 # pylint:disable=g-direct-tensorflow-import
-from tensorflow.python.ops import functional_ops
 from tensorflow.python.ops import inplace_ops
 # pylint:enable=g-direct-tensorflow-import
 
@@ -92,7 +86,7 @@ class Preprocessor(base_layer.BaseLayer):
   @classmethod
   def Params(cls):
     """Default params."""
-    p = super(Preprocessor, cls).Params()
+    p = super().Params()
     p.name = cls.__name__
     return p
 
@@ -174,7 +168,7 @@ class EntryPreprocessor(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(EntryPreprocessor, cls).Params()
+    p = super().Params()
     p.Define('prefixes', ['pseudo_ri'], 'List of keys to apply to.')
     return p
 
@@ -254,7 +248,7 @@ class CreateDecoderCopy(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(CreateDecoderCopy, cls).Params()
+    p = super().Params()
     p.Define('keys', ['lasers', 'labels', 'images'],
              'Keys to look for and copy if exists.')
     p.Define('parent_key', 'decoder_copy', 'The key to nest the copies under.')
@@ -264,11 +258,10 @@ class CreateDecoderCopy(Preprocessor):
     return p
 
   def __init__(self, params):
-    super(CreateDecoderCopy, self).__init__(params)
+    super().__init__(params)
     p = self.params
-    with tf.variable_scope(p.name):
-      if p.pad_lasers is not None:
-        self.CreateChild('pad_lasers', p.pad_lasers)
+    if p.pad_lasers is not None:
+      self.CreateChild('pad_lasers', p.pad_lasers)
 
   def _DeepCopyIfExists(self, keys, nested_map, parent_key):
     """Deep copy a specific key to a parent key if it exists."""
@@ -315,7 +308,7 @@ class FilterByKey(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(FilterByKey, cls).Params()
+    p = super().Params()
     p.Define(
         'keep_key_prefixes', [''], 'Prefixes of keys to keep. If this '
         'contains the empty string, then it will keep all the keys.')
@@ -362,7 +355,7 @@ class FilterGroundTruthByNumPoints(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(FilterGroundTruthByNumPoints, cls).Params()
+    p = super().Params()
     p.Define(
         'min_num_points', 1, 'The minimum number of points allowed before '
         'the associated ground truth box is turned off. Defaults to 1.')
@@ -403,7 +396,7 @@ class FilterGroundTruthByDifficulty(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(FilterGroundTruthByDifficulty, cls).Params()
+    p = super().Params()
     p.Define(
         'background_id', 0, 'The ID of the background class we set '
         'filtered boxes to. Defaults to 0.')
@@ -500,7 +493,7 @@ class AddPerPointLabels(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(AddPerPointLabels, cls).Params()
+    p = super().Params()
     p.Define(
         'per_dimension_adjustment', None,
         'A list of len 3 of floats with the amount (in meters) to add to '
@@ -603,7 +596,7 @@ class PointsToGrid(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(PointsToGrid, cls).Params()
+    p = super().Params()
     p.Define('num_points_per_cell', 100,
              'The maximum number of points per cell.')
     p.Define('grid_size', (40, 40, 1), 'Grid size along x,y,z axis.')
@@ -690,7 +683,7 @@ class PointsToGrid(Preprocessor):
     return dtypes
 
 
-class _PointPillarGridSettings(object):
+class _PointPillarGridSettings:
   """Settings for PointPillars model defined in paper.
 
   https://arxiv.org/abs/1812.05784
@@ -784,7 +777,7 @@ class GridToPillars(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(GridToPillars, cls).Params()
+    p = super().Params()
     p.Define('num_points_per_cell', 100,
              'The maximum number of points per cell.')
     p.Define('num_pillars', 12000, 'The maximum number of pillars to produce.')
@@ -929,7 +922,7 @@ class GridAnchorCenters(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(GridAnchorCenters, cls).Params()
+    p = super().Params()
     p.Define(
         'grid_size', (20, 20, 1), 'Grid size along x,y,z axis. This will '
         'be used to generate the anchor center locations. Note that this '
@@ -1015,7 +1008,7 @@ class SparseCenterSelector(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(SparseCenterSelector, cls).Params()
+    p = super().Params()
     p.Define('num_cell_centers', 256, 'Number of centers.')
     p.Define(
         'features_preparation_layers', [],
@@ -1033,16 +1026,15 @@ class SparseCenterSelector(Preprocessor):
     return p
 
   def __init__(self, params):
-    super(SparseCenterSelector, self).__init__(params)
+    super().__init__(params)
     p = self.params
 
     if p.sampling_method not in self._SAMPLING_METHODS:
       raise ValueError('Param `sampling_method` must be one of {}.'.format(
           self._SAMPLING_METHODS))
-    with tf.variable_scope(p.name):
-      if p.features_preparation_layers is not None:
-        self.CreateChildren('features_preparation_layers',
-                            p.features_preparation_layers)
+    if p.features_preparation_layers is not None:
+      self.CreateChildren('features_preparation_layers',
+                          p.features_preparation_layers)
 
   def _FarthestPointSampleCenters(self, points_xyz, num_seeded_points):
     """Samples centers with Farthest Point Sampling.
@@ -1182,7 +1174,7 @@ class SparseCellGatherFeatures(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(SparseCellGatherFeatures, cls).Params()
+    p = super().Params()
     p.Define('num_points_per_cell', 128, 'The number of points per cell.')
     p.Define('max_distance', 3.0, 'Max distance of point to cell center.')
     p.Define(
@@ -1278,7 +1270,7 @@ class SparseCellCentersTopK(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(SparseCellCentersTopK, cls).Params()
+    p = super().Params()
     p.Define('num_cell_centers', 512, 'The number of centers after filtering.')
     p.Define(
         'sort_by', 'distance', 'A string specifying which sort function '
@@ -1290,7 +1282,7 @@ class SparseCellCentersTopK(Preprocessor):
     return p
 
   def __init__(self, params):
-    super(SparseCellCentersTopK, self).__init__(params)
+    super().__init__(params)
     p = self.params
     if p.sort_by not in self._REGISTERED_SORT_FUNCTIONS:
       raise ValueError('{} not supported. We only support {}.'.format(
@@ -1346,7 +1338,7 @@ class TileAnchorBBoxes(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(TileAnchorBBoxes, cls).Params()
+    p = super().Params()
     p.Define('anchor_box_dimensions', [],
              'List of anchor box sizes per center.')
     p.Define('anchor_box_offsets', [], 'List of anchor box offsets per center.')
@@ -1386,7 +1378,7 @@ class TileAnchorBBoxes(Preprocessor):
     return dtypes
 
 
-class _AnchorBoxSettings(object):
+class _AnchorBoxSettings:
   """Helper class to parameterize and update anchor box settings."""
   # Implementations should fill out the following class members.
   DIMENSION_PRIORS = []
@@ -1556,7 +1548,7 @@ class AnchorAssignment(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(AnchorAssignment, cls).Params()
+    p = super().Params()
     p.Define(
         'foreground_assignment_threshold', 0.5,
         'Score (usually IOU) threshold for assigning a box as foreground.')
@@ -1645,7 +1637,7 @@ class DropLaserPointsOutOfRange(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(DropLaserPointsOutOfRange, cls).Params()
+    p = super().Params()
     p.Define('keep_x_range', (-np.inf, np.inf),
              'Only points that have x coordinates within this range are kept.')
     p.Define('keep_y_range', (-np.inf, np.inf),
@@ -1772,9 +1764,13 @@ class RandomWorldRotationAboutZAxis(Preprocessor):
   always level. In general, we'd like to instead rotate the car on the spot,
   this would then make sense for cases where the car is on a slope.
 
+  When there are leading dimensions, this will rotate the boxes with the same
+  transformation across all the frames. This is useful when the input is a
+  sequence of frames from the same run segment.
+
   This preprocessor expects features to contain the following keys:
-  - lasers.points_xyz of shape [P, 3]
-  - labels.bboxes_3d of shape [L, 7]
+  - lasers.points_xyz of shape [..., 3]
+  - labels.bboxes_3d of shape [..., 7]
 
   Modifies the following features:
     lasers.points_xyz, labels.bboxes_3d with the same rotation applied to both.
@@ -1785,7 +1781,7 @@ class RandomWorldRotationAboutZAxis(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(RandomWorldRotationAboutZAxis, cls).Params()
+    p = super().Params()
     p.Define(
         'max_rotation', None,
         'The rotation amount will be randomly picked from '
@@ -1799,7 +1795,7 @@ class RandomWorldRotationAboutZAxis(Preprocessor):
     return p
 
   def __init__(self, params):
-    super(RandomWorldRotationAboutZAxis, self).__init__(params)
+    super().__init__(params)
     p = self.params
     if p.max_rotation is None:
       raise ValueError('max_rotation needs to be specified, instead of None.')
@@ -1866,7 +1862,7 @@ class DropPointsOutOfFrustum(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(DropPointsOutOfFrustum, cls).Params()
+    p = super().Params()
     p.Define('keep_theta_range', (0., np.pi),
              'Only points that have theta coordinates within this range.')
     p.Define('keep_phi_range', (0., 2. * np.pi),
@@ -1957,7 +1953,7 @@ class DropBoxesOutOfRange(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(DropBoxesOutOfRange, cls).Params()
+    p = super().Params()
     p.Define('keep_x_range', (-np.inf, np.inf),
              'Only boxes that have x coordinates within this range are kept.')
     p.Define('keep_y_range', (-np.inf, np.inf),
@@ -2031,7 +2027,7 @@ class PadLaserFeatures(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(PadLaserFeatures, cls).Params()
+    p = super().Params()
     p.Define('max_num_points', 128500,
              'Max number of points to pad the points to.')
     return p
@@ -2089,12 +2085,12 @@ class WorldScaling(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(WorldScaling, cls).Params()
+    p = super().Params()
     p.Define('scaling', None, 'The scaling range.')
     return p
 
   def __init__(self, params):
-    super(WorldScaling, self).__init__(params)
+    super().__init__(params)
     p = self.params
     if p.scaling is None:
       raise ValueError('scaling needs to be specified, instead of None.')
@@ -2135,7 +2131,6 @@ class RandomDropLaserPoints(Preprocessor):
   - lasers.points_xyz of shape [P, 3]
   - lasers.points_feature of shape [P, K]
 
-  It also expects that lasers.points_padding is set to None.
 
   Modifies the following features:
     lasers.points_xyz, lasers.points_feature.
@@ -2143,28 +2138,43 @@ class RandomDropLaserPoints(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(RandomDropLaserPoints, cls).Params()
+    p = super().Params()
     p.Define('keep_prob', 0.95, 'Probability for keeping points.')
     return p
 
   def TransformFeatures(self, features):
     p = self.params
-    num_points, _ = py_utils.GetShape(features.lasers.points_xyz)
-
-    # We assume that the lasers are not padded, and all points are real.
     if 'points_padding' in features.lasers:
-      raise ValueError('RandomDropLaserPoints preprocessor does not support '
-                       'padded lasers.')
+      points_mask = 1 - features.lasers.points_padding
+      points_xyz = tf.boolean_mask(features.lasers.points_xyz, points_mask)
+      points_feature = tf.boolean_mask(features.lasers.points_feature,
+                                       points_mask)
+    else:
+      points_xyz = features.lasers.points_xyz
+      points_feature = features.lasers.points_feature
+
+    num_points, _ = py_utils.GetShape(features.lasers.points_xyz)
 
     pts_keep_sample_prob = tf.random.uniform([num_points],
                                              minval=0,
                                              maxval=1,
                                              seed=p.random_seed)
     pts_keep_mask = pts_keep_sample_prob < p.keep_prob
-    features.lasers.points_xyz = tf.boolean_mask(features.lasers.points_xyz,
-                                                 pts_keep_mask)
-    features.lasers.points_feature = tf.boolean_mask(
-        features.lasers.points_feature, pts_keep_mask)
+
+    points_xyz = tf.boolean_mask(points_xyz, pts_keep_mask)
+    points_feature = tf.boolean_mask(points_feature, pts_keep_mask)
+
+    if 'points_padding' in features.lasers:
+      features.lasers.points_xyz = py_utils.PadOrTrimTo(
+          points_xyz, tf.shape(features.lasers.points_xyz))
+      features.lasers.points_feature = py_utils.PadOrTrimTo(
+          points_feature, tf.shape(features.lasers.points_feature))
+      total_points = tf.shape(points_xyz)[0]
+      features.lasers.points_padding = 1.0 - py_utils.PadOrTrimTo(
+          tf.ones([total_points]), tf.shape(features.lasers.points_padding))
+    else:
+      features.lasers.points_xyz = points_xyz
+      features.lasers.points_feature = points_feature
 
     return features
 
@@ -2178,9 +2188,13 @@ class RandomDropLaserPoints(Preprocessor):
 class RandomFlipY(Preprocessor):
   """Flip the world along axis Y as a form of data augmentation.
 
+  When there are leading dimensions, this will flip the boxes with the same
+  transformation across all the frames. This is useful when the input is a
+  sequence of frames from the same run segment.
+
   This preprocessor expects features to contain the following keys:
-  - lasers.points_xyz of shape [P, 3]
-  - labels.bboxes_3d of shape [L, 7]
+  - lasers.points_xyz of shape [..., 3]
+  - labels.bboxes_3d of shape [..., 7]
 
   Modifies the following features:
     lasers.points_xyz, labels.bboxes_3d with the same flipping applied to both.
@@ -2188,7 +2202,7 @@ class RandomFlipY(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(RandomFlipY, cls).Params()
+    p = super().Params()
     p.Define('flip_probability', 0.5, 'Probability of flipping.')
     return p
 
@@ -2200,19 +2214,19 @@ class RandomFlipY(Preprocessor):
 
     # Flip points
     points_xyz = features.lasers.points_xyz
-    points_y = tf.where(choice, -points_xyz[:, 1:2], points_xyz[:, 1:2])
+    points_y = tf.where(choice, -points_xyz[..., 1:2], points_xyz[..., 1:2])
     features.lasers.points_xyz = tf.concat(
-        [points_xyz[:, 0:1], points_y, points_xyz[:, 2:3]], axis=1)
+        [points_xyz[..., 0:1], points_y, points_xyz[..., 2:3]], axis=-1)
 
     # Flip boxes
     bboxes_xyz = features.labels.bboxes_3d[..., :3]
-    bboxes_y = tf.where(choice, -bboxes_xyz[:, 1:2], bboxes_xyz[:, 1:2])
-    bboxes_xyz = tf.concat([bboxes_xyz[:, 0:1], bboxes_y, bboxes_xyz[:, 2:3]],
-                           axis=1)
+    bboxes_y = tf.where(choice, -bboxes_xyz[..., 1:2], bboxes_xyz[..., 1:2])
+    bboxes_xyz = tf.concat(
+        [bboxes_xyz[..., 0:1], bboxes_y, bboxes_xyz[..., 2:3]], axis=-1)
     # Compensate rotation.
     bboxes_dims = features.labels.bboxes_3d[..., 3:6]
     bboxes_rot = features.labels.bboxes_3d[..., 6:]
-    bboxes_rot = tf.where(choice, geometry.WrapAngleRad(-bboxes_rot + np.pi),
+    bboxes_rot = tf.where(choice, geometry.WrapAngleRad(-bboxes_rot),
                           bboxes_rot)
     features.labels.bboxes_3d = tf.concat([bboxes_xyz, bboxes_dims, bboxes_rot],
                                           axis=-1)
@@ -2239,7 +2253,7 @@ class GlobalTranslateNoise(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(GlobalTranslateNoise, cls).Params()
+    p = super().Params()
     p.Define('noise_std', [0.2, 0.2, 0.2],
              'Standard deviation of translation noise per axis.')
     return p
@@ -2306,7 +2320,7 @@ class RandomBBoxTransform(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(RandomBBoxTransform, cls).Params()
+    p = super().Params()
     p.Define(
         'max_rotation', None,
         'The rotation amount will be randomly picked from '
@@ -2334,7 +2348,7 @@ class RandomBBoxTransform(Preprocessor):
     return p
 
   def __init__(self, params):
-    super(RandomBBoxTransform, self).__init__(params)
+    super().__init__(params)
     p = self.params
     if p.max_rotation is None:
       raise ValueError('max_rotation needs to be specified, instead of None.')
@@ -2359,23 +2373,27 @@ class RandomBBoxTransform(Preprocessor):
     actual_num_bboxes = tf.reduce_sum(
         tf.cast(features.labels.bboxes_3d_mask, tf.int32))
 
-    (_, _, _, _, _, _, out_bbox_xyz, out_bbox_feature,
-     out_bbox_mask) = functional_ops.For(
-         start=0,
-         limit=actual_num_bboxes,
-         delta=1,
-         inputs=[
-             points_xyz, points_feature, real_bboxes_3d, points_in_bbox_mask,
-             rotation, translate_pose, out_bbox_xyz, out_bbox_feature,
-             out_bbox_mask
-         ],
-         body=transform_fn)
+    ret = py_utils.ForLoop(
+        body=transform_fn,
+        start=0,
+        limit=actual_num_bboxes,
+        delta=1,
+        loop_state=py_utils.NestedMap(
+            points_xyz=points_xyz,
+            points_feature=points_feature,
+            bboxes_3d=real_bboxes_3d,
+            points_in_bbox_mask=points_in_bbox_mask,
+            rotation=rotation,
+            translate_pose=translate_pose,
+            out_bbox_points=out_bbox_xyz,
+            out_bbox_feature=out_bbox_feature,
+            out_bbox_mask=out_bbox_mask))
 
     # Gather all of the transformed points and features
-    out_bbox_xyz = tf.reshape(out_bbox_xyz, [-1, 3])
+    out_bbox_xyz = tf.reshape(ret.out_bbox_points, [-1, 3])
     num_features = features.lasers.points_feature.shape[-1]
-    out_bbox_feature = tf.reshape(out_bbox_feature, [-1, num_features])
-    out_bbox_mask = tf.cast(tf.reshape(out_bbox_mask, [-1]), tf.bool)
+    out_bbox_feature = tf.reshape(ret.out_bbox_feature, [-1, num_features])
+    out_bbox_mask = tf.cast(tf.reshape(ret.out_bbox_mask, [-1]), tf.bool)
     fg_xyz = tf.boolean_mask(out_bbox_xyz, out_bbox_mask)
     fg_feature = tf.boolean_mask(out_bbox_feature, out_bbox_mask)
     return fg_xyz, fg_feature
@@ -2420,18 +2438,14 @@ class RandomBBoxTransform(Preprocessor):
 
     num_features = features.lasers.points_feature.shape[-1]
 
-    @tf.Defun(tf.int32, tf.float32, tf.float32, tf.float32, tf.bool, tf.float32,
-              tf.float32, tf.float32, tf.float32, tf.float32)
-    def Transform(i, points_xyz, points_feature, bboxes_3d, points_in_bbox_mask,
-                  rotation, translate_pose, out_bbox_points, out_bbox_feature,
-                  out_bbox_mask):
+    def Transform(i, state):
       """Transform the points in bounding box `i`."""
-      points_xyz = tf.reshape(points_xyz, [-1, 3])
-      bbox_mask = tf.reshape(points_in_bbox_mask[:, i], [-1])
+      state.points_xyz = tf.reshape(state.points_xyz, [-1, 3])
+      bbox_mask = tf.reshape(state.points_in_bbox_mask[:, i], [-1])
 
       # Fetch only the points in the bounding box.
-      points_xyz_masked = tf.boolean_mask(points_xyz, bbox_mask)
-      points_feature_masked = tf.boolean_mask(points_feature, bbox_mask)
+      points_xyz_masked = tf.boolean_mask(state.points_xyz, bbox_mask)
+      points_feature_masked = tf.boolean_mask(state.points_feature, bbox_mask)
 
       num_points = tf.shape(points_xyz_masked)[0]
 
@@ -2440,16 +2454,16 @@ class RandomBBoxTransform(Preprocessor):
       #
       # Translate the box to the origin, then rotate the desired
       # rotation angle.
-      translation_vec = bboxes_3d[i, 0:3]
-      rotation_vec = [rotation[i], 0., 0.]
+      translation_vec = state.bboxes_3d[i, 0:3]
+      rotation_vec = [state.rotation[i], 0., 0.]
       pose = tf.concat([-translation_vec, rotation_vec], axis=0)
       points_xyz_adj = geometry.CoordinateTransform(points_xyz_masked, pose)
       if p.max_scaling is not None or p.max_shearing is not None:
         # Translate the points in the bounding box by moving dz/2 so that the
         # bottom of the bounding box is at Z = 0 when any of the two
         # (max_scaling or max_shearing) is not None
-        translation_scale_or_shear = tf.stack([0., 0., bboxes_3d[i, 5] / 2],
-                                              axis=0)
+        translation_scale_or_shear = tf.stack(
+            [0., 0., state.bboxes_3d[i, 5] / 2], axis=0)
         pose1 = tf.concat([translation_scale_or_shear, [0., 0., 0.]], axis=0)
         points_xyz_adj = geometry.CoordinateTransform(points_xyz_adj, pose1)
       else:
@@ -2514,7 +2528,8 @@ class RandomBBoxTransform(Preprocessor):
 
       # Translate the points back, adding noise if needed.
       translation_with_noise = (
-          translation_vec - translation_scale_or_shear + translate_pose[i])
+          translation_vec - translation_scale_or_shear +
+          state.translate_pose[i])
       pose2 = tf.concat([translation_with_noise, [0., 0., 0.]], axis=0)
       final_points_xyz = geometry.CoordinateTransform(points_xyz_adj, pose2)
 
@@ -2528,16 +2543,14 @@ class RandomBBoxTransform(Preprocessor):
           points_feature_masked, [p.max_num_points_per_bbox, num_features])
       points_mask = py_utils.PadOrTrimTo(points_mask,
                                          [p.max_num_points_per_bbox])
-      out_bbox_points = inplace_ops.alias_inplace_update(
-          out_bbox_points, [i], tf.expand_dims(final_points_xyz, 0))
-      out_bbox_feature = inplace_ops.alias_inplace_update(
-          out_bbox_feature, [i], tf.expand_dims(final_points_feature, 0))
-      out_bbox_mask = inplace_ops.alias_inplace_update(
-          out_bbox_mask, [i], tf.expand_dims(points_mask, 0))
+      state.out_bbox_points = inplace_ops.alias_inplace_update(
+          state.out_bbox_points, [i], tf.expand_dims(final_points_xyz, 0))
+      state.out_bbox_feature = inplace_ops.alias_inplace_update(
+          state.out_bbox_feature, [i], tf.expand_dims(final_points_feature, 0))
+      state.out_bbox_mask = inplace_ops.alias_inplace_update(
+          state.out_bbox_mask, [i], tf.expand_dims(points_mask, 0))
 
-      return (points_xyz, points_feature, bboxes_3d, points_in_bbox_mask,
-              rotation, translate_pose, out_bbox_points, out_bbox_feature,
-              out_bbox_mask)
+      return state
 
     # Get the points and features that reside in boxes.
     if 'points_padding' in features.lasers:
@@ -2658,12 +2671,12 @@ class GroundTruthAugmentor(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(GroundTruthAugmentor, cls).Params()
+    p = super().Params()
     p.Define(
         'groundtruth_database', None,
         'If not None, loads groundtruths from this database and adds '
         'them to the current scene. Groundtruth database is expected '
-        'to be a TFRecord of KITTI crops.')
+        'to be a TFRecord of KITTI or Waymo crops.')
     p.Define(
         'num_db_objects', None,
         'Number of objects in the database. Because we use TFRecord '
@@ -2700,6 +2713,12 @@ class GroundTruthAugmentor(Preprocessor):
         'label_filter', [],
         'A list where if specified, only examples of these label integers will '
         'be included in an example.')
+    p.Define(
+        'batch_mode', False, 'Bool value to control whether the whole'
+        'groundtruth database is loaded or partially loaded to save memory'
+        'usage. Setting to False loads the whole ground truth database into '
+        'memory. Otherwise, only a fraction of the data will be loaded into '
+        'the memory.')
     return p
 
   def _ReadDB(self, file_patterns):
@@ -2737,15 +2756,39 @@ class GroundTruthAugmentor(Preprocessor):
       difficulty = tf.cast(example_data['difficulty'], tf.int32)
       return (points, features, points_mask, bboxes_3d, label, difficulty)
 
-    # Read the entire dataset into memory.
-    dataset = tf.data.Dataset.list_files(file_patterns)
-    dataset = dataset.interleave(
-        tf.data.TFRecordDataset, cycle_length=10, num_parallel_calls=10)
-    dataset = dataset.take(p.num_db_objects)
-    dataset = dataset.map(Process, num_parallel_calls=10)
-    # We batch the output of the dataset into a very large Tensor, then cache it
-    # in memory.
-    dataset = dataset.batch(p.num_db_objects).cache().repeat()
+    if p.batch_mode:
+      # Prepare dataset for ground truth bounding boxes. Randomly shuffle the
+      # file patterns.
+      file_count = len(tf.io.gfile.glob(file_patterns))
+      dataset = tf.stateless_list_files(file_patterns)
+      dataset = dataset.apply(tf.stateless_cache_dataset())
+      dataset = dataset.apply(
+          tf.stateless_shuffle_dataset(
+              buffer_size=file_count, reshuffle_each_iteration=True))
+      dataset = dataset.interleave(
+          tf.data.TFRecordDataset, cycle_length=10, num_parallel_calls=10)
+      dataset = dataset.repeat()
+      # Only prefetch a few objects from the database to reduce memory
+      # consumption.
+      dataset = dataset.map(Process, num_parallel_calls=10)
+      # We need more bboxes than max_augmented_bboxes in a batch, because some
+      # of the boxes are filtered out.
+      dataset = dataset.batch(p.max_augmented_bboxes * 10)
+      dataset = dataset.apply(tf.stateless_cache_dataset()).prefetch(
+          p.max_augmented_bboxes * 30)
+    else:
+      # Prepare dataset for ground truth bounding boxes.
+      dataset = tf.stateless_list_files(file_patterns)
+      dataset = dataset.interleave(
+          tf.data.TFRecordDataset, cycle_length=10, num_parallel_calls=10)
+      # Read the entire dataset into memory.
+      dataset = dataset.take(p.num_db_objects)
+      dataset = dataset.map(Process, num_parallel_calls=10)
+      # We batch the output of the dataset into a very large Tensor, then cache
+      # it in memory.
+      dataset = dataset.batch(p.num_db_objects)
+      dataset = dataset.apply(tf.stateless_cache_dataset()).repeat()
+
     iterator = dataset.make_one_shot_iterator()
     input_batch = iterator.get_next()
 
@@ -2899,7 +2942,7 @@ class GroundTruthAugmentor(Preprocessor):
     # To reduce the amount of computation, we randomly subsample to slightly
     # more than we want to augment.
     db_idx = tf.random.shuffle(
-        db_idx, seed=p.random_seed)[0:num_augmented_bboxes * 2]
+        db_idx, seed=p.random_seed)[0:num_augmented_bboxes * 5]
 
     # After filtering, further filter out the db boxes that would occlude with
     # other boxes (including other database boxes).
@@ -3017,7 +3060,7 @@ class FrustumDropout(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(FrustumDropout, cls).Params()
+    p = super().Params()
     p.Define('theta_width', 0.03, 'Theta angle width for dropping points.')
     p.Define('phi_width', 0.0, 'Phi angle width for dropping points.')
     p.Define(
@@ -3032,7 +3075,7 @@ class FrustumDropout(Preprocessor):
     return p
 
   def __init__(self, params):
-    super(FrustumDropout, self).__init__(params)
+    super().__init__(params)
     p = self.params
     if p.phi_width < 0:
       raise ValueError('phi_width must be >= 0, phi_width={}'.format(
@@ -3155,7 +3198,7 @@ class RepeatPreprocessor(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(RepeatPreprocessor, cls).Params()
+    p = super().Params()
     p.Define('repeat_count', 1, 'Number of times the subprocessor is applied to'
              ' features.')
     p.Define('subprocessor', None, 'One of the input preprocessors.')
@@ -3163,7 +3206,7 @@ class RepeatPreprocessor(Preprocessor):
     return p
 
   def __init__(self, params):
-    super(RepeatPreprocessor, self).__init__(params)
+    super().__init__(params)
     p = self.params
     if p.subprocessor is None:
       raise ValueError('No subprocessor was specified for RepeatPreprocessor.')
@@ -3172,8 +3215,7 @@ class RepeatPreprocessor(Preprocessor):
           'repeat_count must be >= 0 and int, repeat_count={}'.format(
               p.repeat_count))
 
-    with tf.variable_scope(p.name):
-      self.CreateChild('subprocessor', p.subprocessor)
+    self.CreateChild('subprocessor', p.subprocessor)
 
   def TransformFeatures(self, features):
     p = self.params
@@ -3206,13 +3248,13 @@ class RandomApplyPreprocessor(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(RandomApplyPreprocessor, cls).Params()
+    p = super().Params()
     p.Define('prob', 1.0, 'The probability the subprocessor being executed.')
     p.Define('subprocessor', None, 'Params for an input preprocessor.')
     return p
 
   def __init__(self, params):
-    super(RandomApplyPreprocessor, self).__init__(params)
+    super().__init__(params)
     p = self.params
     if p.subprocessor is None:
       raise ValueError('No subprocessor was specified for RepeatPreprocessor.')
@@ -3220,8 +3262,7 @@ class RandomApplyPreprocessor(Preprocessor):
       raise ValueError(
           'prob must be >= 0 and <=1 and float type, prob={}'.format(p.prob))
 
-    with tf.variable_scope(p.name):
-      self.CreateChild('subprocessor', p.subprocessor)
+    self.CreateChild('subprocessor', p.subprocessor)
 
   def TransformFeatures(self, features):
     p = self.params
@@ -3297,7 +3338,7 @@ class SparseSampler(Preprocessor):
 
   @classmethod
   def Params(cls):
-    p = super(SparseSampler, cls).Params()
+    p = super().Params()
     p.Define('center_selector', 'farthest', 'Method to sample centers. '
              'Valid options - uniform, farthest.')
     p.Define('neighbor_sampler', 'uniform', 'Method to select neighbors. '
@@ -3324,12 +3365,11 @@ class SparseSampler(Preprocessor):
     return p
 
   def __init__(self, params):
-    super(SparseSampler, self).__init__(params)
+    super().__init__(params)
     p = self.params
-    with tf.variable_scope(p.name):
-      if p.features_preparation_layers:
-        self.CreateChildren('features_preparation_layers',
-                            p.features_preparation_layers)
+    if p.features_preparation_layers:
+      self.CreateChildren('features_preparation_layers',
+                          p.features_preparation_layers)
 
   def TransformFeatures(self, features):
     p = self.params

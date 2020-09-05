@@ -16,11 +16,6 @@ config_setting(
     values = {"define": "using_cuda=true"},
 )
 
-config_setting(
-    name = "py3_mode",
-    flag_values = {"@bazel_tools//tools/python:python_version": "PY3"},
-)
-
 py_library(
     name = "base_runner",
     srcs = ["base_runner.py"],
@@ -47,7 +42,7 @@ py_library(
 py_library(
     name = "compat",
     srcs = ["compat.py"],
-    srcs_version = "PY2AND3",  # ALLOW_PY2: b/160070970.
+    srcs_version = "PY3",
     deps = [
         # Implicit absl.flags dependency.
         # Implicit absl.logging dependency.
@@ -59,6 +54,7 @@ py_test(
     name = "compat_test",
     srcs = ["compat_test.py"],
     python_version = "PY3",
+    srcs_version = "PY3",
     deps = [
         ":compat",
     ],
@@ -67,7 +63,7 @@ py_test(
 py_library(
     name = "model_imports_no_params",
     srcs = ["model_imports.py"],
-    srcs_version = "PY2AND3",  # ALLOW_PY2: b/160070970.
+    srcs_version = "PY3",
 )
 
 # Depend on this for access to the model registry with params for all tasks as
@@ -85,6 +81,7 @@ py_test(
     name = "model_import_test",
     srcs = ["model_import_test.py"],
     python_version = "PY3",
+    srcs_version = "PY3",
     deps = [
         ":compat",
         ":model_imports_no_params",
@@ -110,6 +107,7 @@ py_test(
     name = "models_test",
     srcs = ["models_test.py"],
     python_version = "PY3",
+    srcs_version = "PY3",
     deps = [
         ":compat",
         ":model_imports",
@@ -135,6 +133,7 @@ py_test(
     name = "model_registry_test",
     srcs = ["model_registry_test.py"],
     python_version = "PY3",
+    srcs_version = "PY3",
     deps = [":model_registry_test_lib"],
 )
 
@@ -173,7 +172,7 @@ py_library(
         # Implicit network file system dependency.
         "//lingvo:base_runner",
         # Implicit IPython dependency.
-        # So why doesn't bazel complain about these implicit dependencies?
+        "//lingvo/core:base_layer",
         "//lingvo/core:base_model",
         "//lingvo/core:base_model_params",
         "//lingvo/core:checkpointer_lib",
@@ -183,7 +182,6 @@ py_library(
         "//lingvo/core:py_utils",
         "//lingvo/core:summary_utils",
         # Implicit numpy dependency.
-        # Implicit six dependency.
         # Implicit tensorflow grpc dependency.
     ],
 )
@@ -202,9 +200,11 @@ lingvo_py_binary(
 py_test(
     name = "trainer_test",
     size = "large",
+    timeout = "long",
     srcs = ["trainer_test.py"],
     python_version = "PY3",
-    shard_count = 6,
+    shard_count = 12,
+    srcs_version = "PY3",
     tags = [
         "noasan",
         "nomsan",
@@ -218,16 +218,16 @@ py_test(
         ":trainer_lib",
         # Implicit absl.testing.flagsaver dependency.
         "//lingvo/core:base_input_generator",
-        "//lingvo/core:base_layer",
         "//lingvo/core:base_model",
-        "//lingvo/core:py_utils",
+        "//lingvo/core:base_model_params",
+        "//lingvo/core:hyperparams",
+        "//lingvo/core:inference_graph_py_pb2",
         "//lingvo/core:test_utils",
         "//lingvo/core:trainer_test_utils",
         "//lingvo/tasks/image:input_generator",
         "//lingvo/tasks/image/params:mnist",  # build_cleaner: keep
         "//lingvo/tasks/punctuator/params:codelab",  # build_cleaner: keep
         # Implicit numpy dependency.
-        # Implicit six dependency.
     ],
 )
 
@@ -257,7 +257,6 @@ py_library(
         "//lingvo/tasks/image/params:mnist",
         "//lingvo/tasks/punctuator/params:codelab",
         # Implicit numpy dependency.
-        # Implicit six dependency.
     ],
 )
 

@@ -1,3 +1,4 @@
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,9 +15,7 @@
 # ==============================================================================
 """Multitask models."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
+from lingvo import compat as tf
 from lingvo.core import base_model
 from lingvo.core import py_utils
 
@@ -26,22 +25,17 @@ class SharedEncoderModel(base_model.MultiTaskModel):
 
   @classmethod
   def Params(cls):
-    p = super(SharedEncoderModel, cls).Params()
+    p = super().Params()
     p.Define('encoder_to_share', None,
              'The task name whose encoder should be shared.')
     return p
 
   def __init__(self, params):
-    super(SharedEncoderModel, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.encoder_to_share in self.task_names
 
     # Assign the encoder from p.encoder_to_share task to all other tasks.
-    # The assumption here is that all of the variables are initialized in the
-    # __init__ function of the Task, and that they are connected together later
-    # in the FProp function. So, here, after all of the Tasks have been
-    # initialized, we can change references around to share what we need, and
-    # later when FProp is called everything will be connected properly.
     encoder = self.GetTask(p.encoder_to_share).encoder
     for name in self.task_names:
       if name != p.encoder_to_share:
@@ -49,13 +43,24 @@ class SharedEncoderModel(base_model.MultiTaskModel):
         assert 'encoder' not in task.children
         task.AddChild('encoder', encoder)
 
+  def _CreateChildrenVariables(self):
+    # Ensure p.encoder_to_share is created first.
+    task_name = self.params.encoder_to_share
+    with tf.name_scope(self.params.name):
+      if self.params.task_name_var_scope:
+        with tf.variable_scope(task_name):
+          self.GetTask(task_name).InstantiateVariables()
+      else:
+        self.GetTask(task_name).InstantiateVariables()
+    super()._CreateChildrenVariables()
+
 
 class SharedEncoderDecoderModel(base_model.MultiTaskModel):
   """Multitask model that shares both encoder and decoder between tasks."""
 
   @classmethod
   def Params(cls):
-    p = super(SharedEncoderDecoderModel, cls).Params()
+    p = super().Params()
     p.Define('encoder_to_share', None,
              'The task name whose encoder should be shared.')
     p.Define('decoder_to_share', None,
@@ -63,7 +68,7 @@ class SharedEncoderDecoderModel(base_model.MultiTaskModel):
     return p
 
   def __init__(self, params):
-    super(SharedEncoderDecoderModel, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.encoder_to_share in self.task_names
     assert p.decoder_to_share in self.task_names
@@ -94,7 +99,7 @@ class RegExSharedVariableModel(base_model.MultiTaskModel):
 
   @classmethod
   def Params(cls):
-    p = super(RegExSharedVariableModel, cls).Params()
+    p = super().Params()
     p.Define(
         'variable_renaming_rules', None,
         'A list/tuple of variable renaming rules. Each element in the'
@@ -104,15 +109,19 @@ class RegExSharedVariableModel(base_model.MultiTaskModel):
 
   def __init__(self, params):
     # Enable variable sharing.
-    p = params
     with py_utils.OpportunisticVariableReuseScope():
-      with py_utils.VariableRenameScope(p.variable_renaming_rules):
-        super(RegExSharedVariableModel, self).__init__(params)
+      with py_utils.VariableRenameScope(params.variable_renaming_rules):
+        super().__init__(params)
+
+  def InstantiateVariables(self):
+    # Enable variable sharing.
+    with py_utils.OpportunisticVariableReuseScope():
+      with py_utils.VariableRenameScope(self.params.variable_renaming_rules):
+        super().InstantiateVariables()
 
   def ConstructFPropBPropGraph(self):
     # We need to override this since constructing the BPropGraph
     # creates slot variables.
-    p = self._params
     with py_utils.OpportunisticVariableReuseScope():
-      with py_utils.VariableRenameScope(p.variable_renaming_rules):
-        super(RegExSharedVariableModel, self).ConstructFPropBPropGraph()
+      with py_utils.VariableRenameScope(self.params.variable_renaming_rules):
+        super().ConstructFPropBPropGraph()

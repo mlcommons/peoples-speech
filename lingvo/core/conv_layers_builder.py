@@ -43,7 +43,7 @@ GlobalPoolingLayer = conv_layers_with_time_padding.GlobalPoolingLayer
 class BiasLayer(builder_layers.BiasLayer):
 
   def FProp(self, theta, inputs, paddings):
-    bias_added = super(BiasLayer, self).FProp(theta, inputs)
+    bias_added = super().FProp(theta, inputs)
     return bias_added, paddings
 
 
@@ -52,7 +52,7 @@ class CausalPoolingLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(CausalPoolingLayer, cls).Params()
+    p = super().Params()
     p.Define('pooling_type', 'AVG', 'Pooling type: MAX|AVG')
     p.Define(
         'left_context', None, 'Number of frames to the left in the pooling'
@@ -129,15 +129,19 @@ class Builder(builder.Base):
 
   @classmethod
   def Params(cls):
-    p = super(Builder, cls).Params()
+    p = super().Params()
     p.Define('norm_layer_tpl',
              ConvBatchNormLayer.Params().Set(decay=0.999),
              'If specified, the normalization layer template.')
     p.Define('weight_norm', False, 'Add weight norm for kernel weights or not.')
+    p.Define(
+        'v2_padding', False, 'Prefer setting to True. The default '
+        'implementation is incorrect for strided convolutions.')
+
     return p
 
   def _BiasNoPadding(self, name, dims):
-    return super(Builder, self)._Bias(name, dims)
+    return super()._Bias(name, dims)
 
   def _Bias(self, name, dims):
     """Bias layer. The bias is added to the last dimension of the input."""
@@ -181,7 +185,8 @@ class Builder(builder.Base):
         filter_shape=filter_shape + [in_dim, out_dim],
         filter_stride=stride,
         dilation_rate=dilation,
-        weight_norm=self.params.weight_norm)
+        weight_norm=self.params.weight_norm,
+        v2_padding=self.params.v2_padding)
 
   def _RawDepthwiseConv2D(self,
                           name,
@@ -200,7 +205,8 @@ class Builder(builder.Base):
         filter_shape=filter_shape + [in_dim, depth_multiplier],
         filter_stride=stride,
         dilation_rate=dilation,
-        weight_norm=self.params.weight_norm)
+        weight_norm=self.params.weight_norm,
+        v2_padding=self.params.v2_padding)
 
   def _GlobalPooling(self, name, pooling_type):
     return GlobalPoolingLayer.Params().Set(name=name, pooling_type=pooling_type)
@@ -344,7 +350,8 @@ class Builder(builder.Base):
         deterministic_dropout=deterministic_dropout,
         params_init=py_utils.WeightInit.TruncatedGaussian(
             scale=math.sqrt(2.6 / kernel_size)),  # Fan-out initialization.
-        dropconnect_prob=dropconnect_prob)
+        dropconnect_prob=dropconnect_prob,
+        v2_padding=self.params.v2_padding)
 
   def _Add(self, name, residual_weight=1.0):
     return self._Fn(

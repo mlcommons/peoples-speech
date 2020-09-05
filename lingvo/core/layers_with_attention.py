@@ -1,3 +1,4 @@
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,17 +14,12 @@
 # limitations under the License.
 """Lingvo layers that depend on attention layers but are not recurrent."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import lingvo.compat as tf
 from lingvo.core import attention
 from lingvo.core import base_layer
 from lingvo.core import layers
 from lingvo.core import py_utils
 from lingvo.core import symbolic
-from six.moves import range
 
 
 class TransformerAttentionLayer(base_layer.BaseLayer):
@@ -75,7 +71,7 @@ class TransformerAttentionLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(TransformerAttentionLayer, cls).Params()
+    p = super().Params()
     p.Define('source_dim', 0, 'Dimension of the transformer block input.')
     p.Define('context_dim', 0, 'Dimension of the attention contexts.')
     p.Define('atten_hidden_dim', 0, 'Dimension of the attention hidden dim.')
@@ -118,10 +114,14 @@ class TransformerAttentionLayer(base_layer.BaseLayer):
         'use layers.HighwaySkipLayer.Params() or layers.GatingLayer.Params() '
         'for gated residual add, where output is instead '
         'residual_function.FProp(x, f(x)).')
+    p.Define(
+        'pre_layer_norm', True, 'When True, layer norm is used before attention'
+        'module, otherwise used after attention module which is consistent with'
+        'Vaswani et al\'s paper')
     return p
 
   def __init__(self, params):
-    super(TransformerAttentionLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.name
     assert p.source_dim
@@ -135,24 +135,23 @@ class TransformerAttentionLayer(base_layer.BaseLayer):
     if p.is_masked:
       assert p.mask_type in ['future', 'eye', 'ngram']
 
-    with tf.variable_scope(p.name):
-      params = self._InitAttention(p.atten_tpl)
-      self.CreateChild('atten', params)
+    params = self._InitAttention(p.atten_tpl)
+    self.CreateChild('atten', params)
 
-      # Initialize attention layer norm
-      params = p.ln_tpl.Copy()
-      params.name = 'atten_ln'
-      params.input_dim = p.source_dim
-      self.CreateChild('layer_norm', params)
+    # Initialize attention layer norm
+    params = p.ln_tpl.Copy()
+    params.name = 'atten_ln'
+    params.input_dim = p.source_dim
+    self.CreateChild('layer_norm', params)
 
-      dropout_tpl = p.residual_dropout_tpl.Copy()
-      dropout_tpl.keep_prob = (1.0 - p.residual_dropout_prob)
-      self.CreateChild('residual_dropout', dropout_tpl)
+    dropout_tpl = p.residual_dropout_tpl.Copy()
+    dropout_tpl.keep_prob = (1.0 - p.residual_dropout_prob)
+    self.CreateChild('residual_dropout', dropout_tpl)
 
-      if p.residual_function is not None:
-        params = p.residual_function.Copy()
-        params.input_dim = p.atten_hidden_dim
-        self.CreateChild('residual_function', params)
+    if p.residual_function is not None:
+      params = p.residual_function.Copy()
+      params.input_dim = p.atten_hidden_dim
+      self.CreateChild('residual_function', params)
 
   def _InitAttention(self, atten_tpl):
     p = self.params
@@ -202,7 +201,8 @@ class TransformerAttentionLayer(base_layer.BaseLayer):
     """
     p = self.params
     unnormalized_query_vec = query_vec
-    query_vec = self.layer_norm.FProp(theta.layer_norm, query_vec)
+    if p.pre_layer_norm:
+      query_vec = self.layer_norm.FProp(theta.layer_norm, query_vec)
 
     if source_vecs is None:  # For self-attention: keys = queries.
       source_vecs = query_vec
@@ -222,9 +222,8 @@ class TransformerAttentionLayer(base_layer.BaseLayer):
       # Padding is complemented, so time indexes that we want to mask out
       # receive padding weight 1.0.
       if p.mask_type == 'future':
-        padding = 1.0 - tf.linalg.band_part(
-            tf.ones([target_time, target_time], dtype=py_utils.FPropDtype(p)),
-            -1, 0)
+        padding = py_utils.CausalSelfAttenPadding(
+            target_time, dtype=py_utils.FPropDtype(p))
       elif p.mask_type == 'eye':
         padding = tf.eye(target_time, target_time, dtype=py_utils.FPropDtype(p))
       elif p.mask_type == 'ngram':  # Maybe apply N-gram mask.
@@ -274,6 +273,8 @@ class TransformerAttentionLayer(base_layer.BaseLayer):
     else:
       h = self.residual_function.FProp(theta.residual_function, input_to_add,
                                        input_after_sublayer)
+    if not p.pre_layer_norm:
+      h = self.layer_norm.FProp(theta.layer_norm, h)
     atten_prob = tf.reshape(
         atten_prob,
         [target_time, target_bs,
@@ -355,6 +356,9 @@ class TransformerAttentionLayer(base_layer.BaseLayer):
       h = self.residual_function.FProp(theta.residual_function, input_to_add,
                                        input_after_sublayer)
 
+    if not p.pre_layer_norm:
+      h = self.layer_norm.FProp(theta.layer_norm, h)
+
     new_states = py_utils.NestedMap(
         key=extended_packed_src.source_vecs,
         value=extended_packed_src.source_contexts)
@@ -382,7 +386,8 @@ class TransformerAttentionLayer(base_layer.BaseLayer):
     p = self.params
     assert p.is_masked  # Must be causal attention.
     unnormalized_query_vec = query_vec
-    query_vec = self.layer_norm.FProp(theta.layer_norm, query_vec)
+    if p.pre_layer_norm:
+      query_vec = self.layer_norm.FProp(theta.layer_norm, query_vec)
 
     cached_packed_src = py_utils.NestedMap(
         source_vecs=prefix_state.key,
@@ -413,7 +418,7 @@ class TransformerMultiSourceAttentionLayer(TransformerAttentionLayer):
 
   @classmethod
   def Params(cls):
-    p = super(TransformerMultiSourceAttentionLayer, cls).Params()
+    p = super().Params()
     p.Define('num_source', 0, 'Number of sources to attend to.')
     p.Define(
         'primary_source_index', 0, 'Index of the primary source whose '
@@ -424,9 +429,6 @@ class TransformerMultiSourceAttentionLayer(TransformerAttentionLayer):
     p.is_masked = False
     return p
 
-  def __init__(self, params):
-    super(TransformerMultiSourceAttentionLayer, self).__init__(params)
-
   def _InitAttention(self, atten_tpl):
     p = self.params
     source_atten_tpls = []
@@ -434,8 +436,7 @@ class TransformerMultiSourceAttentionLayer(TransformerAttentionLayer):
     for i in range(p.num_source):
       src_key = 'source_%d' % i
       src_atten = atten_tpl.Copy()
-      src_atten = super(TransformerMultiSourceAttentionLayer,
-                        self)._InitAttention(src_atten)
+      src_atten = super()._InitAttention(src_atten)
       src_atten.name = 'multihead_atten_%s' % src_key
       source_atten_tpls.append((src_key, src_atten))
 
@@ -464,12 +465,16 @@ class TransformerFeedForwardLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(TransformerFeedForwardLayer, cls).Params()
+    p = super().Params()
     p.Define('input_dim', 0, 'Dimension of the layer input.')
     p.Define('output_dim', 0, 'Dimension of the layer output.')
     p.Define('hidden_dim', 0, 'Dimension of the hidden layer.')
     p.Define('ln_tpl', layers.LayerNorm.Params(), 'Layer norm default params')
     p.Define('activation', 'RELU', 'Non-linearity.')
+    p.Define(
+        'residual_weight', 1., 'Weight applied on residual connection.'
+        'Final output is residual_weight * residual_fn(x) + x.'
+        'Only effective when add_skip_connection is True.')
     p.Define('fflayer_tpl',
              layers.FeedForwardNet.Params().Set(activation=['RELU', 'NONE']),
              'Feed forward layer default params')
@@ -492,49 +497,49 @@ class TransformerFeedForwardLayer(base_layer.BaseLayer):
         'of feed-forward network.')
     p.Define('add_skip_connection', True,
              'If True, add skip_connection from input to output.')
+    p.Define('pre_layer_norm', True, 'Pre or post layer norm')
     return p
 
   def __init__(self, params):
-    super(TransformerFeedForwardLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.name
     assert p.input_dim
     assert symbolic.ToStatic(p.hidden_dim) > 0
 
-    with tf.variable_scope(p.name):
-      # Initialize feed-forward layer
-      params = p.fflayer_tpl.Copy()
-      params.name = 'fflayer'
-      params.input_dim = p.input_dim
-      params.activation = [p.activation, 'NONE']
-      if p.output_dim == 0:
-        params.hidden_layer_dims = [p.hidden_dim, p.input_dim]
-      else:
-        params.hidden_layer_dims = [p.hidden_dim, p.output_dim]
+    # Initialize feed-forward layer
+    params = p.fflayer_tpl.Copy()
+    params.name = 'fflayer'
+    params.input_dim = p.input_dim
+    params.activation = [p.activation, 'NONE']
+    if p.output_dim == 0:
+      params.hidden_layer_dims = [p.hidden_dim, p.input_dim]
+    else:
+      params.hidden_layer_dims = [p.hidden_dim, p.output_dim]
 
-        if p.output_dim != p.input_dim:
-          pj = p.res_proj_tpl.Copy()
-          pj.name = 'res_proj'
-          pj.input_dim = p.input_dim
-          pj.output_dim = p.output_dim
-          pj.activation = 'NONE'
-          self.CreateChild('res_proj_layer', pj)
+      if p.output_dim != p.input_dim:
+        pj = p.res_proj_tpl.Copy()
+        pj.name = 'res_proj'
+        pj.input_dim = p.input_dim
+        pj.output_dim = p.output_dim
+        pj.activation = 'NONE'
+        self.CreateChild('res_proj_layer', pj)
 
-      params.dropout = [
-          params.dropout.cls.Params().Set(keep_prob=1.0 - p.relu_dropout_prob),
-          params.dropout.cls.Params().Set(keep_prob=1.0)
-      ]
-      self.CreateChild('fflayer', params)
+    params.dropout = [
+        params.dropout.cls.Params().Set(keep_prob=1.0 - p.relu_dropout_prob),
+        params.dropout.cls.Params().Set(keep_prob=1.0)
+    ]
+    self.CreateChild('fflayer', params)
 
-      # Initialize feed-forward layer norm
-      params = p.ln_tpl.Copy()
-      params.name = 'fflayer_ln'
-      params.input_dim = p.input_dim
-      self.CreateChild('layer_norm', params)
+    # Initialize feed-forward layer norm
+    params = p.ln_tpl.Copy()
+    params.name = 'fflayer_ln'
+    params.input_dim = p.input_dim
+    self.CreateChild('layer_norm', params)
 
-      dropout_tpl = p.residual_dropout_tpl.Copy()
-      dropout_tpl.keep_prob = (1.0 - p.residual_dropout_prob)
-      self.CreateChild('residual_dropout', dropout_tpl)
+    dropout_tpl = p.residual_dropout_tpl.Copy()
+    dropout_tpl.keep_prob = (1.0 - p.residual_dropout_prob)
+    self.CreateChild('residual_dropout', dropout_tpl)
 
   @property
   def output_dim(self):
@@ -557,7 +562,10 @@ class TransformerFeedForwardLayer(base_layer.BaseLayer):
     Returns:
       tensor of the same shape with inputs
     """
-    inputs_normalized = self.layer_norm.FProp(theta.layer_norm, inputs)
+    if self.params.pre_layer_norm:
+      inputs_normalized = self.layer_norm.FProp(theta.layer_norm, inputs)
+    else:
+      inputs_normalized = inputs
     if hasattr(self, 'res_proj_layer'):
       inputs = self.res_proj_layer.FProp(theta.res_proj_layer, inputs)
     h = self.residual_dropout.FProp(
@@ -565,7 +573,9 @@ class TransformerFeedForwardLayer(base_layer.BaseLayer):
         self.fflayer.FProp(theta.fflayer, inputs_normalized,
                            tf.expand_dims(paddings, -1)))
     if self.params.add_skip_connection:
-      h += inputs
+      h = inputs + h * self.params.residual_weight
+    if not self.params.pre_layer_norm:
+      h = self.layer_norm.FProp(theta.layer_norm, h)
     return h
 
 
@@ -583,7 +593,7 @@ class TransformerLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(TransformerLayer, cls).Params()
+    p = super().Params()
     p.Define('source_dim', 0, 'Dimension of the transformer block input.')
     p.Define('output_dim', 0, 'Dimension of the transformer block output.')
     p.Define('tr_atten_tpl',
@@ -612,7 +622,7 @@ class TransformerLayer(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(TransformerLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.name
     assert p.source_dim
@@ -622,41 +632,39 @@ class TransformerLayer(base_layer.BaseLayer):
       p.has_aux_atten = True
       p.mask_self_atten = True
 
-    with tf.variable_scope(p.name):
+    # Initialize multi-headed self-attention
+    params = p.tr_atten_tpl.Copy()
+    params.name = 'multihead_self_atten'
+    params.source_dim = p.source_dim
+    params.packed_input = p.packed_input
+    params.is_masked = p.mask_self_atten
+    self.CreateChild('self_atten', params)
 
-      # Initialize multi-headed self-attention
-      params = p.tr_atten_tpl.Copy()
-      params.name = 'multihead_self_atten'
+    if p.has_aux_atten:
+      # Initialize masked-multi-headed attention
+      params = (
+          p.tr_atten_tpl.Copy()
+          if p.tr_aux_atten_tpl is None else p.tr_aux_atten_tpl.Copy())
+      params.name = 'multihead_atten'
       params.source_dim = p.source_dim
       params.packed_input = p.packed_input
-      params.is_masked = p.mask_self_atten
-      self.CreateChild('self_atten', params)
+      if hasattr(params.atten_tpl, 'num_post_proj'):
+        params.atten_tpl.num_post_proj = p.num_aux_atten_post_proj
+      self.CreateChild('atten', params)
 
-      if p.has_aux_atten:
-        # Initialize masked-multi-headed attention
-        params = (
-            p.tr_atten_tpl.Copy()
-            if p.tr_aux_atten_tpl is None else p.tr_aux_atten_tpl.Copy())
-        params.name = 'multihead_atten'
-        params.source_dim = p.source_dim
-        params.packed_input = p.packed_input
-        if hasattr(params.atten_tpl, 'num_post_proj'):
-          params.atten_tpl.num_post_proj = p.num_aux_atten_post_proj
-        self.CreateChild('atten', params)
+    # Initialize feed-forward layer
+    params = p.tr_fflayer_tpl.Copy()
+    params.name = 'tr_fflayer'
+    params.input_dim = p.source_dim
+    params.output_dim = p.output_dim
+    self.CreateChild('fflayer', params)
 
-      # Initialize feed-forward layer
-      params = p.tr_fflayer_tpl.Copy()
-      params.name = 'tr_fflayer'
+    # Initialize output layer norm
+    if p.tr_post_ln_tpl:
+      params = p.tr_post_ln_tpl.Copy()
+      params.name = 'tr_post_layer_norm'
       params.input_dim = p.source_dim
-      params.output_dim = p.output_dim
-      self.CreateChild('fflayer', params)
-
-      # Initialize output layer norm
-      if p.tr_post_ln_tpl:
-        params = p.tr_post_ln_tpl.Copy()
-        params.name = 'tr_post_layer_norm'
-        params.input_dim = p.source_dim
-        self.CreateChild('layer_norm', params)
+      self.CreateChild('layer_norm', params)
 
   @property
   def output_dim(self):
@@ -812,7 +820,7 @@ class EvolvedTransformerEncoderBranchedConvsLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(EvolvedTransformerEncoderBranchedConvsLayer, cls).Params()
+    p = super().Params()
     p.Define('ln_tpl', layers.LayerNorm.Params(), 'Layer norm default params')
     p.Define('input_dim', 0, 'Dimension of the layer input.')
     p.Define('activation', 'RELU',
@@ -828,55 +836,54 @@ class EvolvedTransformerEncoderBranchedConvsLayer(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(EvolvedTransformerEncoderBranchedConvsLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.name
     assert p.input_dim
 
-    with tf.variable_scope(p.name):
-      # Initialize first layer norm.
-      params = p.ln_tpl.Copy()
-      params.name = 'first_layer_norm'
-      params.input_dim = p.input_dim
-      self.CreateChild('first_layer_norm', params)
+    # Initialize first layer norm.
+    params = p.ln_tpl.Copy()
+    params.name = 'first_layer_norm'
+    params.input_dim = p.input_dim
+    self.CreateChild('first_layer_norm', params)
 
-      # Initialize second layer norm.
-      params = p.ln_tpl.Copy()
-      params.name = 'second_layer_norm'
-      params.input_dim = p.input_dim * 4
-      self.CreateChild('second_layer_norm', params)
+    # Initialize second layer norm.
+    params = p.ln_tpl.Copy()
+    params.name = 'second_layer_norm'
+    params.input_dim = p.input_dim * 4
+    self.CreateChild('second_layer_norm', params)
 
-      # Initialize dense layer.
-      params = p.dense_tpl.Copy()
-      params.name = 'dense_layer'
-      params.input_dim = p.input_dim
-      params.activation = p.activation
-      params.output_dim = p.input_dim * 4
-      self.CreateChild('dense_layer', params)
+    # Initialize dense layer.
+    params = p.dense_tpl.Copy()
+    params.name = 'dense_layer'
+    params.input_dim = p.input_dim
+    params.activation = p.activation
+    params.output_dim = p.input_dim * 4
+    self.CreateChild('dense_layer', params)
 
-      # Initialize standard conv.
-      params = p.conv_tpl.Copy()
-      params.name = 'conv_layer'
-      params.bias = True
-      params.batch_norm = False
-      params.activation = p.activation
-      params.filter_stride = (1, 1)
-      params.filter_shape = (3, 1, p.input_dim, int(p.input_dim / 2))
-      self.CreateChild('conv_layer', params)
+    # Initialize standard conv.
+    params = p.conv_tpl.Copy()
+    params.name = 'conv_layer'
+    params.bias = True
+    params.batch_norm = False
+    params.activation = p.activation
+    params.filter_stride = (1, 1)
+    params.filter_shape = (3, 1, p.input_dim, int(p.input_dim / 2))
+    self.CreateChild('conv_layer', params)
 
-      # Initialize separable conv.
-      params = p.separable_conv_tpl.Copy()
-      params.name = 'separable_conv_layer'
-      params.bias = True
-      params.batch_norm = False
-      params.activation = 'NONE'
-      params.filter_stride = (1, 1)
-      params.filter_shape = (9, 1, int(p.input_dim * 4), p.input_dim)
-      self.CreateChild('separable_conv_layer', params)
+    # Initialize separable conv.
+    params = p.separable_conv_tpl.Copy()
+    params.name = 'separable_conv_layer'
+    params.bias = True
+    params.batch_norm = False
+    params.activation = 'NONE'
+    params.filter_stride = (1, 1)
+    params.filter_shape = (9, 1, int(p.input_dim * 4), p.input_dim)
+    self.CreateChild('separable_conv_layer', params)
 
-      # Initialize dropout.
-      dropout_tpl = p.dropout_tpl.Copy()
-      self.CreateChild('dropout', dropout_tpl)
+    # Initialize dropout.
+    dropout_tpl = p.dropout_tpl.Copy()
+    self.CreateChild('dropout', dropout_tpl)
 
   def FProp(self, theta, inputs, paddings):
     inputs_normalized = self.first_layer_norm.FProp(theta.first_layer_norm,
@@ -925,7 +932,7 @@ class EvolvedTransformerDecoderBranchedConvsLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(EvolvedTransformerDecoderBranchedConvsLayer, cls).Params()
+    p = super().Params()
     p.Define('ln_tpl', layers.LayerNorm.Params(), 'Layer norm default params')
     p.Define('input_dim', 0, 'Dimension of the layer input.')
     p.Define('activation', 'RELU',
@@ -938,57 +945,56 @@ class EvolvedTransformerDecoderBranchedConvsLayer(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(EvolvedTransformerDecoderBranchedConvsLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.name
     assert p.input_dim
 
-    with tf.variable_scope(p.name):
-      # Initialize first layer norm.
-      params = p.ln_tpl.Copy()
-      params.name = 'first_layer_norm'
-      params.input_dim = p.input_dim
-      self.CreateChild('first_layer_norm', params)
+    # Initialize first layer norm.
+    params = p.ln_tpl.Copy()
+    params.name = 'first_layer_norm'
+    params.input_dim = p.input_dim
+    self.CreateChild('first_layer_norm', params)
 
-      # Initialize second layer norm.
-      params = p.ln_tpl.Copy()
-      params.name = 'second_layer_norm'
-      params.input_dim = p.input_dim * 2
-      self.CreateChild('second_layer_norm', params)
+    # Initialize second layer norm.
+    params = p.ln_tpl.Copy()
+    params.name = 'second_layer_norm'
+    params.input_dim = p.input_dim * 2
+    self.CreateChild('second_layer_norm', params)
 
-      # Initialize separable conv.
-      params = p.separable_conv_tpl.Copy()
-      params.name = 'separable_conv_11x1_layer'
-      params.bias = True
-      params.batch_norm = False
-      params.activation = p.activation
-      params.filter_stride = (1, 1)
-      params.filter_shape = (11, 1, p.input_dim, int(p.input_dim * 2))
-      self.CreateChild('separable_conv_11x1_layer', params)
+    # Initialize separable conv.
+    params = p.separable_conv_tpl.Copy()
+    params.name = 'separable_conv_11x1_layer'
+    params.bias = True
+    params.batch_norm = False
+    params.activation = p.activation
+    params.filter_stride = (1, 1)
+    params.filter_shape = (11, 1, p.input_dim, int(p.input_dim * 2))
+    self.CreateChild('separable_conv_11x1_layer', params)
 
-      # Initialize first separable conv.
-      params = p.separable_conv_tpl.Copy()
-      params.name = 'separable_conv_7x1_layer'
-      params.bias = True
-      params.batch_norm = False
-      params.activation = 'NONE'
-      params.filter_stride = (1, 1)
-      params.filter_shape = (7, 1, p.input_dim, int(p.input_dim / 2))
-      self.CreateChild('separable_conv_7x1_layer', params)
+    # Initialize first separable conv.
+    params = p.separable_conv_tpl.Copy()
+    params.name = 'separable_conv_7x1_layer'
+    params.bias = True
+    params.batch_norm = False
+    params.activation = 'NONE'
+    params.filter_stride = (1, 1)
+    params.filter_shape = (7, 1, p.input_dim, int(p.input_dim / 2))
+    self.CreateChild('separable_conv_7x1_layer', params)
 
-      # Initialize second separable conv.
-      params = p.separable_conv_tpl.Copy()
-      params.name = 'separable_conv_7x1_layer_2'
-      params.bias = True
-      params.batch_norm = False
-      params.activation = 'NONE'
-      params.filter_stride = (1, 1)
-      params.filter_shape = (7, 1, int(p.input_dim * 2), p.input_dim)
-      self.CreateChild('separable_conv_7x1_layer_2', params)
+    # Initialize second separable conv.
+    params = p.separable_conv_tpl.Copy()
+    params.name = 'separable_conv_7x1_layer_2'
+    params.bias = True
+    params.batch_norm = False
+    params.activation = 'NONE'
+    params.filter_stride = (1, 1)
+    params.filter_shape = (7, 1, int(p.input_dim * 2), p.input_dim)
+    self.CreateChild('separable_conv_7x1_layer_2', params)
 
-      # Initialize dropout.
-      dropout_tpl = p.dropout_tpl.Copy()
-      self.CreateChild('dropout', dropout_tpl)
+    # Initialize dropout.
+    dropout_tpl = p.dropout_tpl.Copy()
+    self.CreateChild('dropout', dropout_tpl)
 
   def FProp(self, theta, inputs, paddings):
     inputs_normalized = self.first_layer_norm.FProp(theta.first_layer_norm,
@@ -1026,7 +1032,7 @@ class EvolvedTransformerBaseLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(EvolvedTransformerBaseLayer, cls).Params()
+    p = super().Params()
     p.Define('source_dim', 0, 'Dimension of the transformer block input.')
     p.Define(
         'has_aux_atten', False,
@@ -1046,7 +1052,7 @@ class EvolvedTransformerEncoderLayer(EvolvedTransformerBaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(EvolvedTransformerEncoderLayer, cls).Params()
+    p = super().Params()
     p.Define('glu_tpl', layers.GluLayer.Params(), 'Glu layer.')
     p.Define('branched_convs_tpl',
              EvolvedTransformerEncoderBranchedConvsLayer.Params(),
@@ -1055,7 +1061,7 @@ class EvolvedTransformerEncoderLayer(EvolvedTransformerBaseLayer):
     return p
 
   def __init__(self, params):
-    super(EvolvedTransformerEncoderLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.name
     assert p.source_dim
@@ -1063,33 +1069,31 @@ class EvolvedTransformerEncoderLayer(EvolvedTransformerBaseLayer):
     if p.has_aux_atten:
       raise ValueError('Auxiliary attention not supported.')
 
-    with tf.variable_scope(p.name):
+    # Initialize Glu layer.
+    params = p.glu_tpl.Copy()
+    params.name = 'glu_layer'
+    params.input_dim = p.source_dim
+    self.CreateChild('glu_layer', params)
 
-      # Initialize Glu layer.
-      params = p.glu_tpl.Copy()
-      params.name = 'glu_layer'
-      params.input_dim = p.source_dim
-      self.CreateChild('glu_layer', params)
+    # Initialize branched convolutions layer.
+    params = p.branched_convs_tpl.Copy()
+    params.name = 'branched_convs_layer'
+    params.input_dim = p.source_dim
+    self.CreateChild('branched_convs_layer', params)
 
-      # Initialize branched convolutions layer.
-      params = p.branched_convs_tpl.Copy()
-      params.name = 'branched_convs_layer'
-      params.input_dim = p.source_dim
-      self.CreateChild('branched_convs_layer', params)
-
-      # Initialize branched convolutional layers.
-      params = p.transformer_tpl.Copy()
-      params.name = 'transformer_layer'
-      params.source_dim = p.source_dim
-      params.output_dim = p.source_dim
-      params.tr_fflayer_tpl.hidden_dim = 4 * p.source_dim
-      # Decoder functionality is not supported so disable auxiliary attention.
-      params.has_aux_atten = False
-      params.tr_aux_atten_tpl = None
-      params.mask_self_atten = False
-      params.is_decoder = False
-      params.packed_input = p.packed_input
-      self.CreateChild('transformer_layer', params)
+    # Initialize branched convolutional layers.
+    params = p.transformer_tpl.Copy()
+    params.name = 'transformer_layer'
+    params.source_dim = p.source_dim
+    params.output_dim = p.source_dim
+    params.tr_fflayer_tpl.hidden_dim = 4 * p.source_dim
+    # Decoder functionality is not supported so disable auxiliary attention.
+    params.has_aux_atten = False
+    params.tr_aux_atten_tpl = None
+    params.mask_self_atten = False
+    params.is_decoder = False
+    params.packed_input = p.packed_input
+    self.CreateChild('transformer_layer', params)
 
   def FProp(self,
             theta,
@@ -1125,7 +1129,7 @@ class EvolvedTransformerDecoderLayer(EvolvedTransformerBaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(EvolvedTransformerDecoderLayer, cls).Params()
+    p = super().Params()
     p.Define('tr_atten_tpl',
              TransformerAttentionLayer.Params().Set(num_attention_heads=8),
              'Transformer attention layer params.')
@@ -1142,52 +1146,50 @@ class EvolvedTransformerDecoderLayer(EvolvedTransformerBaseLayer):
     return p
 
   def __init__(self, params):
-    super(EvolvedTransformerDecoderLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.name
     assert p.source_dim
 
-    with tf.variable_scope(p.name):
+    # Initialize multi-headed self-attention.
+    params = p.tr_double_heads_atten_tpl.Copy()
+    params.name = 'self_atten_double_heads'
+    params.source_dim = p.source_dim
+    params.is_masked = p.mask_self_atten
+    # Packed input is not supported.
+    params.packed_input = p.packed_input
+    self.CreateChild('self_atten_double_heads', params)
 
-      # Initialize multi-headed self-attention.
-      params = p.tr_double_heads_atten_tpl.Copy()
-      params.name = 'self_atten_double_heads'
+    if p.has_aux_atten:
+      # Initialize masked-multi-headed encoder attention.
+      params = (
+          p.tr_aux_atten_tpl.Copy()
+          if p.tr_aux_atten_tpl is not None else p.tr_atten_tpl.Copy())
+      params.name = 'attend_to_encoder'
       params.source_dim = p.source_dim
-      params.is_masked = p.mask_self_atten
       # Packed input is not supported.
       params.packed_input = p.packed_input
-      self.CreateChild('self_atten_double_heads', params)
+      self.CreateChild('attend_to_encoder', params)
 
-      if p.has_aux_atten:
-        # Initialize masked-multi-headed encoder attention.
-        params = (
-            p.tr_aux_atten_tpl.Copy()
-            if p.tr_aux_atten_tpl is not None else p.tr_atten_tpl.Copy())
-        params.name = 'attend_to_encoder'
-        params.source_dim = p.source_dim
-        # Packed input is not supported.
-        params.packed_input = p.packed_input
-        self.CreateChild('attend_to_encoder', params)
+    # Initialize branched convolutional layers.
+    params = p.branched_convs_tpl.Copy()
+    params.name = 'branched_convs'
+    params.input_dim = p.source_dim
+    self.CreateChild('branched_convs', params)
 
-      # Initialize branched convolutional layers.
-      params = p.branched_convs_tpl.Copy()
-      params.name = 'branched_convs'
-      params.input_dim = p.source_dim
-      self.CreateChild('branched_convs', params)
-
-      # Initialize transformer layer.
-      params = p.transformer_tpl.Copy()
-      params.name = 'transformer_layer'
-      params.source_dim = p.source_dim
-      params.output_dim = p.source_dim
-      params.tr_fflayer_tpl.hidden_dim = 4 * p.source_dim
-      params.tr_aux_atten_tpl = p.tr_aux_atten_tpl
-      params.has_aux_atten = p.has_aux_atten
-      params.mask_self_atten = p.mask_self_atten
-      params.tr_fflayer_tpl.activation = 'SWISH'
-      # Packed input is not supported.
-      params.packed_input = p.packed_input
-      self.CreateChild('transformer_layer', params)
+    # Initialize transformer layer.
+    params = p.transformer_tpl.Copy()
+    params.name = 'transformer_layer'
+    params.source_dim = p.source_dim
+    params.output_dim = p.source_dim
+    params.tr_fflayer_tpl.hidden_dim = 4 * p.source_dim
+    params.tr_aux_atten_tpl = p.tr_aux_atten_tpl
+    params.has_aux_atten = p.has_aux_atten
+    params.mask_self_atten = p.mask_self_atten
+    params.tr_fflayer_tpl.activation = 'SWISH'
+    # Packed input is not supported.
+    params.packed_input = p.packed_input
+    self.CreateChild('transformer_layer', params)
 
   def FProp(self,
             theta,
@@ -1323,7 +1325,7 @@ class StyleLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(StyleLayer, cls).Params()
+    p = super().Params()
     p.Define('input_dim', 0, 'Dimension of the input.')
     p.Define('output_dim', 0, 'Dimension of the output.')
     p.Define('num_styles', 0, 'Num of styles.')
@@ -1335,34 +1337,35 @@ class StyleLayer(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(StyleLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.num_styles > 0
     assert p.input_dim > 0
     assert p.output_dim > 0
 
-    with tf.variable_scope(p.name):
-      # The styles table.
-      w_shape = [p.num_styles, 1, p.output_dim]
-      w_init = py_utils.WeightInit.Gaussian(scale=1.0, seed=p.random_seed)
-      w_pc = py_utils.WeightParams(
-          shape=w_shape,
-          init=w_init,
-          dtype=p.dtype,
-          collections=[self.__class__.__name__ + '_vars'])
-      self.CreateVariable('styles_w', w_pc)
+    atten_p = attention.MultiHeadedAttention.Params().Set(
+        source_dim=p.output_dim,
+        context_dim=p.output_dim,
+        hidden_dim=p.output_dim,
+        query_dim=p.input_dim,
+        ctx_post_proj_dim=p.output_dim,
+        num_attention_heads=p.num_heads,
+        use_source_vec_as_attention_value=False,
+        enable_ctx_post_proj=p.enable_ctx_post_proj)
+    self.CreateChild('atten', atten_p)
 
-      # Lastly the attention module.
-      atten_p = attention.MultiHeadedAttention.Params().Set(
-          source_dim=p.output_dim,
-          context_dim=p.output_dim,
-          hidden_dim=p.output_dim,
-          query_dim=p.input_dim,
-          ctx_post_proj_dim=p.output_dim,
-          num_attention_heads=p.num_heads,
-          use_source_vec_as_attention_value=False,
-          enable_ctx_post_proj=p.enable_ctx_post_proj)
-      self.CreateChild('atten', atten_p)
+  def _CreateLayerVariables(self):
+    super()._CreateLayerVariables()
+    p = self.params
+    # The styles table.
+    w_shape = [p.num_styles, 1, p.output_dim]
+    w_init = py_utils.WeightInit.Gaussian(scale=1.0, seed=p.random_seed)
+    w_pc = py_utils.WeightParams(
+        shape=w_shape,
+        init=w_init,
+        dtype=p.dtype,
+        collections=[self.__class__.__name__ + '_vars'])
+    self.CreateVariable('styles_w', w_pc)
 
   def EmbLookup(self, theta, ids):
     """Looks up style embedding vectors for ids only for test purpose.
@@ -1430,19 +1433,18 @@ class TransformerLayerWithMultitaskAdapters(TransformerLayer):
 
   @classmethod
   def Params(cls):
-    p = super(TransformerLayerWithMultitaskAdapters, cls).Params()
+    p = super().Params()
     p.Define('adapter_tpl', layers.MultitaskAdapterLayer.Params(),
              'Template to use for multitask adapters.')
     return p
 
   def __init__(self, params):
-    super(TransformerLayerWithMultitaskAdapters, self).__init__(params)
+    super().__init__(params)
     p = self.params
 
-    with tf.variable_scope(p.name):
-      params = p.adapter_tpl.Copy()
-      params.name = 'adapters'
-      self.CreateChild('adapters', params)
+    params = p.adapter_tpl.Copy()
+    params.name = 'adapters'
+    self.CreateChild('adapters', params)
 
   def FProp(self,
             theta,
@@ -1476,10 +1478,9 @@ class TransformerLayerWithMultitaskAdapters(TransformerLayer):
       aux_time].
     """
     p = self.params
-    hidden, atten_prob = super(TransformerLayerWithMultitaskAdapters,
-                               self).FProp(theta, source_vecs, source_paddings,
-                                           aux_vecs, aux_paddings,
-                                           source_segment_id, aux_segment_id)
+    hidden, atten_prob = super().FProp(theta, source_vecs, source_paddings,
+                                       aux_vecs, aux_paddings,
+                                       source_segment_id, aux_segment_id)
     # Assumes the same task_id for the entire sequence during eval or when
     # not using packed_input.
     if not p.packed_input and not self.do_eval:
@@ -1560,7 +1561,7 @@ class CCTAttentionLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(CCTAttentionLayer, cls).Params()
+    p = super().Params()
 
     # Transformer Attention params.
     p.Define('source_dim', 0, 'Dimension of the transformer block input.')
@@ -1600,7 +1601,7 @@ class CCTAttentionLayer(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(CCTAttentionLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.name
     assert p.source_dim
@@ -1614,54 +1615,53 @@ class CCTAttentionLayer(base_layer.BaseLayer):
     if p.is_masked:
       assert p.mask_type in ['future', 'eye']
 
-    with tf.variable_scope(p.name):
-      # Initialize multi-headed attention
-      params = p.atten_tpl.Copy()
-      params.name = 'multihead_atten'
-      params.source_dim = p.source_dim
-      params.query_dim = p.source_dim
-      params.hidden_dim = p.atten_hidden_dim
-      params.context_dim = p.context_dim
-      params.ctx_post_proj_dim = p.source_dim
-      params.num_attention_heads = p.num_attention_heads
-      params.atten_dropout_prob = p.atten_dropout_prob
-      params.packed_input = p.packed_input
-      self.CreateChild('atten', params)
+    # Initialize multi-headed attention
+    params = p.atten_tpl.Copy()
+    params.name = 'multihead_atten'
+    params.source_dim = p.source_dim
+    params.query_dim = p.source_dim
+    params.hidden_dim = p.atten_hidden_dim
+    params.context_dim = p.context_dim
+    params.ctx_post_proj_dim = p.source_dim
+    params.num_attention_heads = p.num_attention_heads
+    params.atten_dropout_prob = p.atten_dropout_prob
+    params.packed_input = p.packed_input
+    self.CreateChild('atten', params)
 
-      dropout_tpl = p.residual_dropout_tpl.Copy()
-      dropout_tpl.keep_prob = (1.0 - p.residual_dropout_prob)
-      self.CreateChild('residual_dropout', dropout_tpl)
+    dropout_tpl = p.residual_dropout_tpl.Copy()
+    dropout_tpl.keep_prob = (1.0 - p.residual_dropout_prob)
+    self.CreateChild('residual_dropout', dropout_tpl)
 
-      # Initialize attention layer norm
-      params = p.ln_tpl.Copy()
-      params.name = 'atten_ln'
-      params.input_dim = p.source_dim
-      self.CreateChild('layer_norm', params)
+    # Initialize attention layer norm
+    params = p.ln_tpl.Copy()
+    params.name = 'atten_ln'
+    params.input_dim = p.source_dim
+    self.CreateChild('layer_norm', params)
 
-      # CCT specific operations.
-      ff_gating = p.gating_tpl.Copy()
-      ff_gating.input_dim = p.source_dim
-      ff_gating.num_outputs = 1
-      ff_gating.name = 'query_gating_net'
-      self.CreateChild('query_gating', ff_gating)
+    # CCT specific operations.
+    ff_gating = p.gating_tpl.Copy()
+    ff_gating.input_dim = p.source_dim
+    ff_gating.num_outputs = 1
+    ff_gating.name = 'query_gating_net'
+    self.CreateChild('query_gating', ff_gating)
 
-      ff_gating = p.gating_tpl.Copy()
-      ff_gating.input_dim = p.source_dim
-      ff_gating.num_outputs = 1
-      ff_gating.name = 'kv_gating_net'
-      self.CreateChild('kv_gating', ff_gating)
+    ff_gating = p.gating_tpl.Copy()
+    ff_gating.input_dim = p.source_dim
+    ff_gating.num_outputs = 1
+    ff_gating.name = 'kv_gating_net'
+    self.CreateChild('kv_gating', ff_gating)
 
-      # Initialize source_vec layer norm
-      params = p.ln_tpl.Copy()
-      params.name = 'source_ln'
-      params.input_dim = p.source_dim
-      self.CreateChild('source_layer_norm', params)
+    # Initialize source_vec layer norm
+    params = p.ln_tpl.Copy()
+    params.name = 'source_ln'
+    params.input_dim = p.source_dim
+    self.CreateChild('source_layer_norm', params)
 
-      # Initialize ctx_vec layer norm
-      params = p.ln_tpl.Copy()
-      params.name = 'ctx_ln'
-      params.input_dim = p.source_dim
-      self.CreateChild('ctx_layer_norm', params)
+    # Initialize ctx_vec layer norm
+    params = p.ln_tpl.Copy()
+    params.name = 'ctx_ln'
+    params.input_dim = p.source_dim
+    self.CreateChild('ctx_layer_norm', params)
 
   def FProp(self,
             theta,
@@ -1884,7 +1884,7 @@ class CCTFeedForwardLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(CCTFeedForwardLayer, cls).Params()
+    p = super().Params()
     # Transformer Feedforward params.
     p.Define('input_dim', 0, 'Dimension of the layer input.')
     p.Define('output_dim', 0, 'Dimension of the layer output.')  # Deprecated.
@@ -1917,60 +1917,59 @@ class CCTFeedForwardLayer(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(CCTFeedForwardLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.name
     assert p.input_dim
     assert p.hidden_dim
     assert not p.output_dim, 'output_dim should not be set.'
 
-    with tf.variable_scope(p.name):
-      # Initialize feed-forward layer
-      params = p.fflayer_tpl.Copy()
-      params.name = 'fflayer'
-      params.input_dim = p.input_dim
-      params.activation = [p.activation, 'NONE']
-      if p.output_dim == 0:
-        params.hidden_layer_dims = [p.hidden_dim, p.input_dim]
-      else:
-        params.hidden_layer_dims = [p.hidden_dim, p.output_dim]
+    # Initialize feed-forward layer
+    params = p.fflayer_tpl.Copy()
+    params.name = 'fflayer'
+    params.input_dim = p.input_dim
+    params.activation = [p.activation, 'NONE']
+    if p.output_dim == 0:
+      params.hidden_layer_dims = [p.hidden_dim, p.input_dim]
+    else:
+      params.hidden_layer_dims = [p.hidden_dim, p.output_dim]
 
-      params.dropout = [
-          params.dropout.cls.Params().Set(keep_prob=1.0 - p.relu_dropout_prob),
-          params.dropout.cls.Params().Set(keep_prob=1.0)
-      ]
+    params.dropout = [
+        params.dropout.cls.Params().Set(keep_prob=1.0 - p.relu_dropout_prob),
+        params.dropout.cls.Params().Set(keep_prob=1.0)
+    ]
 
-      ffs = []
-      ln_params = []
-      out_layer_norm = []  # Required for stabilizing CCT.
-      for i in range(p.num_blocks):
-        ff_p = params.Copy()
-        ff_p.name += '_%d' % i
-        ffs.append(ff_p)
+    ffs = []
+    ln_params = []
+    out_layer_norm = []  # Required for stabilizing CCT.
+    for i in range(p.num_blocks):
+      ff_p = params.Copy()
+      ff_p.name += '_%d' % i
+      ffs.append(ff_p)
 
-        ln_p = p.ln_tpl.Copy()
-        ln_p.name = 'fflayer_ln_%d' % i
-        ln_p.input_dim = p.input_dim
-        ln_params.append(ln_p)
+      ln_p = p.ln_tpl.Copy()
+      ln_p.name = 'fflayer_ln_%d' % i
+      ln_p.input_dim = p.input_dim
+      ln_params.append(ln_p)
 
-        ln_p = p.ln_tpl.Copy()
-        ln_p.name = 'fflayer_ln_out_%d' % i
-        ln_p.input_dim = p.input_dim
-        out_layer_norm.append(ln_p)
-      self.CreateChildren('fflayers', ffs)
-      self.CreateChildren('layer_norm', ln_params)
-      self.CreateChildren('out_layer_norm', out_layer_norm)
+      ln_p = p.ln_tpl.Copy()
+      ln_p.name = 'fflayer_ln_out_%d' % i
+      ln_p.input_dim = p.input_dim
+      out_layer_norm.append(ln_p)
+    self.CreateChildren('fflayers', ffs)
+    self.CreateChildren('layer_norm', ln_params)
+    self.CreateChildren('out_layer_norm', out_layer_norm)
 
-      # Note: Set gating noise and warmup in parent layer.
-      ff_gating = p.gating_tpl.Copy()
-      ff_gating.input_dim = p.input_dim
-      ff_gating.num_outputs = p.num_blocks
-      ff_gating.name = 'gating_net'
-      self.CreateChild('ff_gating', ff_gating)
+    # Note: Set gating noise and warmup in parent layer.
+    ff_gating = p.gating_tpl.Copy()
+    ff_gating.input_dim = p.input_dim
+    ff_gating.num_outputs = p.num_blocks
+    ff_gating.name = 'gating_net'
+    self.CreateChild('ff_gating', ff_gating)
 
-      dropout_tpl = p.residual_dropout_tpl.Copy()
-      dropout_tpl.keep_prob = (1.0 - p.residual_dropout_prob)
-      self.CreateChild('residual_dropout', dropout_tpl)
+    dropout_tpl = p.residual_dropout_tpl.Copy()
+    dropout_tpl.keep_prob = (1.0 - p.residual_dropout_prob)
+    self.CreateChild('residual_dropout', dropout_tpl)
 
   def FProp(self, theta, inputs, paddings):
     """Feed-forward, layer-norm, residual, gating and layer-norm.
@@ -2020,7 +2019,7 @@ class TransformerWithContextLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(TransformerWithContextLayer, cls).Params()
+    p = super().Params()
     p.Define('source_dim', 0, 'Dimension of the transformer block input.')
     p.Define('output_dim', 0, 'Dimension of the transformer block output.')
     p.Define(
@@ -2044,45 +2043,43 @@ class TransformerWithContextLayer(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(TransformerWithContextLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.has_aux_atten
     assert p.mask_self_atten
     if not p.source_dim:
       raise ValueError('p.source_dim not set')
 
-    with tf.variable_scope(p.name):
+    # Initialize multi-headed self-attention
+    params = p.tr_atten_tpl.Copy()
+    params.name = 'multihead_self_atten'
+    params.source_dim = p.source_dim
+    params.packed_input = p.packed_input
+    params.is_masked = True
+    self.CreateChild('self_atten', params)
 
-      # Initialize multi-headed self-attention
-      params = p.tr_atten_tpl.Copy()
-      params.name = 'multihead_self_atten'
-      params.source_dim = p.source_dim
-      params.packed_input = p.packed_input
-      params.is_masked = True
-      self.CreateChild('self_atten', params)
+    # Initialize tertiary attention.
+    # If p.tr_tertiary_atten_tpl is None, we fall back to using
+    # p.tr_tertiary_atten_tpl.
+    params = p.tr_tertiary_atten_tpl or p.tr_atten_tpl.Copy()
+    params.name = 'tertiary_multihead_atten'
+    params.source_dim = p.source_dim
+    params.packed_input = p.packed_input
+    self.CreateChild('tertiary_atten', params)
 
-      # Initialize tertiary attention.
-      # If p.tr_tertiary_atten_tpl is None, we fall back to using
-      # p.tr_tertiary_atten_tpl.
-      params = p.tr_tertiary_atten_tpl or p.tr_atten_tpl.Copy()
-      params.name = 'tertiary_multihead_atten'
-      params.source_dim = p.source_dim
-      params.packed_input = p.packed_input
-      self.CreateChild('tertiary_atten', params)
+    # Initialize multi-headed encoder attention
+    params = p.tr_atten_tpl.Copy()
+    params.name = 'multihead_atten'
+    params.source_dim = p.source_dim
+    params.packed_input = p.packed_input
+    self.CreateChild('atten', params)
 
-      # Initialize multi-headed encoder attention
-      params = p.tr_atten_tpl.Copy()
-      params.name = 'multihead_atten'
-      params.source_dim = p.source_dim
-      params.packed_input = p.packed_input
-      self.CreateChild('atten', params)
-
-      # Initialize feed-forward layer
-      params = p.tr_fflayer_tpl.Copy()
-      params.name = 'tr_fflayer'
-      params.input_dim = p.source_dim
-      params.output_dim = p.output_dim
-      self.CreateChild('fflayer', params)
+    # Initialize feed-forward layer
+    params = p.tr_fflayer_tpl.Copy()
+    params.name = 'tr_fflayer'
+    params.input_dim = p.source_dim
+    params.output_dim = p.output_dim
+    self.CreateChild('fflayer', params)
 
   def FProp(self,
             theta,

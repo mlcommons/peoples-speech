@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,11 +14,6 @@
 # limitations under the License.
 """Step classes for embedding tables."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
-from lingvo import compat as tf
 from lingvo.core import layers
 from lingvo.core import py_utils
 from lingvo.core import step
@@ -33,16 +28,15 @@ class EmbeddingStep(step.Step):
 
   @classmethod
   def Params(cls):
-    p = super(EmbeddingStep, cls).Params()
+    p = super().Params()
     p.name = 'emb_step'
     p.Define('emb', layers.EmbeddingLayer.Params(), 'Embedding layer params.')
     return p
 
   def __init__(self, params):
-    super(EmbeddingStep, self).__init__(params)
+    super().__init__(params)
     p = params
-    with tf.variable_scope(p.name):
-      self.CreateChild('emb', p.emb)
+    self.CreateChild('emb', p.emb)
 
   def FProp(self, theta, prepared_inputs, step_inputs, padding, state0):
     """Looks up a list of embeddings from an EmbeddingLayer.

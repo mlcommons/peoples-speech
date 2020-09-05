@@ -686,8 +686,9 @@ Z.&nbsp;Lu, L.&nbsp;Cao, Y.&nbsp;Zhang, C.-C. Chiu, and J.&nbsp;Fan, &ldquo;Spee
 </td>
 <td class="bibtexitem">
 D.&nbsp;Park, Y.&nbsp;Zhang, C.-C. Chiu, Y.&nbsp;Chen, B.&nbsp;Li, W.&nbsp;Chan, Q.&nbsp;Le, and Y.&nbsp;Wu,
-  &ldquo;Specaugment on large scale datas,&rdquo; in <em>Proc. IEEE International
+  &ldquo;Specaugment on large scale datasets,&rdquo; in <em>Proc. IEEE International
   Conference on Acoustics, Speech, and Signal Processing (ICASSP)</em>, 2020.
+[&nbsp;<a href="https://arxiv.org/abs/1912.05533">pdf</a>&nbsp;]
 
 </td>
 </tr>
@@ -706,6 +707,61 @@ T.&nbsp;Sainath, Y.&nbsp;He, B.&nbsp;Li, A.&nbsp;Narayanan, R.&nbsp;Pang, A.&nbs
   surpassing server-side conventional model quality and latency,&rdquo; in <em>
   Proc. IEEE International Conference on Acoustics, Speech, and Signal
   Processing (ICASSP)</em>, 2020.
+
+</td>
+</tr>
+
+
+<tr valign="top">
+<td align="right" class="bibtexnumber">
+[<a name="conformer2020">35</a>]
+</td>
+<td class="bibtexitem">
+A.&nbsp;Gulati, J.&nbsp;Qin, C.-C. Chiu, N.&nbsp;Parmar, Y.&nbsp;Zhang, J.&nbsp;Yu, W.&nbsp;Han, S.&nbsp;Wang,
+  Z.&nbsp;Zhang, Y.&nbsp;Wu, and R.&nbsp;Pang, &ldquo;Conformer: Convolution-augmented transformer
+  for speech recognition,&rdquo; in <em>Proc. Interspeech</em>, 2020.
+[&nbsp;<a href="https://arxiv.org/abs/2005.08100">pdf</a>&nbsp;]
+
+</td>
+</tr>
+
+
+<tr valign="top">
+<td align="right" class="bibtexnumber">
+[<a name="contextnet2020">36</a>]
+</td>
+<td class="bibtexitem">
+W.&nbsp;Han, Z.&nbsp;Zhang, Y.&nbsp;Zhang, J.&nbsp;Yu, C.-C. Chiu, J.&nbsp;Qin, A.&nbsp;Gulati, R.&nbsp;Pang, and
+  Y.&nbsp;Wu, &ldquo;Contextnet: Improving convolutional neural networks for automatic
+  speech recognition with global context,&rdquo; in <em>Proc. Interspeech</em>, 2020.
+[&nbsp;<a href="https://arxiv.org/abs/2005.03191">pdf</a>&nbsp;]
+
+</td>
+</tr>
+
+
+<tr valign="top">
+<td align="right" class="bibtexnumber">
+[<a name="rescore2020">37</a>]
+</td>
+<td class="bibtexitem">
+W.&nbsp;Li, J.&nbsp;Qin, C.-C. Chiu, R.&nbsp;Pang, and Y.&nbsp;He, &ldquo;Parallel rescoring with
+  transformer for streaming on-device speech recognition,&rdquo; in <em>Proc.
+  Interspeech</em>, 2020.
+
+</td>
+</tr>
+
+
+<tr valign="top">
+<td align="right" class="bibtexnumber">
+[<a name="noisystudent2020">38</a>]
+</td>
+<td class="bibtexitem">
+D.&nbsp;S. Park, Y.&nbsp;Zhang, Y.&nbsp;Jia, W.&nbsp;Han, C.-C. Chiu, B.&nbsp;Li, Y.&nbsp;Wu, and Q.&nbsp;V. Le,
+  &ldquo;Improved noisy student training for automatic speech recognition,&rdquo; in <em>
+  Proc. Interspeech</em>, 2020.
+[&nbsp;<a href="https://arxiv.org/abs/2005.09629">pdf</a>&nbsp;]
 
 </td>
 </tr>
@@ -1001,6 +1057,57 @@ Y.&nbsp;Jia, R.&nbsp;J. Weiss, F.&nbsp;Biadsy, W.&nbsp;Macherey, M.&nbsp;Johnson
   <em>Proc. Interspeech</em>, 2019.
 [&nbsp;<a href="https://google-research.github.io/lingvo-lab/translatotron">sound examples</a>&nbsp;| 
 <a href="https://arxiv.org/abs/1904.06037">pdf</a>&nbsp;]
+
+</td>
+</tr>
+</table>
+
+## Optimization
+
+<!-- This document was automatically generated with bibtex2html 1.99
+     (see http://www.lri.fr/~filliatr/bibtex2html/),
+     with the following command:
+     bibtex2html -s ieeetr -nodoc -nobibsource -nofooter -nf pdf pdf -nf data data -nf sound_examples "sound examples"  -->
+
+
+<table>
+
+<tr valign="top">
+<td align="right" class="bibtexnumber">
+[<a name="anil2020second">1</a>]
+</td>
+<td class="bibtexitem">
+R.&nbsp;Anil, V.&nbsp;Gupta, T.&nbsp;Koren, K.&nbsp;Regan, and Y.&nbsp;Singer, &ldquo;Second order
+  optimization made practical,&rdquo; <em>arXiv preprint arXiv:2002.09018</em>, 2020.
+[&nbsp;<a href="https://arxiv.org/abs/2002.09018">pdf</a>&nbsp;]
+
+</td>
+</tr>
+
+
+<tr valign="top">
+<td align="right" class="bibtexnumber">
+[<a name="agarwal2020disentangling">2</a>]
+</td>
+<td class="bibtexitem">
+N.&nbsp;Agarwal, R.&nbsp;Anil, E.&nbsp;Hazan, T.&nbsp;Koren, and C.&nbsp;Zhang, &ldquo;Disentangling adaptive
+  gradient methods from learning rates,&rdquo; <em>arXiv preprint
+  arXiv:2002.11803</em>, 2020.
+[&nbsp;<a href="https://arxiv.org/abs/2002.11803">pdf</a>&nbsp;]
+
+</td>
+</tr>
+
+
+<tr valign="top">
+<td align="right" class="bibtexnumber">
+[<a name="anil2019memory">3</a>]
+</td>
+<td class="bibtexitem">
+R.&nbsp;Anil, V.&nbsp;Gupta, T.&nbsp;Koren, and Y.&nbsp;Singer, &ldquo;Memory efficient adaptive
+  optimization,&rdquo; in <em>Advances in Neural Information Processing Systems</em>,
+  pp.&nbsp;9749--9758, 2019.
+[&nbsp;<a href="https://arxiv.org/abs/1901.11150">pdf</a>&nbsp;]
 
 </td>
 </tr>

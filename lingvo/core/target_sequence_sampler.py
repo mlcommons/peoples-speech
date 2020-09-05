@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,10 +19,6 @@ The sampled sequences can be used for training, e.g., with scheduled sampling,
 OCD, second-pass deliberation.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import lingvo.compat as tf
 from lingvo.core import base_layer
 from lingvo.core import py_utils
@@ -42,7 +38,7 @@ class TargetSequenceSampler(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(TargetSequenceSampler, cls).Params()
+    p = super().Params()
     p.Define('target_sos_id', 1, 'Id of the start of sentence token.')
     p.Define('target_eos_id', 2, 'Id of the end of sentence token.')
     p.Define('target_eoc_id', -1, 'Id of the end of chunk token.')
@@ -51,6 +47,10 @@ class TargetSequenceSampler(base_layer.BaseLayer):
         'temperature', 1., 'If > 1, a smoother distribution than logits; '
         'if < 1, a sharper distribution than logits. '
         'Must be > 0.')
+    p.Define(
+        'use_stop_fn', False, 'If True, use a stop_fn that causes the '
+        'sampler to early terminate when all samples in the batch end with '
+        'the target_eos_id token.')
     p.name = 'target_sequence_sampler'
     return p
 
@@ -137,11 +137,21 @@ class TargetSequenceSampler(base_layer.BaseLayer):
                                              state1.ids, bs_state1)
       return state1, py_utils.NestedMap()
 
+    def StopFn(t, theta, state):
+      del t, theta  # Unused: this stop function only uses the state ids.
+      return tf.equal(state.ids, p.target_eos_id)
+
+    if p.use_stop_fn:
+      stop_fn = StopFn
+    else:
+      stop_fn = None
+
     accumulated_states, _ = recurrent.Recurrent(
         recurrent_theta,
         recurrent_state0,
         inputs,
         Step,
+        stop_fn=stop_fn,
         allow_implicit_capture=True)
     result = py_utils.NestedMap(
         logits=tf.transpose(accumulated_states.logits, [1, 0, 2]),

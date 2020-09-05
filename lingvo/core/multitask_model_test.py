@@ -15,7 +15,6 @@
 # ==============================================================================
 """Tests for multitask_model."""
 
-
 import lingvo.compat as tf
 from lingvo.core import base_input_generator
 from lingvo.core import base_layer
@@ -33,7 +32,7 @@ class MultiTaskModelTest(test_utils.TestCase):
 
     @classmethod
     def Params(cls):
-      p = super(MultiTaskModelTest._TestTask, cls).Params()
+      p = super().Params()
       p.name = 'test_task'
       p.encoder = base_layer.BaseLayer.Params()
       p.encoder.name = 'enc'
@@ -42,7 +41,7 @@ class MultiTaskModelTest(test_utils.TestCase):
       return p
 
     def __init__(self, params):
-      super(MultiTaskModelTest._TestTask, self).__init__(params)
+      super().__init__(params)
       p = self.params
       if p.encoder:
         self.CreateChild('encoder', p.encoder)
@@ -100,12 +99,12 @@ class MultiTaskModelTest(test_utils.TestCase):
 
     @classmethod
     def Params(cls):
-      p = super(MultiTaskModelTest._TestTaskWithVars, cls).Params()
+      p = super().Params()
       p.name = 'test_task'
       return p
 
-    def __init__(self, params):
-      super(MultiTaskModelTest._TestTaskWithVars, self).__init__(params)
+    def _CreateLayerVariables(self):
+      super()._CreateLayerVariables()
       pc = py_utils.WeightParams(shape=[10, 10], dtype=tf.float32)
       self.CreateVariable('weight', pc)
 
@@ -131,8 +130,8 @@ class MultiTaskModelTest(test_utils.TestCase):
 
     model = p.Instantiate()
     all_vars = model.vars
-    self.assertEqual('shared/weight/var:0', all_vars.p0.weight.name)
-    self.assertEqual('shared/weight/var:0', all_vars.p1.weight.name)
+    self.assertEqual('shared/test_task/weight/var:0', all_vars.p0.weight.name)
+    self.assertEqual('shared/test_task/weight/var:0', all_vars.p1.weight.name)
 
 
 if __name__ == '__main__':

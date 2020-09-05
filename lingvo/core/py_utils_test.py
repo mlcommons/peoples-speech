@@ -15,7 +15,6 @@
 # ==============================================================================
 """Tests for py_utils."""
 
-
 import collections
 import copy
 import itertools
@@ -23,11 +22,13 @@ import os
 import sys
 
 from absl.testing import flagsaver
+from absl.testing import parameterized
 from lingvo import model_registry
 import lingvo.compat as tf
 from lingvo.core import base_layer
 from lingvo.core import builder_layers
 from lingvo.core import cluster_factory
+from lingvo.core import hyperparams
 from lingvo.core import py_utils
 from lingvo.core import recurrent
 from lingvo.core import symbolic
@@ -37,20 +38,21 @@ from lingvo.tasks.image.params import mnist  # pylint: disable=unused-import
 
 import mock
 import numpy as np
-import six
-from six.moves import range
-from six.moves import zip
 
 from tensorflow.python.ops import functional_ops  # pylint:disable=g-direct-tensorflow-import
 
 FLAGS = tf.flags.FLAGS
 
 
-class PyUtilsTest(test_utils.TestCase):
+class PyUtilsTest(test_utils.TestCase, parameterized.TestCase):
 
   def testIsDefaultParamInit(self):
     p = py_utils.DefaultParamInit()
     self.assertTrue(py_utils.IsDefaultParamInit(p))
+    p = hyperparams.Params.FromProto(p.ToProto())
+    self.assertTrue(py_utils.IsDefaultParamInit(p))
+    p = py_utils.WeightInit.Xavier(scale=1.)
+    self.assertFalse(py_utils.IsDefaultParamInit(p))
 
   def testNestedMapFromNestedDict(self):
     a = {'a1': 1, 'a2': 2}
@@ -81,6 +83,16 @@ class PyUtilsTest(test_utils.TestCase):
     self.assertIsNone(nested_map.Get('x'))
     self.assertEqual(nested_map.Get('x', 0), 0)
 
+  def testNestedMapDir(self):
+    nested_map = py_utils.NestedMap({'a': {'b': 0}})
+    nested_map.c = '1'
+    nested_map_dir = dir(nested_map)
+    # Flattened keys are in the dir
+    self.assertIn('a.b', nested_map_dir)
+    self.assertIn('c', nested_map_dir)
+    # So are method APIs.
+    self.assertIn('Get', nested_map_dir)
+
   def testNestedMapSet(self):
     nested_map = py_utils.NestedMap.FromNestedDict({'a': {'b': 0}})
     self.assertEqual(nested_map.a.b, 0)
@@ -97,46 +109,51 @@ class PyUtilsTest(test_utils.TestCase):
     self.assertIsInstance(nested_map.a.b.x, py_utils.NestedMap)
     self.assertEqual(nested_map.a.b.x.y, 2)
 
-  def testCreateVariableBasics(self):
-    with self.session(use_gpu=False, graph=tf.Graph()):
-      methods = [
-          py_utils.WeightInit.Gaussian,
-          py_utils.WeightInit.Uniform,
-          py_utils.WeightInit.Constant,
-          py_utils.WeightInit.TruncatedGaussian,
-          py_utils.WeightInit.GaussianSqrtDim,
-          py_utils.WeightInit.UniformSqrtDim,
-          py_utils.WeightInit.UniformUnitScaling,
-          py_utils.WeightInit.TruncatedGaussianSqrtDim,
-          py_utils.WeightInit.TruncatedGaussianSqrtFanIn,
-          py_utils.WeightInit.TruncatedGaussianSqrtFanOut,
-      ]
-      dtypes = [tf.float32, tf.float64, tf.complex64]
-      shapes = [[], [3], [2, 4], [3, 3, 2, 4]]
-      col = ['col1', 'col2']
+  @parameterized.named_parameters(
+      ('_stateful', False, [tf.float32, tf.float64, tf.complex64]),
+      ('_stateless', True, [tf.float32, tf.float64]))
+  def testCreateVariableBasics(self, stateless_vars_init, dtypes):
+    with flagsaver.flagsaver(stateless_vars_init=stateless_vars_init):
+      with self.session(use_gpu=False, graph=tf.Graph()):
+        methods = [
+            py_utils.WeightInit.Gaussian,
+            py_utils.WeightInit.Uniform,
+            py_utils.WeightInit.Constant,
+            py_utils.WeightInit.TruncatedGaussian,
+            py_utils.WeightInit.GaussianSqrtDim,
+            py_utils.WeightInit.UniformSqrtDim,
+            py_utils.WeightInit.UniformUnitScaling,
+            py_utils.WeightInit.UniformUnitScalingFanAvg,
+            py_utils.WeightInit.TruncatedGaussianSqrtDim,
+            py_utils.WeightInit.TruncatedGaussianSqrtFanIn,
+            py_utils.WeightInit.TruncatedGaussianSqrtFanOut,
+            py_utils.WeightInit.XavierGaussian,
+        ]
+        shapes = [[], [3], [2, 4], [3, 3, 2, 4]]
+        col = ['col1', 'col2']
 
-      all_vars = []
-      for i, (m, dt,
-              sp) in enumerate(itertools.product(methods, dtypes, shapes)):
-        pc = py_utils.WeightParams(sp, m(), dt, col)
-        all_vars.append(py_utils.CreateVariable('var_%d' % i, pc)[0])
+        all_vars = []
+        for i, (m, dt,
+                sp) in enumerate(itertools.product(methods, dtypes, shapes)):
+          pc = py_utils.WeightParams(sp, m(), dt, col)
+          all_vars.append(py_utils.CreateVariable('var_%d' % i, pc))
 
-      # To reuse existing variables
-      tf.get_variable_scope().reuse_variables()
+        # To reuse existing variables
+        tf.get_variable_scope().reuse_variables()
 
-      self.assertEqual(len(tf.trainable_variables()), len(all_vars))
+        self.assertEqual(len(tf.trainable_variables()), len(all_vars))
 
-      all_vars_copy = []
-      for i, (m, dt,
-              sp) in enumerate(itertools.product(methods, dtypes, shapes)):
-        pc = py_utils.WeightParams(sp, m(), dt, col)
-        all_vars_copy.append(py_utils.CreateVariable('var_%d' % i, pc)[0])
+        all_vars_copy = []
+        for i, (m, dt,
+                sp) in enumerate(itertools.product(methods, dtypes, shapes)):
+          pc = py_utils.WeightParams(sp, m(), dt, col)
+          all_vars_copy.append(py_utils.CreateVariable('var_%d' % i, pc))
 
-      self.evaluate(tf.global_variables_initializer())
-      for v1, v2 in zip(all_vars, all_vars_copy):
-        v1_v = v1.eval()
-        v2_v = v2.eval()
-        self.assertAllEqual(v1_v, v2_v)
+        self.evaluate(tf.global_variables_initializer())
+        for v1, v2 in zip(all_vars, all_vars_copy):
+          v1_v = v1.eval()
+          v2_v = v2.eval()
+          self.assertAllEqual(v1_v, v2_v)
 
   def testCreateVariableWithSymbols(self):
     with self.session(use_gpu=False, graph=tf.Graph()):
@@ -146,7 +163,7 @@ class PyUtilsTest(test_utils.TestCase):
       with symbolic.SymbolToValueMap(symbolic.STATIC_VALUES, {dim_symbol: 2}):
         pc = py_utils.WeightParams(shape, py_utils.WeightInit.Gaussian(),
                                    tf.float32, ['col1', 'col2'])
-        var = py_utils.CreateVariable('var', pc)[0]
+        var = py_utils.CreateVariable('var', pc)
 
       # To reuse existing variables
       tf.get_variable_scope().reuse_variables()
@@ -158,7 +175,7 @@ class PyUtilsTest(test_utils.TestCase):
                                      {new_dim_symbol: 2}):
         pc = py_utils.WeightParams(shape, py_utils.WeightInit.Gaussian(),
                                    tf.float32, ['col1', 'col2'])
-        var_copy = py_utils.CreateVariable('var', pc)[0]
+        var_copy = py_utils.CreateVariable('var', pc)
 
       self.evaluate(tf.global_variables_initializer())
       self.assertAllEqual(var.eval(), var_copy.eval())
@@ -177,7 +194,7 @@ class PyUtilsTest(test_utils.TestCase):
       for i, (dt, m,
               sp) in enumerate(itertools.product(dtypes, methods, shapes)):
         pc = py_utils.WeightParams(sp, m(0.1), dt)
-        all_vars.append(py_utils.CreateVariable('var_%d' % i, pc)[0])
+        all_vars.append(py_utils.CreateVariable('var_%d' % i, pc))
 
       v1_v_expted = [[0.069674, -0.072278, -0.021777],
                      [-0.052155, -0.050274, 0.086218]]
@@ -209,7 +226,7 @@ class PyUtilsTest(test_utils.TestCase):
       for i, (dt, m,
               sp) in enumerate(itertools.product(dtypes, methods, shapes)):
         pc = py_utils.WeightParams(sp, m(), dt)
-        all_vars.append(py_utils.CreateVariable('var_%d' % i, pc)[0])
+        all_vars.append(py_utils.CreateVariable('var_%d' % i, pc))
 
       v1_v_expted = [[-1.472208, 0.960204, -0.192588],
                      [-0.461884, 1.018134, 0.063719]]
@@ -236,6 +253,7 @@ class PyUtilsTest(test_utils.TestCase):
           py_utils.WeightInit.TruncatedGaussianSqrtFanIn,
           py_utils.WeightInit.GaussianSqrtFanOut,
           py_utils.WeightInit.TruncatedGaussianSqrtFanOut,
+          py_utils.WeightInit.XavierGaussian,
       ]
       dtypes = [tf.float32]
       shapes = [[1, 1, 2, 3]]
@@ -243,7 +261,7 @@ class PyUtilsTest(test_utils.TestCase):
       for i, (dt, m,
               sp) in enumerate(itertools.product(dtypes, methods, shapes)):
         pc = py_utils.WeightParams(sp, m(scale=2), dt)
-        all_vars.append(py_utils.CreateVariable('var_%d' % i, pc)[0])
+        all_vars.append(py_utils.CreateVariable('var_%d' % i, pc))
 
       self.evaluate(tf.global_variables_initializer())
       var_values = self.evaluate(all_vars)
@@ -262,6 +280,9 @@ class PyUtilsTest(test_utils.TestCase):
               # TruncatedGaussianSqrtFanOut.
               [[[[-0.049076, -0.25183302, -1.79192507],
                  [0.93166995, -0.83121753, -1.40264213]]]],
+              # XavierGaussian.
+              [[[[-0.59545106, 1.232773, -0.2630677],
+                 [0.11635535, 0.9317614, 0.16670291]]]],
           ],
           var_values)
 
@@ -269,11 +290,11 @@ class PyUtilsTest(test_utils.TestCase):
     with self.session(use_gpu=False, graph=tf.Graph()):
       tf.random.set_seed(832124)
       pc = py_utils.WeightParams([2, 3], py_utils.WeightInit.Gaussian())
-      var1 = py_utils.CreateVariable('var1', pc)[0]
+      var1 = py_utils.CreateVariable('var1', pc)
 
       tf.get_variable_scope().reuse_variables()
       # Reuses an existing variable.
-      var2 = py_utils.CreateVariable('var1', pc)[0]
+      var2 = py_utils.CreateVariable('var1', pc)
 
       # An exception should be thrown in this case.
       pc = py_utils.WeightParams([2, 3], py_utils.WeightInit.Gaussian(2.0))
@@ -288,15 +309,15 @@ class PyUtilsTest(test_utils.TestCase):
       tf.random.set_seed(3251343)
       pc = py_utils.WeightParams([2, 3], py_utils.WeightInit.Gaussian())
       with tf.variable_scope('layer0'):
-        w0, _ = py_utils.CreateVariable('w', pc)
+        w0 = py_utils.CreateVariable('w', pc)
       with tf.variable_scope('layer1'):
-        w1, _ = py_utils.CreateVariable('w', pc)
+        w1 = py_utils.CreateVariable('w', pc)
       self.evaluate(tf.global_variables_initializer())
 
       # w0_val, w1_val should be sufficient different.
       w0_val, w1_val = self.evaluate([w0, w1])
       print(['diff = ', w0_val - w1_val])
-      self.assertTrue(np.max(np.abs(w0_val - w1_val)) > 0.1)
+      self.assertGreater(np.max(np.abs(w0_val - w1_val)), 0.1)
 
   def testXavier(self):
     with self.session(use_gpu=False, graph=tf.Graph()):
@@ -308,7 +329,7 @@ class PyUtilsTest(test_utils.TestCase):
       for i, (m, dt,
               sp) in enumerate(itertools.product(methods, dtypes, shapes)):
         pc = py_utils.WeightParams(sp, m(), dt)
-        all_vars.append(py_utils.CreateVariable('var_%d' % i, pc)[0])
+        all_vars.append(py_utils.CreateVariable('var_%d' % i, pc))
 
       v1_v_expted = [[1.051236, -0.959198, 0.796091],
                      [-0.685691, 0.230933, -1.006293]]
@@ -333,7 +354,7 @@ class PyUtilsTest(test_utils.TestCase):
       for i, (m, dt,
               sp) in enumerate(itertools.product(methods, dtypes, shapes)):
         pc = py_utils.WeightParams(sp, m(), dt)
-        all_vars.append(py_utils.CreateVariable('var_%d' % i, pc)[0])
+        all_vars.append(py_utils.CreateVariable('var_%d' % i, pc))
 
       v1_v_expted = [1.175317, -1.072416]
 
@@ -351,7 +372,7 @@ class PyUtilsTest(test_utils.TestCase):
       for i, (m, dt,
               sp) in enumerate(itertools.product(methods, dtypes, shapes)):
         pc = py_utils.WeightParams(sp, m(), dt)
-        all_vars.append(py_utils.CreateVariable('var_%d' % i, pc)[0])
+        all_vars.append(py_utils.CreateVariable('var_%d' % i, pc))
 
       v1_v_expted = [[[1.357139, -1.23832]]]
 
@@ -366,7 +387,7 @@ class PyUtilsTest(test_utils.TestCase):
           shape=shape, init=py_utils.WeightInit.Constant(0.0), dtype=tf.float32)
       with py_utils.VariableShapePrefixContext(5):
         with py_utils.VariableShapePrefixContext(4):
-          var = py_utils.CreateVariable('var', pc)[0]
+          var = py_utils.CreateVariable('var', pc)
       self.assertEqual([5, 4, 3, 2], var.shape.as_list())
 
   def testGeoMeanXavier(self):
@@ -379,7 +400,7 @@ class PyUtilsTest(test_utils.TestCase):
       for i, (m, dt,
               sp) in enumerate(itertools.product(methods, dtypes, shapes)):
         pc = py_utils.WeightParams(sp, m(), dt)
-        all_vars.append(py_utils.CreateVariable('var_%d' % i, pc)[0])
+        all_vars.append(py_utils.CreateVariable('var_%d' % i, pc))
 
       v1_v_expted = [[1.062019, -0.969037, 0.804257],
                      [-0.692724, 0.233301, -1.016615]]
@@ -499,12 +520,7 @@ class PyUtilsTest(test_utils.TestCase):
     self.assertIsInstance(py_utils.GetShape(e)[1], tf.Tensor)
     self.assertIsInstance(py_utils.GetShape(e)[2], tf.Tensor)
 
-    @tf.Defun(tf.float32)
-    def Identity(x):
-      return x
-
-    f = Identity(e)
-    # Function return value does not have shape info.
+    f = tf.placeholder(tf.float32)
     self.assertIsNone(f.shape.ndims)
     # GetShape() will return a Tensor.
     self.assertIsInstance(py_utils.GetShape(f), tf.Tensor)
@@ -519,15 +535,12 @@ class PyUtilsTest(test_utils.TestCase):
     d = tf.placeholder(tf.float32, shape=(1, None))
     self.assertIsInstance(py_utils.GetSize(d), tf.Tensor)
 
-    @tf.Defun(tf.float32)
-    def Identity(x):
-      return x
-
-    f = py_utils.GetSize(Identity(d))
+    shape = tf.placeholder(tf.int32)
+    f = py_utils.GetSize(tf.reshape(d, shape))
     self.assertIsInstance(f, tf.Tensor)
 
     with self.session() as sess:
-      f_v = sess.run(f, feed_dict={d: np.array([[1, 2]])})
+      f_v = sess.run(f, feed_dict={d: np.array([[1, 2]]), shape: [2]})
       self.assertEqual(2, f_v)
 
   def testUpdateFpropDtype(self):
@@ -566,12 +579,7 @@ class PyUtilsTest(test_utils.TestCase):
     e = tf.zeros([d.shape[0], tf.shape(d)[0], tf.shape(d)[1]])
     self.assertEqual(py_utils.GetRank(e), 3)
 
-    @tf.Defun(tf.float32)
-    def Identity(x):
-      return x
-
-    f = Identity(e)
-    # Function return value does not have shape info.
+    f = tf.placeholder(tf.float32)
     self.assertIsNone(f.shape.ndims)
     # GetRank() will return a Tensor.
     self.assertIsInstance(py_utils.GetRank(f), tf.Tensor)
@@ -579,29 +587,29 @@ class PyUtilsTest(test_utils.TestCase):
   def testRenamingRules(self):
     pc = py_utils.WeightParams([3, 3])
     with tf.variable_scope('model'):
-      _, v1 = py_utils.CreateVariable('v1', pc)
+      v1 = py_utils.CreateVariable('v1', pc)
       with py_utils.VariableRenameScope([('model/(.*)', 'data/%s')]):
-        _, v2 = py_utils.CreateVariable('v2', pc)
-      _, v3 = py_utils.CreateVariable('v3', pc)
+        v2 = py_utils.CreateVariable('v2', pc)
+      v3 = py_utils.CreateVariable('v3', pc)
 
-    self.assertTrue(v1.name == 'model/v1/var:0')
-    self.assertTrue(v2.name == 'data/v2/var:0')
-    self.assertTrue(v3.name == 'model/v3/var:0')
+    self.assertEqual(v1.name, 'model/v1/var:0')
+    self.assertEqual(v2.name, 'data/v2/var:0')
+    self.assertEqual(v3.name, 'model/v3/var:0')
 
   def testOpportunisticReuse(self):
     pc = py_utils.WeightParams([3, 3])
-    _, v1 = py_utils.CreateVariable('v1', pc)
+    v1 = py_utils.CreateVariable('v1', pc)
     with self.assertRaises(Exception):
-      _ = py_utils.CreateVariable('v1', pc)
+      py_utils.CreateVariable('v1', pc)
     with py_utils.OpportunisticVariableReuseScope(True):
-      _, v2 = py_utils.CreateVariable('v1', pc)
-      _, x1 = py_utils.CreateVariable('x1', pc)
+      v2 = py_utils.CreateVariable('v1', pc)
+      x1 = py_utils.CreateVariable('x1', pc)
       with py_utils.OpportunisticVariableReuseScope(False):
         with self.assertRaises(Exception):
-          _ = py_utils.CreateVariable('v1', pc)
-      _, v3 = py_utils.CreateVariable('v1', pc)
+          py_utils.CreateVariable('v1', pc)
+      v3 = py_utils.CreateVariable('v1', pc)
     with self.assertRaises(Exception):
-      _ = py_utils.CreateVariable('v1', pc)
+      py_utils.CreateVariable('v1', pc)
 
     for v in [v2, v3]:
       self.assertIs(v1, v)
@@ -628,7 +636,9 @@ class PyUtilsTest(test_utils.TestCase):
     test_vars = py_utils.NestedMap()
     for i, (m, dt, sp) in enumerate(itertools.product(methods, dtypes, shapes)):
       pc = py_utils.WeightParams(sp, m(), dt, 'col1')
-      test_vars['var_%d' % i] = py_utils.CreateVariable('var_%d' % i, pc)[0]
+      var = py_utils.CreateVariable('var_%d' % i, pc)
+      with tf.device(var.device):
+        test_vars['var_%d' % i] = tf.identity(var)
 
     test_devices = [
         '/job:worker/replica:0/device:GPU:0',
@@ -637,10 +647,6 @@ class PyUtilsTest(test_utils.TestCase):
 
     sharded_local_vars = py_utils.CreateLocalTheta(test_vars, test_devices)
     sharded_local_vars_list = sharded_local_vars.Flatten()
-
-    # assert the name is now Identity*
-    for v in sharded_local_vars_list:
-      self.assertIn('Identity', v.name)
 
     # assert proper device placement
     for i, v in enumerate(sharded_local_vars_list):
@@ -711,8 +717,7 @@ class PyUtilsTest(test_utils.TestCase):
       grad_mask['d:0'] = select
       grad_onehot = tf.one_hot(1, 3, dtype=tf.float32)
       grad_mask = {
-          k: tf.tensordot(v, grad_onehot, 1)
-          for k, v in six.iteritems(grad_mask)
+          k: tf.tensordot(v, grad_onehot, 1) for k, v in grad_mask.items()
       }
       var_grads = py_utils.ComputeGradients(l, vmap)
       var_grads_mask = py_utils.MaskGradients(var_grads, grad_mask)
@@ -740,7 +745,7 @@ class PyUtilsTest(test_utils.TestCase):
       loss = tf.reduce_sum(pred)
       vmap = py_utils.NestedMap(beta=beta, gamma=gamma)
       var_grads = py_utils.ComputeGradients(loss, vmap)
-      self.assertEqual(sorted(var_grads.keys()), ['beta', 'gamma'])
+      self.assertCountEqual(var_grads.keys(), ['beta', 'gamma'])
       l2_loss, var_grads_with_l2 = py_utils.AdjustGradientsWithLpLoss(
           var_grads, 0.1, p=2.0)
 
@@ -778,7 +783,7 @@ class PyUtilsTest(test_utils.TestCase):
       loss = tf.reduce_sum(pred)
       vmap = py_utils.NestedMap(emb=emb, weight=weight, bias=bias)
       var_grads = py_utils.ComputeGradients(loss, vmap)
-      self.assertEqual(sorted(var_grads.keys()), ['emb', 'weight'])
+      self.assertCountEqual(var_grads.keys(), ['emb', 'weight'])
       for mode in ('NestedMap', 'list'):
         if mode == 'NestedMap':
           l2_loss, var_grads_with_l2 = py_utils.AdjustGradientsWithLpLoss(
@@ -832,7 +837,7 @@ class PyUtilsTest(test_utils.TestCase):
       loss = tf.reduce_sum(pred)
       vmap = py_utils.NestedMap(beta=beta, gamma=gamma)
       var_grads = py_utils.ComputeGradients(loss, vmap)
-      self.assertEqual(sorted(var_grads.keys()), ['beta', 'gamma'])
+      self.assertCountEqual(var_grads.keys(), ['beta', 'gamma'])
       l1_loss, var_grads_with_l1 = py_utils.AdjustGradientsWithLpLoss(
           var_grads, 0.1, p=1.0)
 
@@ -863,7 +868,7 @@ class PyUtilsTest(test_utils.TestCase):
       loss = tf.reduce_sum(pred)
       vmap = py_utils.NestedMap(emb=emb, weight=weight, bias=bias)
       var_grads = py_utils.ComputeGradients(loss, vmap)
-      self.assertEqual(sorted(var_grads.keys()), ['emb', 'weight'])
+      self.assertCountEqual(var_grads.keys(), ['emb', 'weight'])
       l1_loss, var_grads_with_l1 = py_utils.AdjustGradientsWithLpLoss(
           var_grads, 0.1, p=1.0)
 
@@ -894,7 +899,7 @@ class PyUtilsTest(test_utils.TestCase):
       # Split a Tensor.
       m3x4 = tf.constant(np.arange(12).reshape([3, 4]))
       splits = py_utils.SplitRecursively(m3x4, 2)
-      self.assertEqual(2, len(splits))
+      self.assertLen(splits, 2)
       for split in splits:
         self.assertIsInstance(split, tf.Tensor)
       self.assertAllClose([[0, 1], [4, 5], [8, 9]], splits[0].eval())
@@ -904,7 +909,7 @@ class PyUtilsTest(test_utils.TestCase):
 
       # Split along axis 0.
       splits = py_utils.SplitRecursively(m3x4, 3, axis=0)
-      self.assertEqual(3, len(splits))
+      self.assertLen(splits, 3)
       concatenated = py_utils.ConcatRecursively(splits, axis=0)
       self.assertAllClose(m3x4.eval(), concatenated.eval())
       self.assertAllClose([[0, 1, 2, 3]], splits[0].eval())
@@ -938,7 +943,7 @@ class PyUtilsTest(test_utils.TestCase):
 
   def testFindNeeded(self):
     phs = [
-        tf.placeholder('float32', shape=(), name='p%d' % (i + 1,))
+        tf.placeholder('float32', shape=(), name='p%d' % (i + 1))
         for i in range(4)
     ]
     p1, p2, p3, p4 = phs
@@ -950,9 +955,9 @@ class PyUtilsTest(test_utils.TestCase):
     z2_needed = set(py_utils.FindNeededInList(phs, [z2]))
     z2_p4_needed = set(py_utils.FindNeededInList(phs, [z2, p4]))
 
-    self.assertTrue(set([p1, p2]) == z1_needed)
-    self.assertTrue(set([p1, p2, p3]) == z2_needed)
-    self.assertTrue(set([p1, p2, p3, p4]) == z2_p4_needed)
+    self.assertEqual(set([p1, p2]), z1_needed)
+    self.assertEqual(set([p1, p2, p3]), z2_needed)
+    self.assertEqual(set([p1, p2, p3, p4]), z2_p4_needed)
 
   def testArgMax(self):
 
@@ -1127,6 +1132,31 @@ class PyUtilsTest(test_utils.TestCase):
     default_vn = py_utils.DefaultVN()
     disable_vn = py_utils.DisableVN()
     self.assertNotEqual(default_vn, disable_vn)
+
+  def testShardedFilePatternToGlob(self):
+    file_pattern = '/some/path/to/file@8'
+    self.assertEqual('/some/path/to/file-?????-of-00008',
+                     py_utils.ShardedFilePatternToGlob(file_pattern))
+
+    file_pattern = '/some/path/to/file@000008'
+    self.assertEqual('/some/path/to/file-?????-of-00008',
+                     py_utils.ShardedFilePatternToGlob(file_pattern))
+
+    file_pattern = '/some/path/to/file@888888'
+    self.assertEqual('/some/path/to/file-?????-of-888888',
+                     py_utils.ShardedFilePatternToGlob(file_pattern))
+
+    file_pattern = '/some/path/to/file'
+    self.assertEqual('/some/path/to/file',
+                     py_utils.ShardedFilePatternToGlob(file_pattern))
+
+    file_pattern = '/some/path/to/file*'
+    self.assertEqual('/some/path/to/file*',
+                     py_utils.ShardedFilePatternToGlob(file_pattern))
+
+    file_pattern = '/some/path/to/file1@8,/some/path/to/file2@8'
+    with self.assertRaises(ValueError):
+      py_utils.ShardedFilePatternToGlob(file_pattern)
 
 
 class DeterministicDropoutTest(test_utils.TestCase):
@@ -1627,7 +1657,7 @@ foo[2][0]     32"""
 
   def testDeepCopy(self):
 
-    class SomeObj(object):
+    class SomeObj:
 
       def __init__(self):
         self.foo = 'foo'
@@ -1666,7 +1696,7 @@ foo[2][0]     32"""
     self.assertEqual({}, y.g)
     self.assertLen(y.h, 1)
     self.assertEqual('bar', y.h.foo)
-    self.assertEqual(y.i, None)
+    self.assertIsNone(y.i)
 
     # but leaf objects are the shared.
     self.assertEqual('bar', x.c.obj.foo)
@@ -1804,7 +1834,7 @@ class PadSequenceDimensionTest(test_utils.TestCase):
       x = tf.random.normal(shape=shape, seed=123456)
       length = 6
       padded_x = py_utils.PadSequenceDimension(x, length, 0)
-      self.assertEqual(padded_x.shape, None)
+      self.assertEqual(padded_x.shape, tf.TensorShape(None))
       real_x = sess.run(padded_x, feed_dict={shape: [3, 3]})
       expected_x = [
           [0.38615, 2.975221, -0.852826, 0., 0., 0.],
@@ -2363,7 +2393,7 @@ class WeightParamsTest(test_utils.TestCase):
                                py_utils.WeightInit.UniformPositive(1.0),
                                tf.float32)
     pc.shape = [10, 30]
-    var = py_utils.CreateVariable('var', pc)[0]
+    var = py_utils.CreateVariable('var', pc)
     self.assertEqual(var.shape, [10, 30])
 
 
@@ -2381,7 +2411,7 @@ class WeightInitTest(test_utils.TestCase):
       pc = py_utils.WeightParams([20, 30],
                                  py_utils.WeightInit.UniformPositive(1.0),
                                  tf.float32)
-      var = py_utils.CreateVariable('var', pc)[0]
+      var = py_utils.CreateVariable('var', pc)
       self.evaluate(tf.global_variables_initializer())
       var_v = var.eval()
       self.assertTrue(np.all(var_v >= 0.0))
@@ -2392,7 +2422,7 @@ class WeightInitTest(test_utils.TestCase):
       pc = py_utils.WeightParams(
           [2, 10, 30], py_utils.WeightInit.KaimingUniformFanInRelu(1.0),
           tf.float32)
-      var = py_utils.CreateVariable('var', pc)[0]
+      var = py_utils.CreateVariable('var', pc)
       self.evaluate(tf.global_variables_initializer())
       var_v = var.eval()
       # With Relu initialization, uniform bounds are
@@ -2406,7 +2436,7 @@ class WeightInitTest(test_utils.TestCase):
       pc = py_utils.WeightParams(
           [2, 10, 30], py_utils.WeightInit.KaimingUniformFanInLeakyRelu(),
           tf.float32)
-      var = py_utils.CreateVariable('var', pc)[0]
+      var = py_utils.CreateVariable('var', pc)
       self.evaluate(tf.global_variables_initializer())
       var_v = var.eval()
       # With LeakyRelu initialization, uniform bounds are
@@ -2442,6 +2472,23 @@ class RNNCellStateInitTest(test_utils.TestCase):
       expected_zero_state = [[1.621003, -1.097501, 0.493424],
                              [-1.048426, 2.73048, 0.091445]]
       self.assertAllClose(zero_state_v, expected_zero_state)
+
+  @flagsaver.flagsaver(stateless_vars_init=True)
+  def testRandomNormalStatelessVarsInit(self):
+    with self.session(use_gpu=False, graph=tf.Graph()):
+      tf.random.set_seed(12345678)
+      zero_state = py_utils.InitRNNCellState(
+          [2, 3],
+          name='RNNCellStateInit',
+          init=py_utils.RNNCellStateInit.RandomNormal(seed=12345),
+          dtype=tf.float32)
+      self.evaluate(tf.global_variables_initializer())
+      zero_state_v = zero_state.eval()
+      expected_zero_state = [[-0.887855, 0.993745, -0.439152],
+                             [0.312563, 0.923067, -1.952364]]
+      self.assertAllClose(zero_state_v, expected_zero_state)
+      zero_state_v_bis = zero_state.eval()
+      self.assertAllClose(zero_state_v_bis, expected_zero_state)
 
   def testRandomNormalInEval(self):
     with self.session(use_gpu=False, graph=tf.Graph()):
@@ -2483,20 +2530,55 @@ class RematerializeFnTest(test_utils.TestCase):
       self.assertAllEqual(v2, v4)
 
 
-class StatefulRandomOpsInDefunTest(test_utils.TestCase):
+def WrapFunction(use_tf_function, *dtypes):
+  """Wrap a python function as a Defun or tf.function."""
+  if use_tf_function:
 
-  def testFunctionWithStatelessOp(self):
+    def Decorated(fn):
 
-    @tf.Defun()
+      @tf.function(
+          input_signature=[tf.TensorSpec(shape=None, dtype=t) for t in dtypes])
+      def Fn(*args):
+        return fn(*args)
+
+      return Fn.get_concrete_function()
+
+    return Decorated
+  else:
+    return tf.Defun(*dtypes)
+
+
+def StatefulRandomOpsInDefunTestParameters(test_fn):
+
+  def WrappedTestFn(self, use_tf_function):
+    # TODO(laigd): remove this check when 312743821 is in the release.
+    if use_tf_function and tf.compat.v1.__version__ < '2.3.0':
+      return
+    test_fn(self, use_tf_function)
+
+  decorator = parameterized.named_parameters(
+      ('_defun', False),
+      ('_function', True),
+  )
+  return decorator(WrappedTestFn)
+
+
+class StatefulRandomOpsInDefunTest(test_utils.TestCase, parameterized.TestCase):
+
+  @StatefulRandomOpsInDefunTestParameters
+  def testFunctionWithStatelessOp(self, use_tf_function):
+
+    @WrapFunction(use_tf_function)
     def FunctionWithStatelessOp():
       return tf.constant(42.0)
 
     self.assertAllEqual(
         [], py_utils.StatefulRandomOpsInDefun(FunctionWithStatelessOp))
 
-  def testFunctionWithStatefulOp(self):
+  @StatefulRandomOpsInDefunTestParameters
+  def testFunctionWithStatefulOp(self, use_tf_function):
 
-    @tf.Defun()
+    @WrapFunction(use_tf_function)
     def FunctionWithStatefulOp():
       return tf.random.uniform([100], maxval=10, dtype=tf.int32)
 
@@ -2504,13 +2586,14 @@ class StatefulRandomOpsInDefunTest(test_utils.TestCase):
         ['RandomUniformInt'],
         py_utils.StatefulRandomOpsInDefun(FunctionWithStatefulOp))
 
-  def testFunctionWithStatelessFunctionCall(self):
+  @StatefulRandomOpsInDefunTestParameters
+  def testFunctionWithStatelessFunctionCall(self, use_tf_function):
 
-    @tf.Defun()
+    @WrapFunction(use_tf_function)
     def FunctionWithStatelessOp():
       return tf.constant(42.0)
 
-    @tf.Defun()
+    @WrapFunction(use_tf_function)
     def FunctionWithStatelessFunctionCall():
       return FunctionWithStatelessOp()
 
@@ -2518,13 +2601,14 @@ class StatefulRandomOpsInDefunTest(test_utils.TestCase):
         [],
         py_utils.StatefulRandomOpsInDefun(FunctionWithStatelessFunctionCall))
 
-  def testFunctionWithStatefulFunctionCall(self):
+  @StatefulRandomOpsInDefunTestParameters
+  def testFunctionWithStatefulFunctionCall(self, use_tf_function):
 
-    @tf.Defun()
+    @WrapFunction(use_tf_function)
     def FunctionWithStatefulOp():
       return tf.random.uniform([100], maxval=10, dtype=tf.int32)
 
-    @tf.Defun()
+    @WrapFunction(use_tf_function)
     def FunctionWithStatefulFunctionCall():
       return FunctionWithStatefulOp()
 
@@ -2532,17 +2616,18 @@ class StatefulRandomOpsInDefunTest(test_utils.TestCase):
         ['RandomUniformInt'],
         py_utils.StatefulRandomOpsInDefun(FunctionWithStatefulFunctionCall))
 
-  def testFunctionWithStatefulFunctionalWhile(self):
+  @StatefulRandomOpsInDefunTestParameters
+  def testFunctionWithStatefulFunctionalWhile(self, use_tf_function):
 
-    @tf.Defun()
+    @WrapFunction(use_tf_function)
     def FunctionWithStatefulFunctionalWhile():
 
-      @tf.Defun(tf.float32, tf.int32)
+      @WrapFunction(use_tf_function, tf.float32, tf.int32)
       def Cond(result, i):
         del result
         return tf.less(i, 4)
 
-      @tf.Defun(tf.float32, tf.int32)
+      @WrapFunction(use_tf_function, tf.float32, tf.int32)
       def Body(result, i):
         return (result + tf.random.uniform(tf.shape(result)), i + 1)
 
@@ -2552,16 +2637,17 @@ class StatefulRandomOpsInDefunTest(test_utils.TestCase):
         ['RandomUniform'],
         py_utils.StatefulRandomOpsInDefun(FunctionWithStatefulFunctionalWhile))
 
-  def testFunctionWithStatefulFunctionalIf(self):
+  @StatefulRandomOpsInDefunTestParameters
+  def testFunctionWithStatefulFunctionalIf(self, use_tf_function):
 
-    @tf.Defun()
+    @WrapFunction(use_tf_function)
     def FunctionWithStatefulFunctionalIf():
 
-      @tf.Defun(tf.float32)
+      @WrapFunction(use_tf_function, tf.float32)
       def ThenFn(x):
         return tf.abs(x)
 
-      @tf.Defun(tf.float32)
+      @WrapFunction(use_tf_function, tf.float32)
       def ElseFn(x):
         return tf.random.uniform(tf.shape(x))
 
@@ -2572,12 +2658,13 @@ class StatefulRandomOpsInDefunTest(test_utils.TestCase):
         ['RandomUniform'],
         py_utils.StatefulRandomOpsInDefun(FunctionWithStatefulFunctionalIf))
 
-  def testFunctionWithStatefulFunctionalFor(self):
+  @StatefulRandomOpsInDefunTestParameters
+  def testFunctionWithStatefulFunctionalFor(self, use_tf_function):
 
-    @tf.Defun()
+    @WrapFunction(use_tf_function)
     def FunctionWithStatefulFunctionalFor():
 
-      @tf.Defun(tf.float32)
+      @WrapFunction(use_tf_function, tf.float32)
       def Body(result):
         return [
             result + tf.random.uniform(tf.shape(result)) +
@@ -2592,12 +2679,13 @@ class StatefulRandomOpsInDefunTest(test_utils.TestCase):
                             py_utils.StatefulRandomOpsInDefun(
                                 FunctionWithStatefulFunctionalFor)))
 
-  def testFunctionWithStatelessFunctionalFor(self):
+  @StatefulRandomOpsInDefunTestParameters
+  def testFunctionWithStatelessFunctionalFor(self, use_tf_function):
 
-    @tf.Defun()
+    @WrapFunction(use_tf_function)
     def FunctionWithStatelessFunctionalFor():
 
-      @tf.Defun(tf.float32)
+      @WrapFunction(use_tf_function, tf.float32)
       def Body(result):
         return [
             result +
@@ -2814,9 +2902,28 @@ class FromGlobalTest(test_utils.TestCase):
     tf.flags.FLAGS(sys.argv)
 
 
-class CallDefunTest(test_utils.TestCase):
+def CallDefunTestParameters(test_fn):
 
-  def testSimple(self):
+  def WrappedTestFn(self, use_tf_function, bak_as_function):
+    # TODO(laigd): remove this check when 312743821 is in the release.
+    if use_tf_function and tf.compat.v1.__version__ < '2.3.0':
+      return
+    with flagsaver.flagsaver(call_defun_use_tf_function=use_tf_function):
+      test_fn(self, bak_as_function)
+
+  decorator = parameterized.named_parameters(
+      ('_defun', False, False),
+      ('_defun_bakasfunction', False, True),
+      ('_function', True, False),
+      ('_function_bakasfunction', True, True),
+  )
+  return decorator(WrappedTestFn)
+
+
+class CallDefunTest(test_utils.TestCase, parameterized.TestCase):
+
+  @CallDefunTestParameters
+  def testSimple(self, bak_as_function):
     with self.session():
 
       def Bak(xs, ys, dys):
@@ -2832,7 +2939,7 @@ class CallDefunTest(test_utils.TestCase):
       a = np.array([[1.0, 2.0], [0.0, -3.0]])
       b = np.array([[2.0, 0.0], [1.0, 1.0]])
       xs = [tf.constant(a), tf.constant(b)]
-      ys = py_utils.CallDefun(Fwd, xs, Bak)
+      ys = py_utils.CallDefun(Fwd, xs, bak=Bak, bak_as_function=bak_as_function)
       loss = tf.reduce_sum(tf.square(ys))
       dw, dx, dy = tf.gradients(xs=xs + [ys], ys=loss)
       y, dw, dx, dy = self.evaluate([ys, dw, dx, dy])
@@ -2841,7 +2948,8 @@ class CallDefunTest(test_utils.TestCase):
       self.assertAllEqual(dw, (2 * y).dot(b.T) + 100)
       self.assertAllEqual(dx, a.T.dot(2 * y) + 200)
 
-  def testPreserveStaticShape(self):
+  @CallDefunTestParameters
+  def testPreserveStaticShape(self, bak_as_function):
     with self.session():
 
       def Bak(x, y, dy):
@@ -2861,10 +2969,12 @@ class CallDefunTest(test_utils.TestCase):
 
       a = np.array([[1.0, 2.0], [0.0, -3.0]])
       x = tf.constant(a)
-      y = self.evaluate(py_utils.CallDefun(Fwd, x, Bak))
+      y = self.evaluate(
+          py_utils.CallDefun(Fwd, x, bak=Bak, bak_as_function=bak_as_function))
       self.assertAllEqual(y, np.zeros_like(a))
 
-  def testNestedMap(self):
+  @CallDefunTestParameters
+  def testNestedMap(self, bak_as_function):
     with self.session():
 
       def Bak(xs, ys, dys):
@@ -2879,7 +2989,7 @@ class CallDefunTest(test_utils.TestCase):
       a = np.array([[1.0, 2.0], [0.0, -3.0]])
       b = np.array([[2.0, 0.0], [1.0, 1.0]])
       xs = py_utils.NestedMap(w=tf.constant(a), x=tf.constant(b))
-      ys = py_utils.CallDefun(Fwd, xs, Bak)
+      ys = py_utils.CallDefun(Fwd, xs, bak=Bak, bak_as_function=bak_as_function)
       loss = tf.reduce_sum(tf.square(ys.y))
       dw, dx, dy = tf.gradients(xs=xs.Flatten() + ys.Flatten(), ys=loss)
       y, dw, dx, dy = self.evaluate([ys.y, dw, dx, dy])
@@ -2888,10 +2998,57 @@ class CallDefunTest(test_utils.TestCase):
       self.assertAllEqual(dw, (2 * y).dot(b.T) + 100)
       self.assertAllEqual(dx, a.T.dot(2 * y) + 200)
 
+  @CallDefunTestParameters
+  def testImplicitInput(self, bak_as_function):
+    with self.session() as sess:
+      w = tf.placeholder(tf.float32)
 
-class IfTest(test_utils.TestCase):
+      def Fwd(xs):
+        ret = py_utils.NestedMap(y=tf.matmul(w, xs.x))
+        assert py_utils.GetExtraArgs()
+        return ret
 
-  def testSimple(self):
+      def Bak(xs, ys, dys):
+        del ys
+        dw = tf.matmul(dys.y, tf.transpose(xs.x)) + 100.
+        ret = py_utils.NestedMap(x=tf.matmul(tf.transpose(w), dys.y) + 200.)
+        if bak_as_function:
+          assert py_utils.GetExtraArgs()
+        return ret, dw
+
+      a = np.array([[1.0, 2.0], [0.0, -3.0]])
+      b = np.array([[2.0, 0.0], [1.0, 1.0]])
+      xs = py_utils.NestedMap(x=tf.constant(b, dtype=tf.float32))
+      ys = py_utils.CallDefun(Fwd, xs, bak=Bak, bak_as_function=bak_as_function)
+      loss = tf.reduce_sum(tf.square(ys.y))
+      dw, dx, dy = tf.gradients(xs=[w] + xs.Flatten() + ys.Flatten(), ys=loss)
+      y, dw, dx, dy = sess.run([ys.y, dw, dx, dy], feed_dict={w: a})
+      self.assertAllEqual(y, a.dot(b))
+      self.assertAllEqual(dy, 2 * y)
+      self.assertAllEqual(dw, (2 * y).dot(b.T) + 100)
+      self.assertAllEqual(dx, a.T.dot(2 * y) + 200)
+
+
+def IfTestParameters(test_fn):
+
+  def WrappedTestFn(self, use_tf_function):
+    # TODO(laigd): remove this check when 313682500 is in the release.
+    if use_tf_function and tf.compat.v1.__version__ < '2.3.0':
+      return
+    with flagsaver.flagsaver(if_use_tf_function=use_tf_function):
+      test_fn(self)
+
+  decorator = parameterized.named_parameters(
+      ('_defun', False),
+      ('_tf_function', True),
+  )
+  return decorator(WrappedTestFn)
+
+
+class IfTest(test_utils.TestCase, parameterized.TestCase):
+
+  @IfTestParameters
+  def testNestedMapInput(self):
     g = tf.Graph()
     with g.as_default():
 
@@ -2913,6 +3070,50 @@ class IfTest(test_utils.TestCase):
 
     self.assertEqual(-1., true_out.value)
     self.assertEqual(1., false_out.value)
+
+  @IfTestParameters
+  def testScalarInput(self):
+    g = tf.Graph()
+    with g.as_default():
+
+      def ThenBody(value):
+        return value - 1.
+
+      def ElseBody(value):
+        return value + 1.
+
+      inputs = tf.constant(0.)
+      true_out = py_utils.If(True, inputs, ThenBody, ElseBody)
+      false_out = py_utils.If(False, inputs, ThenBody, ElseBody)
+
+    with self.session(graph=g):
+      true_out = self.evaluate(true_out)
+      false_out = self.evaluate(false_out)
+
+    self.assertEqual(-1., true_out)
+    self.assertEqual(1., false_out)
+
+  @IfTestParameters
+  def testListInput(self):
+    g = tf.Graph()
+    with g.as_default():
+
+      def ThenBody(values):
+        return values[0] - 1., values[1] + 1.
+
+      def ElseBody(values):
+        return values[0] + 1., values[1] - 1.
+
+      inputs = [tf.constant(0.), tf.constant(0.)]
+      true_out = py_utils.If(True, inputs, ThenBody, ElseBody)
+      false_out = py_utils.If(False, inputs, ThenBody, ElseBody)
+
+    with self.session(graph=g):
+      true_out = self.evaluate(true_out)
+      false_out = self.evaluate(false_out)
+
+    self.assertEqual((-1., 1.), true_out)
+    self.assertEqual((1., -1.), false_out)
 
 
 class ForLoopTest(test_utils.TestCase):
@@ -2981,6 +3182,158 @@ class TpuSummaryTensorsTest(test_utils.TestCase):
           'mean_x/fprop/tower_0_0/fprop/my_model/layer_002/fprop': (0., 1.),
       }]
       self.assertAllEqual(expected_value, actual_value)
+
+
+class HasShapeTest(test_utils.TestCase):
+
+  def testFullyDynamicShapesMatchesOk(self):
+    x_pl = tf.placeholder(tf.float32)
+    y_pl = tf.placeholder(tf.float32)
+    x = py_utils.HasShape(x_pl, py_utils.GetShape(y_pl))
+    with self.session() as sess:
+      sess.run(
+          x,
+          feed_dict={
+              x_pl: np.random.rand(1, 2, 3),
+              y_pl: np.random.rand(1, 2, 3),
+          })
+
+  def testFullyDynamicShapesMismatchRaisesError(self):
+    x_pl = tf.placeholder(tf.float32)
+    y_pl = tf.placeholder(tf.float32)
+    x = py_utils.HasShape(x_pl, py_utils.GetShape(y_pl))
+    with self.session() as sess:
+      with self.assertRaisesRegexp(tf.errors.InvalidArgumentError,
+                                   r'.*mismatch shape:.*'):
+        sess.run(
+            x,
+            feed_dict={
+                x_pl: np.random.rand(1, 2, 3),
+                y_pl: np.random.rand(4, 5, 6),
+            })
+
+  def testFullyDynamicRankMismatchRaisesError(self):
+    x_pl = tf.placeholder(tf.float32)
+    y_pl = tf.placeholder(tf.float32)
+    x = py_utils.HasShape(x_pl, py_utils.GetShape(y_pl))
+    with self.session() as sess:
+      with self.assertRaisesRegexp(tf.errors.InvalidArgumentError,
+                                   r'.*mismatch shape:.*'):
+        sess.run(
+            x,
+            feed_dict={
+                x_pl: np.random.rand(1, 2),
+                y_pl: np.random.rand(4, 5, 6),
+            })
+
+  def testFullyConstantShapesMatchesOk(self):
+    x_pl = tf.placeholder(tf.float32)
+    x = py_utils.HasShape(x_pl, tf.constant([1, 2, -1]))
+    with self.session() as sess:
+      sess.run(
+          x, feed_dict={
+              x_pl: np.random.rand(1, 2, 3),
+          })
+
+  def testFullyConstantShapesMismatchRaisesError(self):
+    x_pl = tf.placeholder(tf.float32)
+    x = py_utils.HasShape(x_pl, tf.constant([1, 2, -1]))
+    with self.session() as sess:
+      with self.assertRaisesRegexp(tf.errors.InvalidArgumentError,
+                                   r'.*mismatch shape:.*'):
+        sess.run(
+            x, feed_dict={
+                x_pl: np.random.rand(2, 2, 3),
+            })
+
+  def testRankMismatchRaisesError(self):
+    with self.assertRaisesRegexp(
+        ValueError, r'Tensor does not match rank of expected shape.*'):
+      py_utils.HasShape(tf.random.uniform((1, 2, 3)), [1, 2])
+
+  def testTensorRankLessThanNDimsRaisesError(self):
+    with self.assertRaisesRegexp(ValueError,
+                                 r'Tensor has fewer dimensions than ndims.*'):
+      py_utils.HasShape(tf.random.uniform((1, 2, 3)), [1, 2, 3, 4], ndims=4)
+
+  def testExpectedShapeRankLessThanNDimsRaisesError(self):
+    with self.assertRaisesRegexp(
+        ValueError,
+        r'Expected shape must have number of dimensions equal to ndims.*'):
+      py_utils.HasShape(tf.random.uniform((1, 2, 3, 4)), [1, 2, 3], ndims=4)
+
+  def testTensorStaticShapeMismatchRaisesError(self):
+    x_pl = tf.placeholder(tf.float32, (None, 2, 3))
+    y_pl = tf.placeholder(tf.float32, (3, 1, None))
+    with self.assertRaisesRegexp(
+        ValueError, r'Tensor does not match expected shape on dimension 1.*'):
+      py_utils.HasShape(x_pl, py_utils.GetShape(y_pl))
+
+  def testTensorShapeMatchesOk(self):
+    x_pl = tf.placeholder(tf.float32, (None, 2, 3, None))
+    y_pl = tf.placeholder(tf.float32, (3, 2, None, None))
+    x = py_utils.HasShape(x_pl, py_utils.GetShape(y_pl))
+    with self.session() as sess:
+      sess.run(
+          x,
+          feed_dict={
+              x_pl: np.random.rand(3, 2, 3, 4),
+              y_pl: np.random.rand(3, 2, 3, 4),
+          })
+
+  def testTensorShapeMatchesWithMinus1Ok(self):
+    x_pl = tf.placeholder(tf.float32, (None, 2, 3, None))
+    x = py_utils.HasShape(x_pl, [-1, -1, 3, -1])
+    with self.session() as sess:
+      sess.run(
+          x, feed_dict={
+              x_pl: np.random.rand(3, 2, 3, 4),
+          })
+
+  def testTensorShapeWithMinus1MismatchRaises(self):
+    x_pl = tf.placeholder(tf.float32, (None, 2, 3, None))
+    x = py_utils.HasShape(x_pl, [-1, -1, 3, 5])
+    with self.session() as sess:
+      with self.assertRaisesRegexp(tf.errors.InvalidArgumentError,
+                                   r'.*mismatch shape:.*'):
+        sess.run(
+            x, feed_dict={
+                x_pl: np.random.rand(3, 2, 3, 4),
+            })
+
+  def testTensorShapeMatchesWithTensorExpectedShape(self):
+    x_pl = tf.placeholder(tf.float32, (None, 2, 3, None))
+    x = py_utils.HasShape(x_pl, tf.constant([-1, -1, 3, -1]))
+    with self.session() as sess:
+      sess.run(
+          x, feed_dict={
+              x_pl: np.random.rand(3, 2, 3, 4),
+          })
+
+  def testTensorShapeMismatchWithTensorExpectedShapeRaises(self):
+    x_pl = tf.placeholder(tf.float32, (None, 2, 3, None))
+    x = py_utils.HasShape(x_pl, [-1, tf.constant(-1), 3, tf.constant(5)])
+    with self.session() as sess:
+      with self.assertRaisesRegexp(tf.errors.InvalidArgumentError,
+                                   r'.*mismatch shape:.*'):
+        sess.run(
+            x, feed_dict={
+                x_pl: np.random.rand(3, 2, 3, 4),
+            })
+
+  def testTensorStaticShapeMatchDynamicMismatchRaises(self):
+    x_pl = tf.placeholder(tf.float32, (None, None, 2, 3, None))
+    y_pl = tf.placeholder(tf.float32, (None, 3, 2, None, None))
+    x = py_utils.HasShape(x_pl, py_utils.GetShape(y_pl))
+    with self.session() as sess:
+      with self.assertRaisesRegexp(tf.errors.InvalidArgumentError,
+                                   r'.*mismatch shape:.*'):
+        sess.run(
+            x,
+            feed_dict={
+                x_pl: np.random.rand(1, 3, 2, 3, 4),
+                y_pl: np.random.rand(2, 3, 2, 5, 4),
+            })
 
 
 if __name__ == '__main__':

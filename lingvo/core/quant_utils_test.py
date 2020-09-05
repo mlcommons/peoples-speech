@@ -31,13 +31,13 @@ class SampleQuantizedProjectionLayer(quant_utils.QuantizableLayer):
 
   @classmethod
   def Params(cls):
-    p = super(SampleQuantizedProjectionLayer, cls).Params()
+    p = super().Params()
     p.Define('input_dim', 2, 'Depth of the input.')
     p.Define('output_dim', 3, 'Depth of the output.')
     return p
 
-  def __init__(self, params):
-    super(SampleQuantizedProjectionLayer, self).__init__(params)
+  def _CreateLayerVariables(self):
+    super()._CreateLayerVariables()
     p = self.params
 
     w_pc = py_utils.WeightParams(
@@ -45,8 +45,7 @@ class SampleQuantizedProjectionLayer(quant_utils.QuantizableLayer):
         init=p.params_init,
         dtype=p.dtype,
         collections=[self.__class__.__name__ + '_vars'])
-    with tf.variable_scope(p.name):
-      self.CreateVariable('w', w_pc)
+    self.CreateVariable('w', w_pc)
 
     self.TrackQTensor('inputs', 'transformed')
 
@@ -299,7 +298,7 @@ class QuantizableLayerTest(test_utils.TestCase):
     return l
 
 
-class ClippingCapScheduleTest(object):
+class ClippingCapScheduleTest:
 
   def testLinearClippingCapSchedule(self):
     p = quant_utils.LinearClippingCapSchedule.Params()
@@ -341,11 +340,11 @@ class ClippingCapScheduleTest(object):
       # Move to fully quantized part of schedule
       self.evaluate(tf.assign(py_utils.GetOrCreateGlobalStepVar(), 16))
 
-      @tf.Defun(tf.float32, tf.float32)
+      @tf.function(autograph=False)
       def ExampleFunction8(x, cc_state):
         return cc_schedule.ApplyClippingWithState(cc_state, x, bits=8)
 
-      @tf.Defun(tf.float32, tf.float32)
+      @tf.function(autograph=False)
       def ExampleFunction16(x, cc_state):
         return cc_schedule.ApplyClippingWithState(cc_state, x, bits=16)
 

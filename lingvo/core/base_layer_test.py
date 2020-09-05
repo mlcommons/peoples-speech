@@ -37,27 +37,26 @@ def EvalAndFlatten(nmap):
 
 class TestLayer(base_layer.BaseLayer):
 
-  def __init__(self, params):
-    super(TestLayer, self).__init__(params)
+  def _CreateLayerVariables(self):
+    super()._CreateLayerVariables()
     p = self.params
-    with tf.variable_scope(p.name):
-      self.CreateVariable(
-          'w',
-          py_utils.WeightParams(
-              shape=[4, 4],
-              dtype=p.dtype,
-              init=p.params_init,
-              collections=[self.__class__.__name__ + '_vars']))
-      self.CreateVariable(
-          'b',
-          py_utils.WeightParams(
-              shape=[4],
-              dtype=p.dtype,
-              init=py_utils.WeightInit.Constant(),
-              collections=[
-                  self.__class__.__name__ + '_vars',
-                  py_utils.SKIP_LP_REGULARIZATION
-              ]))
+    self.CreateVariable(
+        'w',
+        py_utils.WeightParams(
+            shape=[4, 4],
+            dtype=p.dtype,
+            init=p.params_init,
+            collections=[self.__class__.__name__ + '_vars']))
+    self.CreateVariable(
+        'b',
+        py_utils.WeightParams(
+            shape=[4],
+            dtype=p.dtype,
+            init=py_utils.WeightInit.Constant(),
+            collections=[
+                self.__class__.__name__ + '_vars',
+                py_utils.SKIP_LP_REGULARIZATION
+            ]))
 
 
 class BaseLayerTest(test_utils.TestCase):
@@ -286,7 +285,7 @@ class BaseLayerTest(test_utils.TestCase):
     layer.AddFunction('test1', lambda: 1)
     with self.assertRaises(AttributeError):
       layer.AddFunction('test1', lambda: 2)
-    self.assertEquals(1, layer.fns.test1())
+    self.assertEqual(1, layer.fns.test1())
 
   def testAttributeErrorInPropertyGetter(self):
 
@@ -294,10 +293,10 @@ class BaseLayerTest(test_utils.TestCase):
 
       @classmethod
       def Params(cls):
-        return super(BadLayer, cls).Params()
+        return super().Params()
 
       def __init__(self, params):
-        super(BadLayer, self).__init__(params)
+        super().__init__(params)
 
       @property
       def bad_property(self):

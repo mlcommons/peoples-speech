@@ -18,14 +18,13 @@
 from absl.testing import parameterized
 from lingvo import compat as tf
 from lingvo.core import attention as tm_attention
+from lingvo.core import attention_util
 from lingvo.core import base_layer
 from lingvo.core import batch_major_attention as attention
 from lingvo.core import hyperparams
 from lingvo.core import py_utils
 from lingvo.core import test_utils
 import numpy as np
-from six.moves import range
-from six.moves import zip
 
 
 class MultiHeadSelfAttentionTest(test_utils.TestCase, parameterized.TestCase):
@@ -52,10 +51,13 @@ class MultiHeadSelfAttentionTest(test_utils.TestCase, parameterized.TestCase):
     (input_vecs, input_padding, input_vecs_p,
      input_padding_p) = self._AttentionInputs()
     p = attention.MultiHeadedAttention.Params().Set(
-        name='self_atten', input_dim=4, hidden_dim=4)
+        name='self_atten',
+        input_dim=4,
+        hidden_dim=4,
+        enable_scaling_code_motion=True)
     l = p.Instantiate()
 
-    probs = l.AttenProbs(
+    probs, probs_sum = l.AttenProbs(
         l.theta,
         tf.expand_dims(input_vecs, 2),
         tf.expand_dims(input_vecs, 2),
@@ -64,7 +66,7 @@ class MultiHeadSelfAttentionTest(test_utils.TestCase, parameterized.TestCase):
 
     with self.session(use_gpu=False) as sess:
       tf.global_variables_initializer().run()
-      prob_out = sess.run(tf.squeeze(probs))
+      prob_out = sess.run(tf.squeeze(probs / probs_sum))
 
     # Use numpy to perform the same computation to generate expected results.
     input_vecs_p = np.array(input_vecs_p)
@@ -139,7 +141,7 @@ class MultiHeadSelfAttentionTest(test_utils.TestCase, parameterized.TestCase):
           np.sum(context_vec_out, axis=1))
 
 
-class MultiHeadedAttentionXLOracle(object):
+class MultiHeadedAttentionXLOracle:
   """Oracle layer used for computing ground truths for MultiHeadedAttention.
 
   Written in a non-vectorized way.
@@ -289,19 +291,27 @@ class MultiHeadedAttentionTest(test_utils.TestCase, parameterized.TestCase):
     # pyformat: enable
     per_step_padding = tf.stack(
         [tf.constant(x, dtype=dtype) for x in per_step_padding_p])
-    source_vecs = tf.zeros(
-        [seq_len, batch_size, num_heads, input_dim // num_heads], dtype=dtype)
-    source_ctxs = tf.zeros(
-        [seq_len, batch_size, num_heads, input_dim // num_heads], dtype=dtype)
-    return source_vecs, source_ctxs, query_vec, per_step_padding
+    source_vecs = tf.constant(
+        np.random.normal(
+            0.1, 0.5, [seq_len, batch_size, num_heads, input_dim // num_heads]),
+        dtype=dtype)
+    source_ctxs = tf.constant(
+        np.random.normal(
+            0.1, 0.5, [seq_len, batch_size, num_heads, input_dim // num_heads]),
+        dtype=dtype)
+    cached_states = py_utils.NestedMap(key=source_vecs, value=source_ctxs)
+    return query_vec, cached_states, per_step_padding
 
   def testAttenProbs(self):
     (query_vec, key_vec, paddings, per_step_padding, query_vec_p, key_vec_p,
      paddings_p, per_step_padding_p) = _AttentionInputs()
     p = attention.MultiHeadedAttention.Params().Set(
-        name='atten', input_dim=4, hidden_dim=4)
+        name='atten',
+        input_dim=4,
+        hidden_dim=4,
+        enable_scaling_code_motion=True)
     l = p.Instantiate()
-    probs = l.AttenProbs(
+    probs, probs_sum = l.AttenProbs(
         l.theta,
         tf.expand_dims(query_vec, 2),
         tf.expand_dims(key_vec, 2),
@@ -311,7 +321,7 @@ class MultiHeadedAttentionTest(test_utils.TestCase, parameterized.TestCase):
 
     with self.session(use_gpu=False) as sess:
       tf.global_variables_initializer().run()
-      prob_out = sess.run(tf.squeeze(probs))
+      prob_out = sess.run(tf.squeeze(probs / probs_sum))
 
     # Use numpy to perform the same computation to generate expected results.
     query_vec_p = np.array(query_vec_p)
@@ -365,26 +375,166 @@ class MultiHeadedAttentionTest(test_utils.TestCase, parameterized.TestCase):
   def testExtendStepSelfAttention(self, use_short_seq_opt):
     # input_batch:6, seq_len:6, query_len: 1. Test n = 2 case.
     with self.session(use_gpu=True) as sess:
-      source_vecs, source_ctxs, query_vec, per_step_padding = (
-          self._AttentionExtendStepInputs())
+      query_vec, cached_states, per_step_padding = self._AttentionExtendStepInputs(
+      )
       p = attention.MultiHeadedAttention.Params().Set(
           name='atten', num_heads=2, input_dim=4, hidden_dim=4)
       p.params_init = py_utils.WeightInit.Xavier(scale=1.0, seed=0)
       l = p.Instantiate()
       tf.global_variables_initializer().run()
-      ctx_vec, new_src_vecs, _ = l.ExtendStep(l.theta, query_vec, source_vecs,
-                                              source_ctxs, None, None,
-                                              per_step_padding, 0,
-                                              use_short_seq_opt)
+      ctx_vec, updated_states = l.ExtendStep(l.theta, query_vec, cached_states,
+                                             None, None, per_step_padding, 0,
+                                             use_short_seq_opt)
       context_vec_out = sess.run(ctx_vec)
-      new_source_vecs = sess.run(new_src_vecs)
+      new_source_vecs = sess.run(updated_states.key)
       context_vec_out = np.reshape(context_vec_out, (6, 4))
       self.assertAllClose(
           [5.381485, 5.384035, 4.493689, 3.544395, 3.424472, 3.311054],
           np.sum(context_vec_out, axis=1))
       new_source_vecs = np.reshape(new_source_vecs, (6, 24))
-      self.assertAllClose([4.116683, 0.0, 0.0, 0.0, 0.0, 0.0],
-                          np.sum(new_source_vecs, axis=1))
+      self.assertAllClose(
+          [4.116683, 1.340482, 1.065773, 1.035415, 4.928454, 3.161165],
+          np.sum(new_source_vecs, axis=1))
+
+  @parameterized.named_parameters({
+      'testcase_name': '_long_seq',
+      'use_short_seq_opt': False,
+  })
+  def testExtendStepAsyncTimeStepSelfAttention(self, use_short_seq_opt):
+    # input_batch:6, seq_len:6, query_len: 1. Test n = 2 case.
+    with self.session(use_gpu=True) as sess:
+      query_vec, cached_states, per_step_padding = self._AttentionExtendStepInputs(
+      )
+      p = attention.MultiHeadedAttention.Params().Set(
+          name='atten', num_heads=2, input_dim=4, hidden_dim=4)
+      p.params_init = py_utils.WeightInit.Xavier(scale=1.0, seed=0)
+
+      allzero_time_step = tf.constant([0] * 6)
+      time_step = tf.constant([0, 1, 2, 3, 4, 5])
+      l = p.Instantiate()
+      tf.global_variables_initializer().run()
+      ctx_vec, updated_states = l.ExtendStep(l.theta, query_vec, cached_states,
+                                             None, None, per_step_padding, 0,
+                                             use_short_seq_opt)
+      ctx_vec_async, updated_states_async = l.ExtendStep(
+          l.theta, query_vec, cached_states, None, None, per_step_padding,
+          allzero_time_step, use_short_seq_opt)
+
+      context_vec_out = sess.run(ctx_vec)
+      new_source_vecs = sess.run(updated_states.key)
+      context_vec_out_async = sess.run(ctx_vec_async)
+      new_source_vecs_async = sess.run(updated_states_async.key)
+
+      self.assertAllClose(
+          np.sum(context_vec_out, axis=1),
+          np.sum(context_vec_out_async, axis=1))
+      self.assertAllClose(
+          np.sum(new_source_vecs, axis=1),
+          np.sum(new_source_vecs_async, axis=1))
+
+      ctx_vec_async, updated_states_async = l.ExtendStep(
+          l.theta, query_vec, cached_states, None, None, per_step_padding,
+          time_step, use_short_seq_opt)
+      _, updated_states_step1 = l.ExtendStep(l.theta, query_vec, cached_states,
+                                             None, None, per_step_padding, 1,
+                                             use_short_seq_opt)
+
+      context_vec_out_async = sess.run(ctx_vec_async)
+      new_source_vecs_async = sess.run(updated_states_async.key)
+
+      new_source_vecs_async_step1 = sess.run(updated_states_step1.key)
+
+      context_vec_out_async = np.reshape(context_vec_out_async, (6, 4))
+      self.assertAllClose(
+          [5.381485, -1.943824, 2.214111, 0.840045, -0.939259, 0.752783],
+          np.sum(context_vec_out_async, axis=1))
+      # Updated status are the same at step 0.
+      self.assertAllClose(new_source_vecs_async[0][0], new_source_vecs[0][0])
+      self.assertAllClose(new_source_vecs_async[1][1],
+                          new_source_vecs_async_step1[1][1])
+
+  @parameterized.named_parameters({
+      'testcase_name': '_long_seq',
+      'use_short_seq_opt': False,
+  })
+  def testMultipleExtendStepAsyncTimeStepSelfAttention(self, use_short_seq_opt):
+    # input_batch:6, seq_len:6, query_len: 1. Test n = 2 case.
+    num_heads, input_dim, hidden_dim, batch, seqlen = 2, 4, 4, 6, 6
+    with self.session(use_gpu=True):
+      tf.random.set_seed(12345)
+      (query_vec, _, paddings, _, _, _, _, _) = _AttentionInputs()
+      p = attention.MultiHeadedAttention.Params().Set(
+          name='atten',
+          num_heads=num_heads,
+          input_dim=input_dim,
+          hidden_dim=hidden_dim)
+      p.params_init = py_utils.WeightInit.Xavier(scale=1.0, seed=0)
+      l = p.Instantiate()
+
+      tf.global_variables_initializer().run()
+
+      # Verify ExtendStep() via compare N ExtendStep() with one FProp() call on
+      # a seq with length N.
+      per_step_padding = 1 - tf.linalg.band_part(
+          tf.ones((seqlen, seqlen)), -1, 0)
+      per_step_padding = tf.stack([per_step_padding] * batch)
+      dims_per_head = hidden_dim // num_heads
+
+      def _ResetCachedStates():
+        cached_source_vecs = tf.constant(
+            np.random.normal(0.1, 0.5,
+                             [seqlen, batch, num_heads, dims_per_head]),
+            dtype=tf.float32)
+        cached_source_ctxs = tf.constant(
+            np.random.normal(0.1, 0.5,
+                             [seqlen, batch, num_heads, dims_per_head]),
+            dtype=tf.float32)
+        cached_states = py_utils.NestedMap(
+            key=cached_source_vecs, value=cached_source_ctxs)
+        return cached_states
+
+      encoded_all = []
+      cached_states = _ResetCachedStates()
+      for i in range(seqlen):
+        per_step_paddings = 1. - tf.cast(
+            tf.sequence_mask([i + 1] * batch, seqlen), tf.float32)
+        per_step_paddings = tf.expand_dims(per_step_paddings, 1)
+        encoded, cached_states = l.ExtendStep(l.theta, query_vec[:, i:i + 1, :],
+                                              cached_states, paddings, None,
+                                              per_step_paddings, i)
+        # [batch, 1, dims_per_head]
+        encoded_all.append(encoded)
+
+      encoded_all_async = []
+      cached_states = _ResetCachedStates()
+      for i in range(seqlen):
+        # Sample 1 to batch -1 time step are synchoronized: 1 -> Seqlen
+        # Sample batch, the time step are [0, 0, 0, 1, .., Seqlen-2]
+        index = i - 3 if i > 2 else 0
+        new_query_vec = tf.concat([
+            query_vec[:(batch - 1), i:i + 1, :], query_vec[(batch - 1):,
+                                                           index:index + 1, :]
+        ],
+                                  axis=0)
+        time_step = tf.constant([i] * (batch - 1) + [index], dtype=tf.int32)
+        per_step_paddings = 1. - tf.cast(
+            tf.sequence_mask([i + 1] *
+                             (batch - 1) + [index + 1], seqlen), tf.float32)
+        per_step_paddings = tf.expand_dims(per_step_paddings, 1)
+        encoded, cached_states = l.ExtendStep(l.theta, new_query_vec,
+                                              cached_states, paddings, None,
+                                              per_step_paddings, time_step)
+        # [batch, 1, dims_per_head]
+        encoded_all_async.append(encoded)
+      # [batch, T, dims_per_head]
+      actual_ctx_vec = tf.concat(encoded_all, axis=1)
+      actual_ctx_vec_async = tf.concat(encoded_all_async, axis=1)
+
+      self.assertAllClose(actual_ctx_vec_async.eval()[:-1],
+                          actual_ctx_vec.eval()[:-1])
+      # Sample batch move 3 step slower than the synchronized version.
+      self.assertAllClose(actual_ctx_vec_async.eval()[-1][3:],
+                          actual_ctx_vec.eval()[-1][:3])
 
 
 class MultiSourceMultiHeadedAttentionTest(MultiHeadedAttentionTest):
@@ -395,7 +545,10 @@ class MultiSourceMultiHeadedAttentionTest(MultiHeadedAttentionTest):
 
     # Two-source attention.
     mha_params = attention.MultiHeadedAttention.Params().Set(
-        name='atten', input_dim=4, hidden_dim=4)
+        name='atten',
+        input_dim=4,
+        hidden_dim=4,
+        enable_scaling_code_motion=True)
     atten_merger_p = tm_attention.MergerLayer.Params().Set(
         params_init=py_utils.WeightInit.Uniform(0.04),
         merger_op='concat',  # concatenate attention
@@ -411,7 +564,7 @@ class MultiSourceMultiHeadedAttentionTest(MultiHeadedAttentionTest):
         atten_merger_tpl=atten_merger_p)
     l = params.Instantiate()
 
-    probs = l.AttenProbs(
+    probs, probs_sum = l.AttenProbs(
         l.theta,
         tf.expand_dims(query_vec, 2),
         py_utils.NestedMap({
@@ -427,7 +580,7 @@ class MultiSourceMultiHeadedAttentionTest(MultiHeadedAttentionTest):
 
     with self.session(use_gpu=False) as sess:
       tf.global_variables_initializer().run()
-      prob_out = sess.run(tf.squeeze(probs))
+      prob_out = sess.run(tf.squeeze(probs / probs_sum))
 
     # Use numpy to perform the same computation to generate expected results.
     query_vec_p = np.array(query_vec_p)
@@ -528,11 +681,12 @@ class MultiHeadedAttentionXLTest(test_utils.TestCase, parameterized.TestCase):
         input_dim=input_dim,
         num_heads=num_heads,
         hidden_dim=input_dim,
-        rel_pos_emb_dim=input_dim)
+        rel_pos_emb_dim=input_dim,
+        enable_scaling_code_motion=True)
 
     l = p.Instantiate()
     query = tf.reshape(input_vecs, (batch, slen, num_heads, atten_dim))
-    probs = l.AttenProbs(
+    probs, probs_sum = l.AttenProbs(
         l.theta,
         query,
         query,
@@ -550,7 +704,7 @@ class MultiHeadedAttentionXLTest(test_utils.TestCase, parameterized.TestCase):
     with self.session(use_gpu=False) as sess:
       tf.global_variables_initializer().run()
       u, v, pos_proj = sess.run([l.vars.u, l.vars.v, l.pos_proj.vars.w])
-      actual_probs = sess.run(probs)
+      actual_probs = sess.run(probs / probs_sum)
       sinusoid_emb_p = sess.run(sinusoid_emb)
 
     # Compute ground truth with oracle class.
@@ -590,6 +744,88 @@ class MultiHeadedAttentionXLTest(test_utils.TestCase, parameterized.TestCase):
           [32.33513, 28.584404, 20.54517, 23.407812, 18.616188, 24.212755],
           np.sum(context_vec_out, axis=1))
 
+  def testExtendStepAsyncTimeStepSelfAttention(self):
+    num_heads, input_dim, hidden_dim, batch, seqlen = 2, 4, 4, 6, 6
+    emb_dim = 4
+    with self.session(use_gpu=True):
+      tf.random.set_seed(12345)
+      query_vec, paddings = self._AttentionExtendStepInputs(
+          input_dim, batch, seqlen)
+      p = attention.MultiHeadedAttentionXL.Params().Set(
+          name='atten',
+          num_heads=num_heads,
+          input_dim=input_dim,
+          hidden_dim=hidden_dim,
+          rel_pos_emb_dim=emb_dim,
+          random_seed=0)
+      p.params_init = py_utils.WeightInit.Xavier(scale=1.0, seed=0)
+      l = p.Instantiate()
+
+      tf.global_variables_initializer().run()
+
+      # Verify ExtendStep() via compare N ExtendStep() with one FProp() call on
+      # a seq with length N.
+      per_step_padding = 1 - tf.linalg.band_part(
+          tf.ones((seqlen, seqlen)), -1, 0)
+      per_step_padding = tf.stack([per_step_padding] * batch)
+      dims_per_head = hidden_dim // num_heads
+
+      def _ResetCachedStates():
+        cached_source_vecs = tf.constant(
+            np.random.normal(0.1, 0.5,
+                             [seqlen, batch, num_heads, dims_per_head]),
+            dtype=tf.float32)
+        cached_source_ctxs = tf.constant(
+            np.random.normal(0.1, 0.5,
+                             [seqlen, batch, num_heads, dims_per_head]),
+            dtype=tf.float32)
+        cached_states = py_utils.NestedMap(
+            key=cached_source_vecs, value=cached_source_ctxs)
+        return cached_states
+
+      encoded_all = []
+      cached_states = _ResetCachedStates()
+      for i in range(seqlen):
+        per_step_paddings = 1. - tf.cast(
+            tf.sequence_mask([i + 1] * batch, seqlen), tf.float32)
+        per_step_paddings = tf.expand_dims(per_step_paddings, 1)
+        encoded, cached_states = l.ExtendStep(l.theta, query_vec[:, i:i + 1, :],
+                                              cached_states, paddings, None,
+                                              per_step_paddings, i)
+        # [batch, 1, dims_per_head]
+        encoded_all.append(encoded)
+
+      encoded_all_async = []
+      cached_states = _ResetCachedStates()
+      for i in range(seqlen):
+        # Sample 1 to batch -1 time step are synchoronized: 1 -> Seqlen
+        # Sample batch, the time step are [0, 0, 0, 1, .., Seqlen-2]
+        index = i - 3 if i > 2 else 0
+        new_query_vec = tf.concat([
+            query_vec[:(batch - 1), i:i + 1, :], query_vec[(batch - 1):,
+                                                           index:index + 1, :]
+        ],
+                                  axis=0)
+        time_step = tf.constant([i] * (batch - 1) + [index], dtype=tf.int32)
+        per_step_paddings = 1. - tf.cast(
+            tf.sequence_mask([i + 1] *
+                             (batch - 1) + [index + 1], seqlen), tf.float32)
+        per_step_paddings = tf.expand_dims(per_step_paddings, 1)
+        encoded, cached_states = l.ExtendStep(l.theta, new_query_vec,
+                                              cached_states, paddings, None,
+                                              per_step_paddings, time_step)
+        # [batch, 1, dims_per_head]
+        encoded_all_async.append(encoded)
+      # [batch, T, dims_per_head]
+      actual_ctx_vec = tf.concat(encoded_all, axis=1)
+      actual_ctx_vec_async = tf.concat(encoded_all_async, axis=1)
+
+      self.assertAllClose(actual_ctx_vec_async.eval()[:-1],
+                          actual_ctx_vec.eval()[:-1])
+      # Sample batch move 3 step slower than the synchronized version.
+      self.assertAllClose(actual_ctx_vec_async.eval()[-1][3:],
+                          actual_ctx_vec.eval()[-1][:3])
+
   def testExtendStepSelfAttention(self):
     num_heads, input_dim, hidden_dim, batch, seqlen = 2, 4, 4, 6, 6
     emb_dim = 4
@@ -621,17 +857,23 @@ class MultiHeadedAttentionXLTest(test_utils.TestCase, parameterized.TestCase):
           segment_mask=None,
           per_step_padding=per_step_padding)
       dims_per_head = hidden_dim // num_heads
-      cached_source_vecs = tf.zeros([seqlen, batch, num_heads, dims_per_head])
-      cached_source_ctxs = tf.zeros([seqlen, batch, num_heads, dims_per_head])
+      cached_source_vecs = tf.constant(
+          np.random.normal(0.1, 0.5, [seqlen, batch, num_heads, dims_per_head]),
+          dtype=tf.float32)
+      cached_source_ctxs = tf.constant(
+          np.random.normal(0.1, 0.5, [seqlen, batch, num_heads, dims_per_head]),
+          dtype=tf.float32)
+      cached_states = py_utils.NestedMap(
+          key=cached_source_vecs, value=cached_source_ctxs)
 
       encoded_all = []
       for i in range(seqlen):
         per_step_paddings = 1. - tf.cast(
             tf.sequence_mask([i + 1] * batch, seqlen), tf.float32)
         per_step_paddings = tf.expand_dims(per_step_paddings, 1)
-        encoded, cached_source_vecs, cached_source_ctxs = l.ExtendStep(
-            l.theta, query_vec[:, i:i + 1, :], cached_source_vecs,
-            cached_source_ctxs, paddings, None, per_step_paddings, i)
+        encoded, cached_states = l.ExtendStep(l.theta, query_vec[:, i:i + 1, :],
+                                              cached_states, paddings, None,
+                                              per_step_paddings, i)
         # [batch, 1, dims_per_head]
         encoded_all.append(encoded)
       # [batch, T, dims_per_head]
@@ -639,7 +881,7 @@ class MultiHeadedAttentionXLTest(test_utils.TestCase, parameterized.TestCase):
       self.assertAllClose(expected_ctx_vec.eval(), actual_ctx_vec.eval())
 
 
-class MultiHeadedAttentionRPEOracle(object):
+class MultiHeadedAttentionRPEOracle:
   """Computes ground truths for MultiHeadedfAttentionRPE.
 
   Written in a non-vectorized way.
@@ -751,18 +993,19 @@ class MultiHeadedAttentionRPETest(test_utils.TestCase, parameterized.TestCase):
         input_dim=input_dim,
         num_heads=num_heads,
         hidden_dim=input_dim,
-        rel_pos_radius=radius)
+        rel_pos_radius=radius,
+        enable_scaling_code_motion=True)
 
     l = p.Instantiate()
     query = tf.reshape(input_vecs, (batch, slen, num_heads, atten_dim))
-    probs = l.AttenProbs(
+    probs, probs_sum = l.AttenProbs(
         l.theta, query, query, input_padding, segment_mask=None)
 
     with self.session(use_gpu=False) as sess:
       tf.global_variables_initializer().run()
       # [radius * 2 + 1, hidden_dim], [B, tgt_t, src_t]
       key_emb, value_emb, actual_probs = sess.run(
-          [l.key_emb.vars.w, l.value_emb.vars.w, probs])
+          [l.key_emb.vars.w, l.value_emb.vars.w, probs / probs_sum])
 
     oracle = MultiHeadedAttentionRPEOracle(num_heads, key_emb, value_emb)
 
@@ -813,7 +1056,7 @@ class MultiHeadedAttentionRPETest(test_utils.TestCase, parameterized.TestCase):
     atten_dim = 4
     radius = 3
     input_dim = num_heads * atten_dim
-    (input_vecs, _, _, per_step_padding, _, _, _, _) = _AttentionInputs(
+    (input_vecs, _, _, _, _, _, _, _) = _AttentionInputs(
         input_dim=input_dim, is_causal=True)
     p = attention.MultiHeadedAttentionRPE.Params().Set(
         name='self_atten',
@@ -828,7 +1071,11 @@ class MultiHeadedAttentionRPETest(test_utils.TestCase, parameterized.TestCase):
 
     # Causal self attention.
     # [B, N, T, S]
-    logits = l._AttenLogits(l.theta, query, query, per_step_padding)
+    logits = l._AttenLogits(
+        l.theta,
+        query,
+        query,
+    )
 
     one_step_logits = []
     # [S=T, B, N, H]
@@ -897,7 +1144,7 @@ class MultiHeadedAttentionRPETest(test_utils.TestCase, parameterized.TestCase):
     self.assertAllClose(expected_ctx, actual_ctx)
 
 
-class LocalCausalSelfAttentionTest(test_utils.TestCase, parameterized.TestCase):
+class LocalSelfAttentionTest(test_utils.TestCase, parameterized.TestCase):
   """Test local causual self attention."""
 
   def _LocalCasualPadding(self, b, t, l, r):
@@ -967,10 +1214,10 @@ class LocalCausalSelfAttentionTest(test_utils.TestCase, parameterized.TestCase):
       # Use the reference implementation + local casual padding to verify
       # correctness.
       if pos_emb_dim == 0:
-        p_cls = attention.LocalCausalSelfAttention
+        p_cls = attention.LocalSelfAttention
         expected_p_cls = attention.MultiHeadedAttention
       else:
-        p_cls = attention.LocalCausalSelfAttentionXL
+        p_cls = attention.LocalSelfAttentionXL
         expected_p_cls = attention.MultiHeadedAttentionXL
       p = p_cls.Params().Set(
           name='self_atten',
@@ -1029,7 +1276,7 @@ class LocalCausalSelfAttentionTest(test_utils.TestCase, parameterized.TestCase):
   def testFPropWithDropout(self):
     with self.session(use_gpu=True) as sess:
       query_vec, _, paddings, _, _, _, _, _ = _AttentionInputs(input_dim=4)
-      p = attention.LocalCausalSelfAttention.Params().Set(
+      p = attention.LocalSelfAttention.Params().Set(
           name='self_atten',
           num_heads=2,
           input_dim=4,
@@ -1046,6 +1293,506 @@ class LocalCausalSelfAttentionTest(test_utils.TestCase, parameterized.TestCase):
           l.theta, query_vec, query_vec, query_vec, paddings, segment_mask=None)
       ctx_vec_val = sess.run(ctx_vec)
       print(ctx_vec_val)
+
+  def _AttentionExtendStepInputs(self,
+                                 batch_size=6,
+                                 input_dim=4,
+                                 num_heads=2,
+                                 dtype=tf.float32):
+    np.random.seed(6348575)
+    seq_len = 6
+    query_vec_p = [np.random.rand(1, input_dim) for _ in range(batch_size)]
+    query_vec = tf.stack([tf.constant(x, dtype=dtype) for x in query_vec_p])
+    source_vecs = tf.constant(
+        np.random.normal(
+            0.1, 0.5, [seq_len, batch_size, num_heads, input_dim // num_heads]),
+        dtype=dtype)
+    source_ctxs = tf.constant(
+        np.random.normal(
+            0.1, 0.5, [seq_len, batch_size, num_heads, input_dim // num_heads]),
+        dtype=dtype)
+    cached_states = py_utils.NestedMap(key=source_vecs, value=source_ctxs)
+    return query_vec, cached_states
+
+  def testExtendStepSelfAttention(self):
+    # input_batch:6, seq_len:6, query_len: 1. Test n = 2 case.
+    batch_size = 6
+    input_dim = 4
+    num_heads = 2
+    with self.session(use_gpu=True) as sess:
+      query_vec, cached_states = (
+          self._AttentionExtendStepInputs(
+              batch_size=batch_size, input_dim=input_dim, num_heads=num_heads))
+      p = attention.LocalSelfAttention.Params().Set(
+          name='self_atten',
+          num_heads=num_heads,
+          input_dim=input_dim,
+          hidden_dim=4,
+          block_size=2,
+          left_context=2,
+          right_context=0,
+          atten_dropout_prob=0.3,
+      )
+      p.params_init = py_utils.WeightInit.Xavier(scale=1.0, seed=0)
+      l = p.Instantiate()
+      tf.global_variables_initializer().run()
+      ctx_vec, updated_states = l.ExtendStep(
+          l.theta,
+          query_vec,
+          cached_states,
+          paddings=None,
+          segment_mask=None,
+          per_step_padding=None,
+          time_step=3,
+          use_short_seq_opt=False)
+      context_vec_out = sess.run(ctx_vec)
+      new_source_vecs = sess.run(updated_states.key)
+      context_vec_out = np.reshape(context_vec_out, (6, 4))
+
+      tf.logging.info(np.array_repr(np.sum(context_vec_out, axis=1)))
+      self.assertAllClose(
+          [3.303124, 3.90266, 2.971359, 2.486641, 3.109267, 1.54773],
+          np.sum(context_vec_out, axis=1))
+      new_source_vecs = np.reshape(new_source_vecs, (6, 24))
+      tf.logging.info(np.array_repr(np.sum(new_source_vecs, axis=1)))
+      self.assertAllClose(
+          [5.135725, 1.340482, 1.065773, 4.116683, 4.928454, 3.161165],
+          np.sum(new_source_vecs, axis=1))
+
+  def testStreamingExtendStep(self):
+    batch_size = 1
+    input_dim = 4
+    hidden_dim = 4
+    num_heads = 2
+    seq_length = 5
+    left_context = 2
+    with self.session(use_gpu=True):
+      # Prepares inputs.
+      tf.random.set_seed(12345)
+      np.random.seed(123456789)
+      inputs = tf.constant(
+          np.random.normal(0.1, 0.5, [batch_size, seq_length, input_dim]),
+          dtype=tf.float32)
+      paddings = tf.zeros(shape=[batch_size, seq_length], dtype=tf.float32)
+
+      # Prepares the model.
+      p = attention.LocalSelfAttention.Params().Set(
+          name='local_self_atten',
+          num_heads=num_heads,
+          input_dim=input_dim,
+          hidden_dim=hidden_dim,
+          left_context=left_context,
+          right_context=0,
+      )
+      p.params_init = py_utils.WeightInit.Xavier(scale=1.0, seed=0)
+      model = p.Instantiate()
+      self.evaluate(tf.global_variables_initializer())
+
+      outputs, _ = model.FProp(model.theta, inputs, inputs, inputs, paddings)
+      outputs_shape = py_utils.GetShape(outputs)
+      self.assertListEqual([batch_size, seq_length, input_dim], outputs_shape)
+
+      # Streaming inference
+      state = model.zero_state(batch_size)
+      for i in range(0, seq_length):
+        time_step = tf.constant([i], dtype=tf.int32)
+        i_input = inputs[:, i:(i + 1), :]  # [B, 1, D]
+        i_output, state = model.StreamingExtendStep(i_input, state, time_step)
+        i_output_shape = py_utils.GetShape(i_output)
+        self.assertListEqual([batch_size, 1, input_dim], i_output_shape)
+
+        i_expected_output = outputs[:, i:(i + 1), :]
+        v, expected_v = self.evaluate([i_output, i_expected_output])
+        self.assertAllClose(v, expected_v)
+
+
+class LocalSelfAttentionXLTest(test_utils.TestCase, parameterized.TestCase):
+  """Test local causual self attention with relative pos embedding."""
+
+  def testStreamingExtendStep(self):
+    batch_size = 1
+    input_dim = 4
+    hidden_dim = 4
+    num_heads = 2
+    seq_length = 5
+    left_context = 2
+    rel_pos_emb_dim = 2
+    with self.session(use_gpu=True):
+      # Prepares inputs.
+      tf.random.set_seed(12345)
+      np.random.seed(123456789)
+      inputs = tf.constant(
+          np.random.normal(0.1, 0.5, [batch_size, seq_length, input_dim]),
+          dtype=tf.float32)
+      paddings = tf.zeros(shape=[batch_size, seq_length], dtype=tf.float32)
+
+      # Prepares the model.
+      p = attention.LocalSelfAttentionXL.Params().Set(
+          name='local_self_atten_xl',
+          rel_pos_emb_dim=rel_pos_emb_dim,
+          num_heads=num_heads,
+          input_dim=input_dim,
+          hidden_dim=hidden_dim,
+          left_context=left_context,
+          right_context=0,
+      )
+      p.params_init = py_utils.WeightInit.Xavier(scale=1.0, seed=0)
+      model = p.Instantiate()
+      self.evaluate(tf.global_variables_initializer())
+
+      outputs, _ = model.FProp(model.theta, inputs, inputs, inputs, paddings)
+      outputs_shape = py_utils.GetShape(outputs)
+      self.assertListEqual([batch_size, seq_length, input_dim], outputs_shape)
+
+      # Streaming inference
+      state = model.zero_state(batch_size)
+      for i in range(0, seq_length):
+        time_step = tf.constant([i], dtype=tf.int32)
+        i_input = inputs[:, i:(i + 1), :]  # [B, 1, D]
+        i_output, state = model.StreamingExtendStep(i_input, state, time_step)
+        i_output_shape = py_utils.GetShape(i_output)
+        self.assertListEqual([batch_size, 1, input_dim], i_output_shape)
+
+        i_expected_output = outputs[:, i:(i + 1), :]
+        v, expected_v = self.evaluate([i_output, i_expected_output])
+        self.assertAllClose(v, expected_v)
+
+
+class RoutingAttentionTest(test_utils.TestCase, parameterized.TestCase):
+  """Tests for RoutingAttention."""
+
+  def testDotAttenSlow(self):
+    batch_size = 7
+    source_length = 6
+    target_length = 4
+    num_heads = 2
+    dim_per_head = 5
+    num_clusters = 3
+    attention_window = 4
+    q = np.random.rand(batch_size, target_length, num_heads,
+                       dim_per_head).astype(np.float32)
+    k = np.random.rand(batch_size, source_length, num_heads,
+                       dim_per_head).astype(np.float32)
+    v = np.random.rand(batch_size, source_length, num_heads,
+                       dim_per_head).astype(np.float32)
+    query_paddings = np.zeros([batch_size, target_length], dtype=np.float32)
+    key_paddings = np.zeros([batch_size, source_length], dtype=np.float32)
+    p = attention.RoutingAttention.Params().Set(
+        name='routing_atten',
+        input_dim=1,
+        hidden_dim=num_heads * dim_per_head,
+        num_heads=num_heads,
+        num_clusters=num_clusters,
+        attention_window=attention_window,
+        fast_path=False)
+    atten = p.Instantiate()
+    with self.session() as sess:
+      tf.global_variables_initializer().run()
+      encoded, probs = sess.run(
+          atten._DotAtten(
+              atten.theta, q, k, v, key_paddings,
+              query_paddings=query_paddings))
+      self.assertEqual(encoded.shape,
+                       (batch_size, target_length, num_heads, dim_per_head))
+      self.assertEqual(probs.shape,
+                       (batch_size, target_length, num_heads, source_length))
+      # attention weights sum to 1.
+      self.assertAllClose(
+          np.sum(probs, axis=-1),
+          np.ones([batch_size, target_length, num_heads]))
+
+  def testDotAttenFast(self):
+    batch_size = 6
+    source_length = 8
+    target_length = 7
+    num_heads = 3
+    dim_per_head = 5
+    num_clusters = 2
+    attention_window = source_length
+    q = np.random.rand(batch_size, target_length, num_heads,
+                       dim_per_head).astype(np.float32)
+    k = np.random.rand(batch_size, source_length, num_heads,
+                       dim_per_head).astype(np.float32)
+    v = np.random.rand(batch_size, source_length, num_heads,
+                       dim_per_head).astype(np.float32)
+
+    q_paddings = np.zeros([batch_size, target_length], dtype=np.float32)
+    k_paddings = np.zeros([batch_size, source_length], dtype=np.float32)
+    p = attention.RoutingAttention.Params().Set(
+        name='routing_atten',
+        input_dim=1,
+        hidden_dim=num_heads * dim_per_head,
+        num_heads=num_heads,
+        num_clusters=num_clusters,
+        attention_window=attention_window,
+        query_group_size_factor=1.5,  # each group has 6 queries: 8 / 2 * 1.5.
+        fast_path=True)
+    atten = p.Instantiate()
+    # increase group size to 7.
+    atten2 = p.Copy().Set(
+        name='increase_group_size_routing_atten',
+        query_group_size_factor=1.75).Instantiate()
+    p = attention.MultiHeadedAttention.Params().Set(
+        name='full_atten',
+        input_dim=1,
+        hidden_dim=num_heads * dim_per_head,
+        num_heads=num_heads)
+    full_atten = p.Instantiate()
+    with self.session() as sess:
+      tf.global_variables_initializer().run()
+      encoded, probs = sess.run(
+          atten._DotAtten(
+              atten.theta, q, k, v, k_paddings, query_paddings=q_paddings))
+      self.assertEqual(encoded.shape,
+                       (batch_size, target_length, num_heads, dim_per_head))
+      self.assertEqual(probs.shape,
+                       (batch_size, target_length, num_heads, source_length))
+      _, probs2 = sess.run(
+          atten2._DotAtten(
+              atten2.theta, q, k, v, k_paddings, query_paddings=q_paddings))
+      # In order to match the full attention, we apply layer norm first.
+      q_ln = attention_util.KMeansClusteringForAtten.LayerNorm(q)
+      k_ln = attention_util.KMeansClusteringForAtten.LayerNorm(k)
+      full_encoded_t, full_probs_t = full_atten._DotAtten(
+          full_atten.theta, q_ln, k_ln, v, k_paddings, None)
+      full_probs_t = tf.transpose(full_probs_t, [0, 2, 1, 3])
+      full_probs, full_encoded = sess.run([full_probs_t, full_encoded_t])
+
+    # When we increase p.query_group_size_factor, the number of left out queries
+    # decreases.
+    self.assertLess(np.sum(probs), np.sum(probs2))
+    for batch_idx in range(batch_size):
+      for time_idx in range(target_length):
+        for head_idx in range(num_heads):
+          sub_probs = probs[batch_idx, time_idx, head_idx, :]
+          sub_encoded = encoded[batch_idx, time_idx, head_idx, :]
+          # encoded output is either 0 or matching full attention output
+          # for each query position.
+          if np.allclose(sub_probs, np.zeros_like(sub_probs)):
+            self.assertAllClose(sub_encoded, np.zeros_like(sub_encoded))
+            continue
+          self.assertAllClose(sub_probs, full_probs[batch_idx, time_idx,
+                                                    head_idx, :])
+          self.assertAllClose(sub_encoded, full_encoded[batch_idx, time_idx,
+                                                        head_idx, :])
+
+  @parameterized.parameters((False, 0), (False, 1), (False, 2), (True, 0),
+                            (True, 1), (True, 2))
+  def testDotAttenFull(self, fast_path, num_padded):
+    batch_size = 2
+    source_length = 5
+    target_length = 6
+    num_heads = 2
+    dim_per_head = 5
+    # fast_path=True with multiple clusters might leave out some queries.
+    # For the purpose of this test we only use a single cluster.
+    num_clusters = 1 if fast_path else 3
+    attention_window = source_length
+    q = tf.random.normal(
+        shape=[batch_size, target_length, num_heads, dim_per_head])
+    k = tf.random.normal(
+        shape=[batch_size, source_length, num_heads, dim_per_head])
+    v = tf.random.normal(
+        shape=[batch_size, source_length, num_heads, dim_per_head])
+
+    q_paddings = np.zeros([batch_size, target_length], dtype=np.float32)
+    k_paddings = np.zeros([batch_size, source_length], dtype=np.float32)
+    if num_padded:
+      # randomly pad elements.
+      for i in range(batch_size):
+        zero_index = np.random.choice(source_length, num_padded, False)
+        for j in zero_index:
+          k_paddings[i, j] = 1.
+    p = attention.RoutingAttention.Params().Set(
+        name='routing_atten',
+        input_dim=1,
+        hidden_dim=num_heads * dim_per_head,
+        num_heads=num_heads,
+        num_clusters=num_clusters,
+        attention_window=attention_window,
+        query_group_size_factor=1.0,
+        fast_path=fast_path)
+    atten = p.Instantiate()
+    p = attention.MultiHeadedAttention.Params().Set(
+        name='full_atten',
+        input_dim=1,
+        hidden_dim=num_heads * dim_per_head,
+        num_heads=num_heads)
+    full_atten = p.Instantiate()
+    with self.session() as sess:
+      tf.global_variables_initializer().run()
+      encoded_t, probs_t = atten._DotAtten(
+          atten.theta, q, k, v, k_paddings, query_paddings=q_paddings)
+      gradients_t = tf.gradients(encoded_t, [q, k, v])
+      # In order to match the full attention, we apply layer norm first.
+      q_ln = attention_util.KMeansClusteringForAtten.LayerNorm(q)
+      k_ln = attention_util.KMeansClusteringForAtten.LayerNorm(k)
+      full_encoded_t, full_probs_t = full_atten._DotAtten(
+          full_atten.theta, q_ln, k_ln, v, k_paddings, None)
+      full_probs_t = tf.transpose(full_probs_t, [0, 2, 1, 3])
+      full_gradients_t = tf.gradients(full_encoded_t, [q, k, v])
+      (encoded, probs, full_encoded, full_probs, gradients,
+       full_gradients) = sess.run([
+           encoded_t, probs_t, full_encoded_t, full_probs_t, gradients_t,
+           full_gradients_t
+       ])
+      self.assertAllClose(probs, full_probs)
+      self.assertAllClose(encoded, full_encoded)
+      # The 3 gradients (dq, dk, dv) should also match
+      self.assertAllClose(gradients, full_gradients)
+
+  @parameterized.parameters(False, True)
+  def testDotAttenCausalMasking(self, fast_path):
+    batch_size = 3
+    seq_length = 12
+    num_heads = 2
+    dim_per_head = 4
+    num_clusters = 1 if fast_path else 3
+    attention_window = seq_length
+    q = np.random.rand(batch_size, seq_length, num_heads,
+                       dim_per_head).astype(np.float32)
+    k = np.random.rand(batch_size, seq_length, num_heads,
+                       dim_per_head).astype(np.float32)
+    v = np.random.rand(batch_size, seq_length, num_heads,
+                       dim_per_head).astype(np.float32)
+
+    q_paddings = np.zeros([batch_size, seq_length], dtype=np.float32)
+    k_paddings = np.zeros([batch_size, seq_length], dtype=np.float32)
+    p = attention.RoutingAttention.Params().Set(
+        name='routing_atten',
+        input_dim=1,
+        hidden_dim=num_heads * dim_per_head,
+        num_heads=num_heads,
+        num_clusters=num_clusters,
+        attention_window=attention_window,
+        causal_masking=True,
+        query_group_size_factor=1.0,
+        fast_path=fast_path)
+    atten = p.Instantiate()
+    p = attention.MultiHeadedAttention.Params().Set(
+        name='full_atten',
+        input_dim=1,
+        hidden_dim=num_heads * dim_per_head,
+        num_heads=num_heads)
+    full_atten = p.Instantiate()
+    with self.session() as sess:
+      tf.global_variables_initializer().run()
+      encoded, probs = sess.run(
+          atten._DotAtten(
+              atten.theta, q, k, v, k_paddings, query_paddings=q_paddings))
+      # In order to match the full attention, we apply layer norm first.
+      q_ln = attention_util.KMeansClusteringForAtten.LayerNorm(q)
+      k_ln = attention_util.KMeansClusteringForAtten.LayerNorm(k)
+      # Manually apply causal padding to full attention.
+      per_step_padding = tf.tile(
+          tf.expand_dims(
+              attention.CausalPadding(seq_length, dtype=q_ln.dtype), 0),
+          [batch_size, 1, 1])
+      full_encoded, full_probs = full_atten._DotAtten(
+          full_atten.theta,
+          q_ln,
+          k_ln,
+          v,
+          k_paddings,
+          segment_mask=None,
+          per_step_padding=per_step_padding)
+      full_probs = tf.transpose(full_probs, [0, 2, 1, 3])
+      self.assertAllClose(probs, full_probs.eval())
+      self.assertAllClose(encoded, full_encoded.eval())
+
+    # Verify that the first token only attends to position 0.
+    first_token_probs = probs[:, 0, :, :]
+    expected = np.zeros_like(first_token_probs)
+    expected[:, :, 0] = 1.
+    self.assertAllClose(first_token_probs, expected)
+
+  @parameterized.parameters(False, True)
+  def testSelfAtten(self, fast_path):
+    batch_size = 4
+    target_length = 8
+    num_heads = 4
+    dim_per_head = 5
+    num_clusters = 3
+    attention_window = 6
+    q = tf.random.normal(
+        shape=[batch_size, target_length, num_heads, dim_per_head])
+    v = tf.random.normal(
+        shape=[batch_size, target_length, num_heads, dim_per_head])
+    q_copy = tf.identity(q)
+
+    paddings = np.zeros([batch_size, target_length], dtype=np.float32)
+    p = attention.RoutingAttention.Params().Set(
+        name='routing_atten',
+        input_dim=1,
+        hidden_dim=num_heads * dim_per_head,
+        num_heads=num_heads,
+        num_clusters=num_clusters,
+        attention_window=attention_window,
+        query_group_size_factor=1.0,
+        fast_path=fast_path)
+    atten = p.Instantiate()
+    with self.session() as sess:
+      tf.global_variables_initializer().run()
+      # self attention path
+      encoded_self_t, probs_self_t = atten._DotAtten(
+          atten.theta, q, q, v, paddings, query_paddings=paddings)
+      # computed as cross attention
+      encoded_t, probs_t = atten._DotAtten(
+          atten.theta, q, q_copy, v, paddings, query_paddings=paddings)
+      encoded, probs, encoded_self, probs_self = sess.run(
+          [encoded_t, probs_t, encoded_self_t, probs_self_t])
+      self.assertAllClose(probs, probs_self)
+      self.assertAllClose(encoded, encoded_self)
+
+  def testExtendStep(self):
+    batch_size = 8
+    target_length = 10
+    num_heads = 4
+    dim_per_head = 5
+    num_clusters = 6
+    attention_window = target_length
+    input_dim = 7
+    q = np.random.rand(batch_size, target_length, input_dim).astype(np.float32)
+    paddings = np.zeros([batch_size, target_length], dtype=np.float32)
+    p = attention.RoutingAttention.Params().Set(
+        name='routing_atten',
+        input_dim=input_dim,
+        hidden_dim=num_heads * dim_per_head,
+        num_heads=num_heads,
+        num_clusters=num_clusters,
+        attention_window=attention_window,
+        causal_masking=True,
+        fast_path=False)
+    p.params_init = py_utils.WeightInit.Xavier(scale=1.0, seed=0)
+    atten = p.Instantiate()
+    # We ensure that the encoded attention result is the same between FProp()
+    # and sequential calls to ExtendStep().
+    with self.session() as sess:
+      # self attention path via ExtendStep
+      encoded_all = []
+      states = atten.InitStates(atten.theta, batch_size, target_length)
+      self.assertEqual(states.key.shape,
+                       (target_length, batch_size, num_heads, dim_per_head))
+      self.assertEqual(states.value.shape,
+                       (target_length, batch_size, num_heads, dim_per_head))
+      self.assertEqual(states.key_dists.shape,
+                       (target_length, batch_size, num_heads, num_clusters))
+      for i in range(target_length):
+        encoded, states = atten.ExtendStep(atten.theta, q[:, i:i + 1, :],
+                                           states, paddings, i)
+        self.assertEqual(encoded.shape, (batch_size, 1, input_dim))
+        encoded_all.append(encoded)
+      encoded_extend_t = tf.concat(encoded_all, axis=1)
+
+      # self attention path via FProp
+      encoded_fprop_t, _ = atten.FProp(atten.theta, q, q, q, paddings)
+      self.assertEqual(encoded_fprop_t.shape,
+                       (batch_size, target_length, input_dim))
+
+      tf.global_variables_initializer().run()
+      encoded_extend, encoded_fprop = sess.run(
+          [encoded_extend_t, encoded_fprop_t])
+      self.assertAllClose(encoded_extend, encoded_fprop)
 
 
 class TransformerLayerTest(test_utils.TestCase, parameterized.TestCase):
@@ -1185,8 +1932,10 @@ class TransformerLayerTest(test_utils.TestCase, parameterized.TestCase):
     with self.session(use_gpu=True) as sess:
       query_vec, _, _, _ = self._TransformerAttentionLayerInputs()
       paddings = tf.zeros([2, 5])
-      cached_key = tf.zeros([5, 2, 2, 2])
-      cached_value = tf.zeros([5, 2, 2, 2])
+      cached_key = tf.constant(
+          np.random.normal(0.1, 0.5, [5, 2, 2, 2]), dtype=tf.float32)
+      cached_value = tf.constant(
+          np.random.normal(0.1, 0.5, [5, 2, 2, 2]), dtype=tf.float32)
       prefix_states = py_utils.NestedMap(key=cached_key, value=cached_value)
 
       p = attention.TransformerAttentionLayer.Params().Set(
@@ -1208,6 +1957,40 @@ class TransformerLayerTest(test_utils.TestCase, parameterized.TestCase):
       ctx1, ctx2 = sess.run([ctx_vec1, ctx_vec2])
       self.assertAllClose(ctx1, ctx2)
 
+  def testTransformerAttentionLayerNoLayernorm(self):
+    """Verify if Transformer attention allows no layernorm in FProp and Extend."""
+    with self.session(use_gpu=True) as sess:
+      query_vec, _, _, _ = self._TransformerAttentionLayerInputs()
+      paddings = tf.zeros([2, 5])
+      cached_key = tf.constant(
+          np.random.normal(0.1, 0.5, [5, 2, 2, 2]), dtype=tf.float32)
+      cached_value = tf.constant(
+          np.random.normal(0.1, 0.5, [5, 2, 2, 2]), dtype=tf.float32)
+      prefix_states = py_utils.NestedMap(key=cached_key, value=cached_value)
+
+      p = attention.TransformerAttentionLayer.Params().Set(
+          name='transformer_atten',
+          input_dim=4,
+          is_masked=True,
+          num_heads=2,
+          ln_tpl=None)  # Set ln_tpl to None.
+      p.params_init = py_utils.WeightInit.Xavier(scale=1.0, seed=0)
+      l = p.Instantiate()
+
+      ctx_vec1, _ = l.FProp(l.theta, query_vec, None, paddings)
+
+      ctx_vec2 = []
+      for i in range(5):
+        ctx_vec, prefix_states = l.ExtendStep(
+            l.theta, tf.expand_dims(query_vec[:, i, :], 1), prefix_states, i,
+            False)
+        ctx_vec2.append(tf.squeeze(ctx_vec, 1))
+      ctx_vec2 = tf.transpose(tf.stack(ctx_vec2), [1, 0, 2])
+
+      tf.global_variables_initializer().run()
+      ctx1, ctx2 = sess.run([ctx_vec1, ctx_vec2])
+      self.assertAllClose(ctx1, ctx2)
+
   def _ConstructTransformerDecoderLayer(self, use_relative_atten=False):
     p = attention.TransformerDecoderLayer.Params()
     p.name = 'transformer_decoder_layer'
@@ -1218,6 +2001,32 @@ class TransformerLayerTest(test_utils.TestCase, parameterized.TestCase):
       p = attention.UseRelativeAttentionInTransformerLayer(p, 4)
     p.params_init = py_utils.WeightInit.Xavier(scale=1.0, seed=0)
     return attention.TransformerDecoderLayer(p)
+
+  def testTransformerLayerCommonParams(self):
+    with self.session(use_gpu=True) as sess:
+      input_dim, fflayer_hidden_dim, num_heads = 4, 7, 2
+      (query_vec, _, aux_vec,
+       aux_paddings) = self._TransformerAttentionLayerInputs(
+           input_dim=input_dim)
+      query_vec = tf.tile(query_vec, [1, 1, 1])
+      paddings = tf.zeros([2, 5])
+      p = attention.TransformerLayer.CommonParams(
+          input_dim=input_dim,
+          atten_num_heads=num_heads,
+          fflayer_hidden_dim=fflayer_hidden_dim)
+      p.params_init = py_utils.WeightInit.Xavier(scale=1.0, seed=0)
+      l = p.Instantiate()
+      ctx_vec, _ = l.FProp(l.theta, query_vec, paddings, aux_vec, aux_paddings)
+
+      tf.global_variables_initializer().run()
+      actual_ctx = sess.run(ctx_vec)
+      actual_ctx = np.reshape(actual_ctx, (10, 4))
+      tf.logging.info(np.array_repr(actual_ctx))
+      expected_ctx = [
+          4.7839108, 4.5303655, 5.5551023, 5.0657663, 5.0493064, 3.2142467,
+          2.820018, 5.659971, 4.3814187, 2.60475
+      ]
+      self.assertAllClose(expected_ctx, np.sum(actual_ctx, axis=1))
 
   @parameterized.named_parameters(('SingleBatch', 1), ('DoubleBatch', 2))
   def testTransformerLayerFPropWithCrossAttention(self, multiplier):
@@ -1335,6 +2144,31 @@ class TransformerLayerTest(test_utils.TestCase, parameterized.TestCase):
     p.random_seed = 12345
     return p.Instantiate()
 
+  def testStackedTransformerGetSplitForLayer(self):
+    cls = attention.StackedTransformerLayers
+
+    buckets = [2, 4, 5, 6, 9, 11, 15]
+    ys = [cls.GetSplitForLayer(buckets, i) for i in range(16)]
+    self.assertEqual(0, ys[0])
+    self.assertEqual(0, ys[1])
+    self.assertEqual(0, ys[2])
+    self.assertEqual(1, ys[3])
+
+    self.assertEqual(1, ys[4])
+    self.assertEqual(2, ys[5])
+    self.assertEqual(3, ys[6])
+    self.assertEqual(4, ys[7])
+
+    self.assertEqual(4, ys[8])
+    self.assertEqual(4, ys[9])
+    self.assertEqual(5, ys[10])
+    self.assertEqual(5, ys[11])
+
+    self.assertEqual(6, ys[12])
+    self.assertEqual(6, ys[13])
+    self.assertEqual(6, ys[14])
+    self.assertEqual(6, ys[15])
+
   def testTransformerEncoderLayerStackFProp(self):
     with self.session(use_gpu=True) as sess:
       (query_vec, paddings, _, _) = self._TransformerAttentionLayerInputs()
@@ -1424,8 +2258,10 @@ class TransformerLayerTest(test_utils.TestCase, parameterized.TestCase):
       (query_vec, _, aux_vec,
        aux_paddings) = self._TransformerAttentionLayerInputs()
       paddings = tf.zeros([2, 5])
-      cached_key = tf.zeros([5, 2, 2, 2])
-      cached_value = tf.zeros([5, 2, 2, 2])
+      cached_key = tf.constant(
+          np.random.normal(0.1, 0.5, [5, 2, 2, 2]), dtype=tf.float32)
+      cached_value = tf.constant(
+          np.random.normal(0.1, 0.5, [5, 2, 2, 2]), dtype=tf.float32)
       prefix_states = py_utils.NestedMap(key=cached_key, value=cached_value)
 
       l = self._ConstructTransformerDecoderLayer()
@@ -1478,8 +2314,10 @@ class TransformerLayerTest(test_utils.TestCase, parameterized.TestCase):
       (query_vec, _, aux_vec,
        aux_paddings) = self._TransformerAttentionLayerInputs()
       paddings = tf.zeros([2, 5])
-      cached_key = tf.zeros([5, 2, 2, 2])
-      cached_value = tf.zeros([5, 2, 2, 2])
+      cached_key = tf.constant(
+          np.random.normal(0.1, 0.5, [5, 2, 2, 2]), dtype=tf.float32)
+      cached_value = tf.constant(
+          np.random.normal(0.1, 0.5, [5, 2, 2, 2]), dtype=tf.float32)
       prefix_states = py_utils.NestedMap(key=cached_key, value=cached_value)
 
       l = self._ConstructMultiSourceTransformerDecoderLayer()
@@ -1518,6 +2356,137 @@ class TransformerLayerTest(test_utils.TestCase, parameterized.TestCase):
     p.cls.SetupDeterministicDropout(p)
     layer = p.Instantiate()
     self.assertEqual(0.1, layer.params.tr_atten_tpl.residual_dropout_prob)
+
+
+class GPipeBatchMajorTransformerLayerTest(test_utils.TestCase,
+                                          parameterized.TestCase):
+  """Test GPipeBatchMajorTransformer layers."""
+
+  def _ConstructGPipeBatchMajorTransformerLayer(self,
+                                                decoder=False,
+                                                packed=True,
+                                                dropout=0.1):
+    p = attention.GPipeBatchMajorTransformerLayer.Params()
+    p.name = 'gpipe_transformer_layer'
+    p.input_dim = 4
+    p.tr_fflayer_tpl.hidden_dim = 7
+    p.tr_atten_tpl.num_heads = 2
+    p.tr_atten_tpl.residual_dropout_prob = dropout
+    p.packed_input = packed
+    if decoder:
+      p.has_aux_atten = True
+      p.mask_self_atten = True
+    p.cls.SetupDeterministicDropout(p)
+    layer = p.Instantiate()
+    return p, layer
+
+  def _GPipeBatchMajorTransformerLayerInputs(self,
+                                             input_dim=4,
+                                             dtype=tf.float32):
+    np.random.seed(6348575)
+    target_vec = tf.transpose(
+        tf.stack([
+            tf.constant(np.random.rand(2, input_dim), dtype=dtype)
+            for _ in range(5)
+        ]), [1, 0, 2])
+    target_paddings = tf.constant([[0, 0, 0, 0, 1], [0, 0, 0, 0, 0]],
+                                  dtype=dtype)
+    aux_vec = tf.transpose(
+        tf.stack([
+            tf.constant(np.random.rand(2, input_dim), dtype=dtype)
+            for _ in range(7)
+        ]), [1, 0, 2])
+    aux_paddings = tf.constant([[0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 1]],
+                               dtype=dtype)
+    aux_segment_ids = tf.constant(
+        [[0, 0, 0, 1, 1, 1, 1], [0, 0, 0, 0, 1, 1, 1]], dtype=dtype)
+    target_segment_ids = tf.constant([[0, 0, 0, 1, 1], [0, 0, 1, 1, 1]],
+                                     dtype=dtype)
+    target_sa_mask = attention.SegmentMask(
+        target_segment_ids, target_segment_ids, apply_dtype_min=False)
+    aux_sa_mask = attention.SegmentMask(
+        aux_segment_ids, aux_segment_ids, apply_dtype_min=False)
+    ca_mask = attention.SegmentMask(
+        target_segment_ids, aux_segment_ids, apply_dtype_min=False)
+    causal_padding = tf.expand_dims(
+        tf.tile(
+            tf.expand_dims(attention.CausalPadding(5, dtype=dtype), 0),
+            [2, 1, 1]), 1)
+    target_sa_mask = tf.math.maximum(causal_padding, target_sa_mask)
+    return (target_vec, target_paddings, target_sa_mask, aux_vec, aux_paddings,
+            aux_sa_mask, ca_mask)
+
+  def testGPipeBatchMajorTransformerEncoderLayerConstruction(self):
+    _, layer = self._ConstructGPipeBatchMajorTransformerLayer()
+    self.assertEqual(0.1, layer.params.tr_atten_tpl.residual_dropout_prob)
+
+  def testGPipeBatchMajorTransformerDecoderLayerConstruction(self):
+    _, layer = self._ConstructGPipeBatchMajorTransformerLayer(decoder=True)
+    self.assertEqual(0.1, layer.params.tr_atten_tpl.residual_dropout_prob)
+
+  def testGPipeBatchMajorTransformerEncoderLayerFProp(self):
+    with self.session(use_gpu=True) as sess:
+      (_, _, _, aux_vec, aux_paddings, aux_sa_mask,
+       _) = self._GPipeBatchMajorTransformerLayerInputs()
+      _, l = self._ConstructGPipeBatchMajorTransformerLayer()
+
+      layer_output = l.FProp(l.theta, aux_vec, aux_paddings, None, None,
+                             aux_sa_mask, None, None)[0]
+
+      tf.global_variables_initializer().run()
+      actual_layer_output = sess.run(layer_output)
+      actual_layer_output = np.reshape(actual_layer_output, (14, 4))
+      tf.logging.info(np.array_repr(actual_layer_output))
+      expected_layer_output = [7.616176, 8.611565, -0.932456, -4.5797]
+      self.assertAllClose(expected_layer_output,
+                          np.sum(actual_layer_output, axis=0))
+
+  def testGPipeBatchMajorTransformerDecoderLayerFProp(self):
+    with self.session(use_gpu=True) as sess:
+      (target_vec, target_paddings, target_sa_mask, aux_vec, aux_paddings,
+       aux_sa_mask, ca_mask) = self._GPipeBatchMajorTransformerLayerInputs()
+      _, l = self._ConstructGPipeBatchMajorTransformerLayer(decoder=True)
+
+      layer_output = l.FProp(l.theta, aux_vec, aux_paddings, target_vec,
+                             target_paddings, aux_sa_mask, target_sa_mask,
+                             ca_mask)[2]
+
+      tf.global_variables_initializer().run()
+      actual_layer_output = sess.run(layer_output)
+      actual_layer_output = np.reshape(actual_layer_output, (10, 4))
+      tf.logging.info(np.array_repr(actual_layer_output))
+      expected_layer_output = [2.721037, 5.228053, 2.27512, 6.92945]
+      self.assertAllClose(expected_layer_output,
+                          np.sum(actual_layer_output, axis=0))
+
+  def testGPipeBatchMajorTransformerDecoderLayerExtendStep(self):
+    with self.session(use_gpu=True) as sess:
+      (target_vec, _, _, aux_vec, aux_paddings, _,
+       _) = self._GPipeBatchMajorTransformerLayerInputs()
+      target_paddings = tf.zeros([2, 5])
+      cached_key = tf.constant(
+          np.random.normal(0.1, 0.5, [5, 2, 2, 2]), dtype=tf.float32)
+      cached_value = tf.constant(
+          np.random.normal(0.1, 0.5, [5, 2, 2, 2]), dtype=tf.float32)
+      prefix_states = py_utils.NestedMap(key=cached_key, value=cached_value)
+      _, l = self._ConstructGPipeBatchMajorTransformerLayer(
+          decoder=True, packed=False, dropout=0.0)
+
+      layer_output1 = l.FProp(l.theta, aux_vec, aux_paddings, target_vec,
+                              target_paddings, None, None, None)[2]
+
+      layer_output2 = []
+      for i in range(5):
+        layer_output, prefix_states = l.ExtendStep(
+            l.theta, tf.expand_dims(target_vec[:, i, :], 1), aux_vec,
+            aux_paddings, prefix_states, i)
+        layer_output2.append(tf.squeeze(layer_output, 1))
+      layer_output2 = tf.transpose(tf.stack(layer_output2), [1, 0, 2])
+
+      tf.global_variables_initializer().run()
+      actual_layer_output1, actual_layer_output2 = sess.run(
+          [layer_output1, layer_output2])
+      self.assertAllClose(actual_layer_output1, actual_layer_output2)
 
 
 class BuilderTest(test_utils.TestCase, parameterized.TestCase):
@@ -1602,6 +2571,119 @@ class BuilderTest(test_utils.TestCase, parameterized.TestCase):
       seq_len = sl // accumulate_stride if accumulate_stride != 0 else 1
       self.assertAllEqual([bs, seq_len, d], actual_enc_out.shape)
 
+  @parameterized.named_parameters(
+      {
+          'testcase_name': '_baseline',
+          'strides': [(1, 6), (1, 3), 3],
+      }, {
+          'testcase_name': '_stride_2',
+          'strides': [(2, 4), (1, None), 2],
+      }, {
+          'testcase_name': '_first_token',
+          'strides': [(2, 5), (0, None), 1],
+      })
+  def testTransformerStackWithStrideAndOutLength(self, strides):
+    with self.session(use_gpu=False) as sess:
+      bs = 2
+      sl = 10
+      d = 16
+      tf.random.set_seed(12345)
+      atten_builder = attention.Builder.Params().Set(
+          model_dim=d, num_heads=2, ff_hidden_dim=5).Instantiate()
+      layers = []
+      out_seq_len = strides.pop()
+      for layer_i, (stride, first_n) in enumerate(strides):
+        layers.append(
+            atten_builder.TransformerEncoderLayer(
+                name='atten_{}'.format(layer_i), stride=stride,
+                first_n=first_n))
+      p = atten_builder.Seq('model', *layers)
+      p.params_init = py_utils.WeightInit.Xavier(scale=1.0, seed=0)
+      l = p.Instantiate()
+      input_embs = tf.constant(
+          np.random.random(size=[bs, sl, d]), dtype=np.float)
+      paddings = tf.zeros([bs, sl])
+      l_out = l.FPropDefaultTheta(
+          py_utils.NestedMap(vec=input_embs, paddings=paddings))
+      enc_out = l_out.vec
+      tf.global_variables_initializer().run()
+      actual_enc_out = sess.run(enc_out)
+      self.assertAllEqual([bs, out_seq_len, d], actual_enc_out.shape)
+
+  def testEncoderLayerWithPerLayerParam(self):
+    with self.session(use_gpu=False) as sess:
+      bs = 2
+      sl = 10
+      d = 16
+      tf.random.set_seed(398847392)
+      np.random.seed(12345)
+      heads = [1, 2, 4]
+      ff_dims = [16, 32, 16]
+      atten_builder = attention.Builder.Params().Set(
+          model_dim=16, num_heads=heads, ff_hidden_dim=ff_dims).Instantiate()
+      layers = []
+      for layer_i, (head, ff_dim) in enumerate(zip(heads, ff_dims)):
+        layers.append(
+            atten_builder.TransformerEncoderLayer(
+                name='atten_{}'.format(layer_i),
+                ff_hidden_dim=ff_dim,
+                num_heads=head,
+                stride=1 if layer_i < 2 else 0))
+      p = atten_builder.Seq('model', *layers)
+      p.params_init = py_utils.WeightInit.Xavier(scale=1.0, seed=0)
+      l = p.Instantiate()
+      input_embs = tf.constant(
+          np.random.random(size=[bs, sl, d]), dtype=np.float)
+      paddings = tf.zeros([bs, sl])
+      l_out = l.FPropDefaultTheta(
+          py_utils.NestedMap(vec=input_embs, paddings=paddings))
+      out = tf.reduce_sum(l_out.vec)
+      tf.global_variables_initializer().run()
+      actual_out = sess.run(out)
+      self.assertAllClose(actual_out, 17.40516)
+
+
+class LmBuilderTest(test_utils.TestCase):
+
+  def _testGraph(self, dtype=tf.float32):
+    tf.random.set_seed(398847392)
+    np.random.seed(12345)
+    atten_builder = attention.LmBuilder.Params().Set(
+        model_dim=4, num_heads=2, ff_hidden_dim=16, dtype=dtype)
+    params = atten_builder.Instantiate().TransformerEncoderStack(
+        name='xformer', num_layers=2)
+    params.dtype = dtype
+    params.random_seed = 0
+    params.params_init = py_utils.WeightInit.Xavier(scale=1.0, seed=0)
+    l = params.Instantiate()
+    l_in = tf.constant(np.random.rand(2, 3, 4), dtype=dtype)
+    l_padding = tf.zeros([2, 3], dtype=dtype)
+    l_out = l.FPropDefaultTheta(
+        py_utils.NestedMap(vec=l_in, paddings=l_padding))
+    return l_out.vec
+
+  def testFprop(self):
+    with self.session(use_gpu=False, graph=tf.Graph()) as sess:
+      l_out = self._testGraph()
+      l_out = tf.reduce_sum(l_out)
+      tf.global_variables_initializer().run()
+      l_out_eval = sess.run(l_out)
+      self.assertAllClose(36.04808, l_out_eval)
+
+  def testBProp(self):
+    with self.session(use_gpu=True) as sess:
+      output = self._testGraph(dtype=tf.float64)
+      loss = tf.reduce_sum(output)
+      all_vars = tf.trainable_variables()
+      grads = tf.gradients(loss, all_vars)
+      tf.global_variables_initializer().run()
+      sym_grads = [sg.eval() for sg in grads]
+      num_grads = [
+          test_utils.ComputeNumericGradient(sess, loss, v) for v in all_vars
+      ]
+      for ng, sg in zip(num_grads, sym_grads):
+        self.assertAllClose(ng, sg, rtol=5e-02, atol=5e-02)
+
 
 def _CreateDummyParams(field_names):
   p = hyperparams.Params()
@@ -1614,7 +2696,7 @@ class DummyDecoderRNNT(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(DummyDecoderRNNT, cls).Params()
+    p = super().Params()
     p.name = 'dummy_decoder_rnnt'
     p.Define('emb', _CreateDummyParams(['vocab_size']), 'Dummy emb.')
     p.Define('target_seq_len', 20, 'Dummy target seq len.')
@@ -1633,8 +2715,8 @@ class RelativeAttentionHelperTest(test_utils.TestCase, parameterized.TestCase):
   @parameterized.named_parameters(
       ('MultiHeadedAttentionXL', attention.MultiHeadedAttentionXL,
        attention.MultiHeadedAttention),
-      ('LocalCausalSelfAttentionXL', attention.LocalCausalSelfAttentionXL,
-       attention.LocalCausalSelfAttention))
+      ('LocalSelfAttentionXL', attention.LocalSelfAttentionXL,
+       attention.LocalSelfAttention))
   def testClearRelativeAttentionInTransformerLayer(self, atten_cls,
                                                    expected_atten_cls):
     """Tests scenarios in clear relative attention in transformer layer."""
@@ -1689,8 +2771,8 @@ class RelativeAttentionHelperTest(test_utils.TestCase, parameterized.TestCase):
   @parameterized.named_parameters(
       ('MultiHeadedAttention', attention.MultiHeadedAttention,
        attention.MultiHeadedAttentionXL, attention.ATTEN_TRANSFORMER_XL),
-      ('LocalCausalSelfAttention', attention.LocalCausalSelfAttention,
-       attention.LocalCausalSelfAttentionXL, attention.ATTEN_TRANSFORMER_XL),
+      ('LocalSelfAttention', attention.LocalSelfAttention,
+       attention.LocalSelfAttentionXL, attention.ATTEN_TRANSFORMER_XL),
       ('MultiHeadedAttentionRPE', attention.MultiHeadedAttention,
        attention.MultiHeadedAttentionRPE, attention.ATTEN_RPE))
   def testUseRelativeAttentionInTransformerLayer(self, atten_cls,

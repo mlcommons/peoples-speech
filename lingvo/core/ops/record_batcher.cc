@@ -67,6 +67,7 @@ limitations under the License.
 #include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/lib/strings/strcat.h"
 #include "tensorflow/core/platform/env.h"
+#include "tensorflow/core/platform/errors.h"
 
 namespace tensorflow {
 namespace lingvo {
@@ -96,14 +97,6 @@ RecordBatcher::RecordBatcher(const Options& opts, RecordYielder* yielder,
     last_log_update_time_ = start_time_;
   }
 
-  for (int i = 0; i < opts_.num_threads; i++) {
-    processor_thread_->Schedule([this]() {
-      ProcessorLoop();
-      absl::MutexLock l(&mu_);
-      processor_loop_done_count_++;
-    });
-  }
-
   merger_thread_->Schedule([this]() {
     MergerLoop();
     absl::MutexLock l(&mu_);
@@ -122,8 +115,27 @@ RecordBatcher::~RecordBatcher() {
   delete processor_;
 }
 
-Status RecordBatcher::GetNext(int64* bucket, TensorVec* batch) {
+Status RecordBatcher::EnsureInitialized(OpKernelContext* ctx) {
+  if (is_initialized_) {
+    return Status::OK();
+  }
+  TF_RETURN_IF_ERROR(processor_->Initialize(ctx));
+  for (int i = 0; i < opts_.num_threads; i++) {
+    processor_thread_->Schedule([this]() {
+      ProcessorLoop();
+      absl::MutexLock l(&mu_);
+      processor_loop_done_count_++;
+    });
+  }
+  is_initialized_ = true;
+  LOG(INFO) << "batcher initialized";
+  return Status::OK();
+}
+
+Status RecordBatcher::GetNext(OpKernelContext* ctx, int64* bucket,
+                              TensorVec* batch) {
   absl::MutexLock l(&mu_);
+  TF_RETURN_IF_ERROR(EnsureInitialized(ctx));
   // Wait for either curr to be non-empty, or for the merger thread to be
   // complete.
   WaitForCurrNonEmpty();
@@ -316,16 +328,19 @@ void RecordBatcher::ProcessorLoop() {
       // Print error message. Some example processors use CANCELLED for data
       // that are filtered out. Print only first 10 such errors.
       if (errors::IsCancelled(s)) {
-        // The counter incrementing is not thread-safe. But we don't really
-        // care.
-        static int log_counter = 0;
-        if (log_counter < 10) {
-          log_counter++;
-          LOG(WARNING) << s;
+        {
+          absl::MutexLock l(&mu_);
+          ++total_records_skipped_;
+
+          static int log_counter = 0;
+          if (log_counter < 10) {
+            log_counter++;
+            LOG(WARNING) << s;
+          }
         }
-      } else if (errors::IsNotFound(s)) {
-        // Terminates program if an unregistered custome op is used by
-        // the processor.
+      } else if (errors::IsNotFound(s) || errors::IsPermissionDenied(s)) {
+        // Terminates program if an unregistered custom op is used by
+        // the processor, or any access permission denied error.
         //
         // Consider setting *out_status with s and returning, instead
         // of killing program?

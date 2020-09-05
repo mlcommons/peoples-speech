@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,10 +14,6 @@
 # limitations under the License.
 # ==============================================================================
 """Helper for models_test."""
-
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import lingvo.compat as tf
 from lingvo.core import base_input_generator
@@ -67,7 +63,7 @@ def _StubOutCreateVariable(variable_cache):
       else:
         var = tf.zeros(shape, dtype)
         variable_cache[key] = var
-    return var, var
+    return var
 
   py_utils.CreateVariable = _CreateVariableStub
 
@@ -95,6 +91,7 @@ class BaseModelsTest(test_utils.TestCase):
   """Base model test class which does not define any test methods of its own."""
 
   def setUp(self):
+    super().setUp()
     self._variable_cache = {}
     _StubOutCreateVariable(self._variable_cache)
 

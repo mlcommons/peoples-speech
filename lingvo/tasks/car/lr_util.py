@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,9 +15,7 @@
 # ==============================================================================
 """Learning rate schedule utility functions."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
+import math
 
 import lingvo.compat as tf
 from lingvo.core import cluster_factory
@@ -94,7 +92,7 @@ def SetExponentialLR(train_p,
   if warmup_epoch == 0.:
     warmup_init = 1.
 
-  train_p.max_steps = total_epoch * train_stats.steps_per_epoch
+  train_p.max_steps = math.ceil(total_epoch * train_stats.steps_per_epoch)
   train_p.lr_schedule = (
       schedule.LinearRampupExponentialDecayScaledByNumSplitSchedule.Params())
   train_p.lr_schedule.Set(

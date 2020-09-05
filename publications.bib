@@ -17,7 +17,9 @@
 @string{tts = {Speech synthesis}}
 @string{asr = {Speech recognition}}
 @string{st = {Speech translation}}
+@string{enhancement = {Speech enhancement}}
 @string{nlu = {Language Understanding}}
+@string{opt = {Optimization}}
 
 %%%%%%%%%%%%%%%%%%%%
 % Translation papers.
@@ -447,10 +449,11 @@
 
 @inproceedings{park2020,
   annote = asr,
-  title = {SpecAugment on Large Scale Datas},
+  title = {SpecAugment on Large Scale Datasets},
   author = {Daniel Park and Yu Zhang and Chung-Cheng Chiu and Youzheng Chen and Bo Li and William Chan and Quoc Le and Yonghui Wu},
   booktitle = icassp,
   year = {2020},
+  pdf = {https://arxiv.org/abs/1912.05533}
 }
 
 @inproceedings{e2e2020,
@@ -459,6 +462,41 @@
   author = {Tara Sainath and Yanzhang He and Bo Li and Arun Narayanan and Ruoming Pang and Antoine Bruguier and Shuo-yiin Chang and Wei Li and Raziel Alvarez and Zhifeng Chen and Chung-cheng Chiu and David Garcia and Alex Gruenstein and Ke Hu and Minho Jin and Anjuli Kannan and Qiao Liang and Ian McGraw and Cal Peyser and Rohit Prabhavalkar and Golan Pundak and David Rybach and Yuan Shangguan and Yash Sheth and Trevor Strohman and Mirko Visontai and Yonghui Wu and Yu Zhang and Ding Zhao},
   booktitle = icassp,
   year = {2020},
+}
+
+@inproceedings{conformer2020,
+  annote = asr,
+  title={Conformer: Convolution-augmented Transformer for Speech Recognition},
+  author={Anmol Gulati and James Qin and Chung-Cheng Chiu and Niki Parmar and Yu Zhang and Jiahui Yu and Wei Han and Shibo Wang and Zhengdong Zhang and Yonghui Wu and Ruoming Pang},
+  booktitle=interspeech,
+  year={2020},
+  pdf = {https://arxiv.org/abs/2005.08100},
+}
+
+@inproceedings{contextnet2020,
+  annote = asr,
+  title={ContextNet: Improving Convolutional Neural Networks for Automatic Speech Recognition with Global Context},
+  author={Wei Han and Zhengdong Zhang and Yu Zhang and Jiahui Yu and Chung-Cheng Chiu and James Qin and Anmol Gulati and Ruoming Pang and Yonghui Wu},
+  booktitle=interspeech,
+  year={2020},
+  pdf = {https://arxiv.org/abs/2005.03191},
+}
+
+@inproceedings{rescore2020,
+  annote = asr,
+  title={Parallel Rescoring with Transformer for Streaming On-Device Speech Recognition},
+  author={Wei Li and James Qin and Chung-Cheng Chiu and Ruoming Pang and Yanzhang He},
+  booktitle=interspeech,
+  year={2020}
+}
+
+@inproceedings{noisystudent2020,
+  annote = asr,
+  title={Improved Noisy Student Training for Automatic Speech Recognition},
+  author={Daniel S. Park and Yu Zhang and Ye Jia and Wei Han and Chung-Cheng Chiu and Bo Li and Yonghui Wu and Quoc V. Le},
+  booktitle=interspeech,
+  year={2020},
+  pdf = {https://arxiv.org/abs/2005.09629}
 }
 
 %%%%%%%%%%%%%%%%%%%%
@@ -634,4 +672,35 @@
   year = {2019},
   pdf = {https://arxiv.org/abs/1904.06037},
   sound_examples = {https://google-research.github.io/lingvo-lab/translatotron},
+}
+
+%%%%%%%%%%%%%%%%%%%%
+% Optimization papers
+
+@article{anil2020second,
+  annote = opt,
+  title={Second Order Optimization Made Practical},
+  author={Anil, Rohan and Gupta, Vineet and Koren, Tomer and Regan, Kevin and Singer, Yoram},
+  journal={arXiv preprint arXiv:2002.09018},
+  pdf = {https://arxiv.org/abs/2002.09018},
+  year={2020}
+}
+
+@article{agarwal2020disentangling,
+  annote = opt,
+  title={Disentangling Adaptive Gradient Methods from Learning Rates},
+  author={Agarwal, Naman and Anil, Rohan and Hazan, Elad and Koren, Tomer and Zhang, Cyril},
+  journal={arXiv preprint arXiv:2002.11803},
+  pdf = {https://arxiv.org/abs/2002.11803},
+  year={2020}
+}
+
+@inproceedings{anil2019memory,
+  annote = opt,
+  title={Memory Efficient Adaptive Optimization},
+  author={Anil, Rohan and Gupta, Vineet and Koren, Tomer and Singer, Yoram},
+  booktitle={Advances in Neural Information Processing Systems},
+  pdf = {https://arxiv.org/abs/1901.11150},
+  pages={9749--9758},
+  year={2019}
 }

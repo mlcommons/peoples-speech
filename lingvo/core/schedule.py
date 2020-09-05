@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,17 +15,12 @@
 # ==============================================================================
 """Learning rate schedule."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import math
 import lingvo.compat as tf
 from lingvo.core import base_layer
 from lingvo.core import early_stop
 from lingvo.core import ops
 from lingvo.core import py_utils
-from six.moves import zip
 
 
 class BaseSchedule(base_layer.BaseLayer):
@@ -33,12 +28,13 @@ class BaseSchedule(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(BaseSchedule, cls).Params()
+    p = super().Params()
     p.name = 'LRSched'
     return p
 
   def __init__(self, params):
-    super(BaseSchedule, self).__init__(params)
+    super().__init__(params)
+    self.SetVariableFree()
 
   def Value(self, current_step=None):
     """Returns the current learning rate schedule value.
@@ -53,8 +49,8 @@ class BaseSchedule(base_layer.BaseLayer):
       effective learning rate.
     """
     if current_step is None:
-      current_step = self.theta.global_step
-    return self.FProp(self.theta, current_step)
+      current_step = self.global_step
+    return self.FPropDefaultTheta(current_step)
 
 
 class Constant(BaseSchedule):
@@ -62,7 +58,7 @@ class Constant(BaseSchedule):
 
   @classmethod
   def Params(cls):
-    p = super(Constant, cls).Params()
+    p = super().Params()
     p.Define('value', 1., 'The constant value.')
     return p
 
@@ -81,13 +77,10 @@ class PiecewiseConstantSchedule(BaseSchedule):
 
   @classmethod
   def Params(cls):
-    p = super(PiecewiseConstantSchedule, cls).Params()
+    p = super().Params()
     p.Define('boundaries', None, 'Boundaries at which learning rate drops.')
     p.Define('values', None, 'Values in each interval.')
     return p
-
-  def __init__(self, params):
-    super(PiecewiseConstantSchedule, self).__init__(params)
 
   def FProp(self, theta, current_step):
     p = self.params
@@ -100,7 +93,7 @@ class ContinuousSchedule(BaseSchedule):
 
   @classmethod
   def Params(cls):
-    p = super(ContinuousSchedule, cls).Params()
+    p = super().Params()
     p.Define('initial_value', 1.0, 'Initial decay value.')
     p.Define('start_step', 400000,
              'Starts to decay the learning rate from this step.')
@@ -110,7 +103,7 @@ class ContinuousSchedule(BaseSchedule):
     return p
 
   def __init__(self, params):
-    super(ContinuousSchedule, self).__init__(params)
+    super().__init__(params)
     p = self.params
     q = ExponentialSchedule.Params().Set(
         start=(p.start_step, 1.0),
@@ -133,7 +126,7 @@ class PolynomialSchedule(BaseSchedule):
 
   @classmethod
   def Params(cls):
-    p = super(PolynomialSchedule, cls).Params()
+    p = super().Params()
     p.Define('power', 1, 'Polynomial power.')
     p.Define('start', (0, 1.), '(x0, y0)')
     p.Define('limit', (1, 1.), '(x1, y1)')
@@ -142,9 +135,8 @@ class PolynomialSchedule(BaseSchedule):
     return p
 
   def __init__(self, params):
-    super(PolynomialSchedule, self).__init__(params)
+    super().__init__(params)
 
-    @tf.Defun(shape_func=lambda op: [op.inputs[0].shape])
     def Polynomial(x):
       """Polynomial function of x."""
       p = self.params
@@ -171,7 +163,8 @@ class PolynomialSchedule(BaseSchedule):
     self._polynomial = Polynomial
 
   def FProp(self, theta, current_step):
-    return self._polynomial(tf.cast(current_step, dtype=self.params.dtype))
+    return py_utils.CallDefun(self._polynomial,
+                              tf.cast(current_step, dtype=self.params.dtype))
 
 
 class LinearSchedule(PolynomialSchedule):
@@ -184,7 +177,7 @@ class LinearSchedule(PolynomialSchedule):
 
   @classmethod
   def Params(cls):
-    p = super(LinearSchedule, cls).Params().Set(power=1)
+    p = super().Params().Set(power=1)
     return p
 
 
@@ -197,33 +190,33 @@ class ExponentialSchedule(BaseSchedule):
 
   @classmethod
   def Params(cls):
-    p = super(ExponentialSchedule, cls).Params()
+    p = super().Params()
     p.Define('start', (0, 1.), '(x0, y0)')
     p.Define('limit', (1, 0.5), '(x1, y1)')
     return p
 
   def __init__(self, params):
-    super(ExponentialSchedule, self).__init__(params)
+    super().__init__(params)
     p = self.params
     x0, y0 = p.start
     x1, y1 = p.limit
     assert x0 < x1, '%s must be < %s' % (x0, x1)
-    assert y0 > 0, '%s must be > 0' % (y0)
-    assert y1 > 0, '%s must be > 0' % (y1)
+    assert y0 > 0, '%s must be > 0' % y0
+    assert y1 > 0, '%s must be > 0' % y1
 
     self.CreateChild(
         'linear',
         LinearSchedule.Params().Set(
             start=(x0, math.log(y0)), limit=(x1, math.log(y1))))
 
-    @tf.Defun()
     def Exp(x):
       return tf.exp(self.linear.Value(x))
 
     self._exp = Exp
 
   def FProp(self, theta, current_step):
-    return self._exp(tf.cast(current_step, dtype=self.params.dtype))
+    return py_utils.CallDefun(self._exp,
+                              tf.cast(current_step, dtype=self.params.dtype))
 
 
 class StepwiseExponentialSchedule(BaseSchedule):
@@ -231,13 +224,10 @@ class StepwiseExponentialSchedule(BaseSchedule):
 
   @classmethod
   def Params(cls):
-    p = super(StepwiseExponentialSchedule, cls).Params()
+    p = super().Params()
     p.Define('decay', 0.99, 'Decay factor.')
     p.Define('num_steps_per_decay', 1000, 'Number of steps between decays.')
     return p
-
-  def __init__(self, params):
-    super(StepwiseExponentialSchedule, self).__init__(params)
 
   def FProp(self, theta, current_step):
     p = self.params
@@ -251,17 +241,16 @@ class CombinedMinimumSchedule(BaseSchedule):
 
   @classmethod
   def Params(cls):
-    p = super(CombinedMinimumSchedule, cls).Params()
+    p = super().Params()
     p.Define('schedules', [LinearSchedule.Params()],
              'A list of learning rate schedule params.')
     return p
 
   def __init__(self, params):
-    super(CombinedMinimumSchedule, self).__init__(params)
+    super().__init__(params)
     p = self.params
     self.CreateChildren('schedules', p.schedules)
 
-    @tf.Defun()
     def Combined(x):
       ys = [s.Value(x) for s in self.schedules]
       return tf.reduce_min(tf.stack(ys), axis=0)
@@ -269,7 +258,8 @@ class CombinedMinimumSchedule(BaseSchedule):
     self._combined = Combined
 
   def FProp(self, theta, current_step):
-    return self._combined(current_step)
+    return py_utils.CallDefun(self._combined,
+                              tf.convert_to_tensor(current_step))
 
 
 class TransformerSchedule(BaseSchedule):
@@ -277,7 +267,7 @@ class TransformerSchedule(BaseSchedule):
 
   @classmethod
   def Params(cls):
-    p = super(TransformerSchedule, cls).Params()
+    p = super().Params()
     p.Define(
         'warmup_steps', 4000, 'Increase the learning rate linearly for '
         'the first warmup_steps training steps.')
@@ -288,9 +278,6 @@ class TransformerSchedule(BaseSchedule):
     p.Define('decay_end', None, 'Ends the learning rate decay at '
              'decay_end-th step.')
     return p
-
-  def __init__(self, params):
-    super(TransformerSchedule, self).__init__(params)
 
   def FProp(self, theta, current_step):
     """Returns the current learning rate decay."""
@@ -309,7 +296,7 @@ class TransformerMLPerfSchedule(BaseSchedule):
 
   @classmethod
   def Params(cls):
-    p = super(TransformerMLPerfSchedule, cls).Params()
+    p = super().Params()
     p.Define(
         'warmup_steps', 4000, 'Increase the learning rate linearly for '
         'the first warmup_steps training steps.')
@@ -317,9 +304,6 @@ class TransformerMLPerfSchedule(BaseSchedule):
         'model_dim', 512, 'Model dimension that applies to embedding '
         'layers and all Transformer layers.')
     return p
-
-  def __init__(self, params):
-    super(TransformerMLPerfSchedule, self).__init__(params)
 
   def FProp(self, theta, current_step):
     """Returns the current learning rate decay."""
@@ -342,7 +326,7 @@ class TransformerScheduleNoWarmUp(BaseSchedule):
 
   @classmethod
   def Params(cls):
-    p = super(TransformerScheduleNoWarmUp, cls).Params()
+    p = super().Params()
     p.Define('decay_start', 4000, 'It is used to estimate peak-lr.')
     p.Define('decay_end', None, 'Ends the learning rate decay at '
              'decay_end-th step.')
@@ -353,7 +337,7 @@ class TransformerScheduleNoWarmUp(BaseSchedule):
     return p
 
   def __init__(self, params):
-    super(TransformerScheduleNoWarmUp, self).__init__(params)
+    super().__init__(params)
     tf.logging.info('Peak lr: %f', (self.params.decay_start *
                                          self.params.worker_replicas)**-0.5)
 
@@ -385,8 +369,7 @@ class LinearRampupExponentialDecayScaledByNumSplitSchedule(BaseSchedule):
 
   @classmethod
   def Params(cls):
-    p = super(LinearRampupExponentialDecayScaledByNumSplitSchedule,
-              cls).Params()
+    p = super().Params()
     p.Define(
         'warmup', 300, 'Increases the learning rate linearly  '
         'before warmup * num_splits steps.')
@@ -405,8 +388,7 @@ class LinearRampupExponentialDecayScaledByNumSplitSchedule(BaseSchedule):
     return p
 
   def __init__(self, params):
-    super(LinearRampupExponentialDecayScaledByNumSplitSchedule,
-          self).__init__(params)
+    super().__init__(params)
 
     p = self.params
 
@@ -460,14 +442,14 @@ class LinearRampupExponentialDecay(
 
   @classmethod
   def Params(cls):
-    p = super(LinearRampupExponentialDecay, cls).Params()
+    p = super().Params()
     p.num_splits = 1
     p.warmup_init = 0.0
     return p
 
   def __init__(self, params):
     assert params.num_splits == 1
-    super(LinearRampupExponentialDecay, self).__init__(params)
+    super().__init__(params)
 
 
 class LinearRampupSqrtDecayByBatchSizeAndReplicas(BaseSchedule):
@@ -485,7 +467,7 @@ class LinearRampupSqrtDecayByBatchSizeAndReplicas(BaseSchedule):
 
   @classmethod
   def Params(cls):
-    p = super(LinearRampupSqrtDecayByBatchSizeAndReplicas, cls).Params()
+    p = super().Params()
     p.Define(
         'warmup_examples', 256 * 2**20,
         'Increase the learning rate linearly for the first warmup_examples '
@@ -498,7 +480,7 @@ class LinearRampupSqrtDecayByBatchSizeAndReplicas(BaseSchedule):
     return p
 
   def __init__(self, params):
-    super(LinearRampupSqrtDecayByBatchSizeAndReplicas, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.batch_size > 0
     if p.num_replicas:
@@ -537,7 +519,7 @@ class LinearRampupPiecewiseConstantSchedule(BaseSchedule):
 
   @classmethod
   def Params(cls):
-    p = super(LinearRampupPiecewiseConstantSchedule, cls).Params()
+    p = super().Params()
     p.Define('boundaries', [], 'Boundaries at which learning rate changes.')
     p.Define('lrs', [], 'A list of learning rate multiplers.')
     p.Define(
@@ -546,7 +528,7 @@ class LinearRampupPiecewiseConstantSchedule(BaseSchedule):
     return p
 
   def __init__(self, params):
-    super(LinearRampupPiecewiseConstantSchedule, self).__init__(params)
+    super().__init__(params)
 
     p = self.params
     assert len(p.boundaries) >= 2 and len(p.boundaries) == len(p.lrs)
@@ -589,7 +571,7 @@ class LinearRampupCosineSchedule(BaseSchedule):
 
   @classmethod
   def Params(cls):
-    p = super(LinearRampupCosineSchedule, cls).Params()
+    p = super().Params()
     p.Define('warmup_init', 0, 'The initial lr value of the warm-up phase.')
     p.Define('warmup_steps', 0, 'Number of warm up steps.')
     p.Define('initial_value', 1.0, 'Initial decay value.')
@@ -602,7 +584,7 @@ class LinearRampupCosineSchedule(BaseSchedule):
     return p
 
   def __init__(self, params):
-    super(LinearRampupCosineSchedule, self).__init__(params)
+    super().__init__(params)
     p = self.params
 
     # We always compute lr schedule from the trainer's perspective.
@@ -656,7 +638,7 @@ class DevBasedSchedule(BaseSchedule):
 
   @classmethod
   def Params(cls):
-    p = super(DevBasedSchedule, cls).Params()
+    p = super().Params()
     p.Define('metric_history', early_stop.MetricHistory.Params(),
              'Metric to monitor for stopping.')
     p.Define('tolerance', 0.0, 'Minimum significant difference in metric.')
@@ -669,7 +651,7 @@ class DevBasedSchedule(BaseSchedule):
     return p
 
   def __init__(self, params):
-    super(DevBasedSchedule, self).__init__(params)
+    super().__init__(params)
 
     p = self.params
 
@@ -679,16 +661,14 @@ class DevBasedSchedule(BaseSchedule):
           init=py_utils.WeightInit.Constant(1.0),
           collections=['DevBasedSchedule_vars'],
           dtype=tf.float32)
-      _, self._cur_factor, = py_utils.CreateVariable(
+      self._cur_factor = py_utils.CreateVariable(
           'cur_factor', wp, trainable=False)
       wp = py_utils.WeightParams(
           shape=[],
           init=py_utils.WeightInit.Constant(0),
           collections=['DevBasedSchedule_vars'],
           dtype=tf.int64)
-      _, self._ref_step, = py_utils.CreateVariable(
-          'ref_step', wp, trainable=False)
-
+      self._ref_step = py_utils.CreateVariable('ref_step', wp, trainable=False)
       self._metric_history = early_stop.MetricHistory(p.metric_history)
       self._best_step = ops.best_step(self._metric_history.hist_file,
                                       p.tolerance)
@@ -730,7 +710,7 @@ class CosineSchedule(BaseSchedule):
 
   @classmethod
   def Params(cls):
-    p = super(CosineSchedule, cls).Params()
+    p = super().Params()
     p.Define('initial_value', 1.0, 'Initial decay value.')
     p.Define('final_value', 0., 'Final decay value.')
     p.Define('total_steps', 0, 'Number of steps to reach full decay.')
@@ -752,7 +732,7 @@ class PiecewiseSchedule(BaseSchedule):
 
   @classmethod
   def Params(cls):
-    p = super(PiecewiseSchedule, cls).Params()
+    p = super().Params()
     p.Define('boundaries', None, 'Boundaries between subschedules.')
     p.Define(
         'schedules', None, 'A list of sub-schedules. '
@@ -764,7 +744,7 @@ class PiecewiseSchedule(BaseSchedule):
     return p
 
   def __init__(self, params):
-    super(PiecewiseSchedule, self).__init__(params)
+    super().__init__(params)
     p = self.params
     prev_boundary = 0
     for boundary in p.boundaries:
@@ -797,7 +777,7 @@ class SqrtDecay(BaseSchedule):
 
   @classmethod
   def Params(cls):
-    p = super(SqrtDecay, cls).Params()
+    p = super().Params()
     p.Define('warmup_steps', 10000, 'Number of warm up steps.')
     p.Define('multiplier', 1.0, 'Multiplier.')
     return p
@@ -815,7 +795,7 @@ class CycleSchedule(BaseSchedule):
 
   @classmethod
   def Params(cls):
-    p = super(CycleSchedule, cls).Params()
+    p = super().Params()
     p.Define(
         'schedules', None, 'A list of sub-schedules. Unlike PiecewiseSchedule, '
         'the absolute step is passed to the sub-schedule.')
@@ -823,7 +803,7 @@ class CycleSchedule(BaseSchedule):
     return p
 
   def __init__(self, params):
-    super(CycleSchedule, self).__init__(params)
+    super().__init__(params)
     p = self.params
     if len(p.schedules) != len(p.steps):
       raise ValueError('len(schedules) != len(steps): %s vs %s' %
