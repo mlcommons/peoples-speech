@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,10 +15,6 @@
 # ==============================================================================
 """Checkpointing utilities for save/restore."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import os
 import time
 
@@ -28,24 +24,35 @@ from lingvo.core import py_utils
 import six
 
 
-class Checkpointer(object):
+class Checkpointer:
   """Checkpointing utility class.
 
   Needs to be created within a graph context.
   """
 
-  def __init__(self, train_dir, model, train_params=None, save_only=False):
+  def __init__(self,
+               train_dir,
+               model,
+               init_op=None,
+               train_params=None,
+               save_only=False):
     """Initialize Checkpointer.
 
     Args:
      train_dir: Training directory for saving checkpoints.
      model: A BaseModel instance or None.
+     init_op: The initialize variables op. If unset, it will call
+       tf.global_variables_initializer().
      train_params: If specified, use these training params instead of those in
        the `model`.
      save_only: This checkpointer is only intended for saving checkpoints.
     """
     self._train_dir = train_dir
     self._save_only = save_only
+    if init_op:
+      self._init_op = init_op
+    else:
+      self._init_op = tf.global_variables_initializer()
 
     self._save_path = os.path.join(self._train_dir, 'ckpt')
 
@@ -100,11 +107,15 @@ class Checkpointer(object):
     Args:
       sess: tf.Session.
       gsteps: Current global step.
+    Returns:
+      Whether a checkpoint was saved.
     """
     now = time.time()
     if now >= self._next_checkpoint_seconds:
       self.Save(sess, gsteps)
       self._next_checkpoint_seconds = now + self._save_interval_seconds
+      return True
+    return False
 
   def Save(self, sess, gsteps):
     """Save the checkpoint.
@@ -129,7 +140,7 @@ class Checkpointer(object):
     uninitialized_var_names = sorted(list(sess.run(self._uninitialized_vars)))
     # uninitialized_var_names is a list of strings without ":0" suffix.
     # tf.report_uninitialized_variables returns binary strings.
-    assert all(isinstance(s, six.binary_type) for s in uninitialized_var_names)
+    assert all(isinstance(s, bytes) for s in uninitialized_var_names)
     return uninitialized_var_names
 
   def Restore(self, sess, force_reinitialize=False):
@@ -159,24 +170,27 @@ class Checkpointer(object):
 
     # At this point all variables are uninitialized, so it is safe to run a
     # global initializer.
-    sess.run(tf.global_variables_initializer())
+    sess.run(self._init_op)
     tf.logging.info('Initialized all vars.')
+
+    # TODO(b/160786085): Move this logic into Overriding vars logic itself,
+    # which requires refactoring things out of py_utils to avoid circular deps.
+    def _ResolveCkptPath(ckpt_rules):
+      return {GetSpecificCheckpoint(k): v for k, v in ckpt_rules.items()}
 
     # Restore specific variables based on init_from_checkpoint_rules.
     for task in self._model.tasks:
       tp = task.params.train
       if tp.init_from_checkpoint_rules:
-        tf.logging.info('OverrideVarsFromCheckpoints %s',
-                             tp.init_from_checkpoint_rules)
-        py_utils.OverrideVarsFromCheckpoints(sess, tf.global_variables(),
-                                             tp.init_from_checkpoint_rules)
+        rules = _ResolveCkptPath(tp.init_from_checkpoint_rules)
+        tf.logging.info('OverrideVarsFromCheckpoints %s', rules)
+        py_utils.OverrideVarsFromCheckpoints(sess, tf.global_variables(), rules)
 
     if self._params.train.init_from_checkpoint_rules:
       tp = self._params.train
-      tf.logging.info('OverrideVarsFromCheckpoints %s',
-                           tp.init_from_checkpoint_rules)
-      py_utils.OverrideVarsFromCheckpoints(sess, tf.global_variables(),
-                                           tp.init_from_checkpoint_rules)
+      rules = _ResolveCkptPath(tp.init_from_checkpoint_rules)
+      tf.logging.info('OverrideVarsFromCheckpoints %s', rules)
+      py_utils.OverrideVarsFromCheckpoints(sess, tf.global_variables(), rules)
 
   def RestoreIfNeeded(self, sess):
     """If vars are not initialized, restore from checkpoint."""
@@ -211,3 +225,40 @@ class Checkpointer(object):
     else:
       tf.logging.info('Initializing global step')
       sess.run(gstep.initializer)
+
+
+def GetSpecificCheckpoint(load_checkpoint_from):
+  """Returns a specific checkpoint given `load_checkpoint_from`.
+
+  When load_checkpoint_from is a directory, we find the latest
+  checkpoint in the directory and use that as the checkpoint
+  to evaluate.
+
+  When load_checkpoint_from is a specific checkpoint, we
+  validate the path and return it.
+
+  Args:
+    load_checkpoint_from: If not None, specifies the directory or specific
+      checkpoint to load.  If a directory, the latest checkpoint in the
+      directory will be used.
+  """
+  if not load_checkpoint_from:
+    return None
+
+  # If load_checkpoint_from is a directory, return the latest
+  # checkpoint in the directory.
+  if tf.io.gfile.isdir(load_checkpoint_from):
+    return tf.train.latest_checkpoint(load_checkpoint_from)
+
+  # We assume that load_checkpoint_from is a specific checkpoint to
+  # evaluate since it is not a directory.
+  #
+  # Check validity of eval path by looking for the index file.
+  if tf.io.gfile.exists(load_checkpoint_from + '.index'):
+    return load_checkpoint_from
+
+  # Fail if we see an unexpected load_checkpoint_from.
+  #
+  # This might happen if load_checkpoint_from refers to a checkpoint
+  # but the index file cannot be found.
+  raise ValueError('Invalid load_checkpoint_from: %s' % load_checkpoint_from)

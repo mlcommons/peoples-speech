@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,16 +18,11 @@
 Individual models just need to provide a few callback functions.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import collections
 import lingvo.compat as tf
 from lingvo.core import base_layer
 from lingvo.core import ops
 from lingvo.core import py_utils
-import six
 
 from tensorflow.python.ops import inplace_ops
 
@@ -70,6 +65,16 @@ BeamSearchDecodeOutput = collections.namedtuple(
 )
 # Make the last attribute default to None.
 BeamSearchDecodeOutput.__new__.__defaults__ = (None,)
+
+
+# Keys in fusion state that can be two dimensional, with the batch element in
+# the second dimension, requiring special treatment in hypothesis reordering.
+POSSIBLY_TIME_MAJOR_STATE_KEYS = [
+    'misc_states.fusion_states.lm_states.prev_ids',
+    'misc_states.fusion_states.lm_states.prev_paddings',
+    'fusion_states.lm_states.prev_ids',
+    'fusion_states.lm_states.prev_paddings',
+]
 
 
 class BeamSearchHelper(base_layer.BaseLayer):
@@ -171,7 +176,7 @@ class BeamSearchHelper(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(BeamSearchHelper, cls).Params()
+    p = super().Params()
     p.Define('num_hyps_per_beam', 8,
              'Num of hyps to keep per beam during decoding.')
     p.Define(
@@ -258,7 +263,7 @@ class BeamSearchHelper(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(BeamSearchHelper, self).__init__(params)
+    super().__init__(params)
     p = self.params
     self._model_uses_eoc_id = p.target_eoc_id >= 0
 
@@ -355,7 +360,7 @@ class BeamSearchHelper(base_layer.BaseLayer):
     new_bs_states = (out_best_scores, out_cumulative_scores, out_scores,
                      out_hyps, out_prev_hyps, out_done_hyps, out_atten_probs)
 
-    def ReOrderHyps(x_in):
+    def ReOrderHyps(key, x_in):
       """Reorders x_in based on prev hyp ids."""
       if (isinstance(x_in, tf.Tensor) and x_in.shape.ndims and
           x_in.shape.ndims > 0):
@@ -366,6 +371,8 @@ class BeamSearchHelper(base_layer.BaseLayer):
               old_hyp_ids_in_cache_order
               if p.batch_major_compute else old_hyp_ids)
           x_out = tf.gather(x_in, correct_old_hyp_ids, axis=1)
+        elif key in POSSIBLY_TIME_MAJOR_STATE_KEYS:
+          x_out = tf.gather(x_in, old_hyp_ids, axis=-1)
         else:
           x_out = tf.gather(x_in, old_hyp_ids)
         x_out.set_shape(x_in.get_shape())
@@ -373,7 +380,7 @@ class BeamSearchHelper(base_layer.BaseLayer):
       else:
         return x_in
 
-    new_other_states = other_states.Transform(ReOrderHyps)
+    new_other_states = other_states.TransformWithKey(ReOrderHyps)
 
     final_other_states = post_beam_search_step_callback(theta, encoder_outputs,
                                                         new_step_ids,
@@ -568,7 +575,7 @@ def MergeBeamSearchOutputs(max_hyps_per_beam, beam_search_outputs):
                               tf.shape(output.topk_hyps)[0]),
     ],
                                                tf.shape(output.topk_hyps)[1])
-    for k, v in six.iteritems(output._asdict()):
+    for k, v in output._asdict().items():
       if v is None:
         continue
       if k == 'done_hyps':
@@ -579,7 +586,7 @@ def MergeBeamSearchOutputs(max_hyps_per_beam, beam_search_outputs):
 
   # Concatenate the tensors along the 'num_hyps_per_beam' dimension.
   concatenated = {}
-  for k, values in six.iteritems(value_dict):
+  for k, values in value_dict.items():
     if len(values) != len(beam_search_outputs):
       raise ValueError('Incomplete values for %s: %s' %
                        (k, beam_search_outputs))
@@ -601,7 +608,7 @@ def MergeBeamSearchOutputs(max_hyps_per_beam, beam_search_outputs):
   # Gather the merged top hyps according to 'gather_indices'.
   top = beam_search_outputs[0]._asdict()
   total_hyps = source_batch * max_hyps_per_beam
-  for k, v in six.iteritems(concatenated):
+  for k, v in concatenated.items():
     v = tf.gather_nd(v, gather_indices)
     if k == 'done_hyps':
       v = tf.transpose(tf.reshape(v, [total_hyps, -1]))
@@ -626,7 +633,7 @@ class GreedySearchHelper(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(GreedySearchHelper, cls).Params()
+    p = super().Params()
     p.Define('target_sos_id', 1, 'Id of the start of sentence token.')
     p.Define('target_eos_id', 2, 'Id of the end of sentence token.')
     p.Define(

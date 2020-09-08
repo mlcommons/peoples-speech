@@ -22,6 +22,7 @@ from lingvo.core import base_input_generator
 from lingvo.core import base_layer
 from lingvo.core import base_model
 from lingvo.core import base_model_params
+from lingvo.core import distillation_task
 from lingvo.core import hyperparams
 from lingvo.core import layers
 from lingvo.core import learner
@@ -29,8 +30,6 @@ from lingvo.core import py_utils
 from lingvo.core import task_scheduler
 from lingvo.core import test_utils
 import numpy as np
-import six
-from six.moves import range
 
 
 FLAGS = tf.flags.FLAGS
@@ -41,16 +40,17 @@ _NUMPY_RANDOM_SEED = 9885784
 class TestTask(base_model.BaseTask):
 
   def __init__(self, params):
-    super(TestTask, self).__init__(params)
-    p = self.params
-    with tf.variable_scope(p.name):
-      self.CreateVariable(
-          'a',
-          py_utils.WeightParams(shape=[], init=py_utils.WeightInit.Constant(0)))
-      self.CreateVariable(
-          'b',
-          py_utils.WeightParams(shape=[], init=py_utils.WeightInit.Constant(0)))
-      self.CreateChild('x', layers.BatchNormLayer.Params().Set(name='x', dim=1))
+    super().__init__(params)
+    self.CreateChild('x', layers.BatchNormLayer.Params().Set(name='x', dim=1))
+
+  def _CreateLayerVariables(self):
+    super()._CreateLayerVariables()
+    self.CreateVariable(
+        'a',
+        py_utils.WeightParams(shape=[], init=py_utils.WeightInit.Constant(0)))
+    self.CreateVariable(
+        'b',
+        py_utils.WeightParams(shape=[], init=py_utils.WeightInit.Constant(0)))
 
 
 class BaseTaskTest(test_utils.TestCase):
@@ -183,13 +183,11 @@ class BaseTaskTest(test_utils.TestCase):
 
 class TeacherTask(base_model.BaseTask):
 
-  def __init__(self, params):
-    super(TeacherTask, self).__init__(params)
-    p = self.params
-    with tf.variable_scope(p.name):
-      self.CreateVariable('x',
-                          py_utils.WeightParams(
-                              shape=[], init=py_utils.WeightInit.Constant(0)))
+  def _CreateLayerVariables(self):
+    super()._CreateLayerVariables()
+    self.CreateVariable(
+        'x',
+        py_utils.WeightParams(shape=[], init=py_utils.WeightInit.Constant(0)))
 
   def ComputePredictions(self, theta, input_batch):
     return theta.x
@@ -197,13 +195,11 @@ class TeacherTask(base_model.BaseTask):
 
 class StudentTask(base_model.BaseTask):
 
-  def __init__(self, params):
-    super(StudentTask, self).__init__(params)
-    p = self.params
-    with tf.variable_scope(p.name):
-      self.CreateVariable('x',
-                          py_utils.WeightParams(
-                              shape=[], init=py_utils.WeightInit.Uniform()))
+  def _CreateLayerVariables(self):
+    super()._CreateLayerVariables()
+    self.CreateVariable(
+        'x',
+        py_utils.WeightParams(shape=[], init=py_utils.WeightInit.Uniform()))
 
   def ComputePredictions(self, theta, input_batch):
     return theta.x
@@ -219,11 +215,11 @@ class TestInputGenerator(base_input_generator.BaseSequenceInputGenerator):
     return 0
 
 
-class DistillationTestTask(base_model.DistillationTask):
+class DistillationTestTask(distillation_task.DistillationTask):
 
   @classmethod
   def Params(cls):
-    p = super(DistillationTestTask, cls).Params()
+    p = super().Params()
     p.name = 'distillation_test'
     p.teacher = TeacherTask.Params()
     p.student = StudentTask.Params()
@@ -236,7 +232,7 @@ class DistillationTestTask(base_model.DistillationTask):
     return p
 
   def __init__(self, params):
-    super(DistillationTestTask, self).__init__(params)
+    super().__init__(params)
 
   def ComputeLoss(self, theta, predictions, input_batch):
     return {'loss': (predictions.teacher - predictions.student, 1)}, {}
@@ -279,7 +275,7 @@ class DistillationTaskTest(test_utils.TestCase):
     values_before_training, values_after_training = (
         self._GetVarValuesBeforeAndAfter(DistillationTestTask.Params()))
     for child in ('teacher', 'student'):
-      for k, v in six.iteritems(values_after_training[child]):
+      for k, v in values_after_training[child].items():
         print('Comparing variable %s' % k)
         if child == 'teacher':
           # Teacher vars should not change after training.
@@ -295,7 +291,7 @@ class DistillationTaskTest(test_utils.TestCase):
     values_before_training, values_after_training = (
         self._GetVarValuesBeforeAndAfter(params))
     for child in ('teacher', 'student'):
-      for k, v in six.iteritems(values_after_training[child]):
+      for k, v in values_after_training[child].items():
         print('Comparing variable %s' % k)
         if child == 'teacher':
           # Teacher vars should change after training.
@@ -461,6 +457,71 @@ class MultiTaskModelTest(test_utils.TestCase):
     p.task_schedule.task_probs = [('a', 0.8), ('b', 0.2)]
 
     self._testSampleTaskHelper(p)
+
+
+class PostTrainingTask(base_model.BaseTask):
+
+  def __init__(self, params):
+    super().__init__(params)
+    p = layers.FeedForwardNet.Params().Set(
+        name='ffn',
+        input_dim=10,
+        hidden_layer_dims=[20, 30],
+        batch_norm=True,
+        activation='TANH',
+        params_init=py_utils.WeightInit.Uniform(1.0))
+    self.CreateChild('ffn', p)
+
+  def _CreateLayerVariables(self):
+    super()._CreateLayerVariables()
+    self.CreateVariable(
+        'counter1',
+        py_utils.WeightParams(shape=[], init=py_utils.WeightInit.Constant(0)))
+    self.CreateVariable(
+        'counter2',
+        py_utils.WeightParams(shape=[], init=py_utils.WeightInit.Constant(0)))
+
+  def PostTrainingStepUpdate(self, global_step):
+    # We expect the training step to be done, so capture
+    # the value of counter1 into counter2.
+    return tf.assign(self.vars.counter2, self.vars.counter1)
+
+  def ComputePredictions(self, theta, input_batch):
+    input_data = tf.random.normal([1, 10], dtype=tf.float32) + tf.cast(
+        input_batch, tf.float32)
+    add = tf.assign_add(self.vars.counter1, 1.)
+    input_data += add
+    result = self.ffn.FProp(theta.ffn, input_data)
+    return {'result': result}
+
+  def ComputeLoss(self, theta, predictions, input_batch):
+    loss = tf.reduce_sum(predictions['result'])
+    return {'loss': (loss, 1)}, {}
+
+
+class PostTrainingTest(test_utils.TestCase):
+
+  @classmethod
+  def TestParams(cls):
+    p = PostTrainingTask.Params()
+    p.name = 'base_mdl'
+    p.input = TestInputGenerator.Params()
+    return p
+
+  def testPost(self):
+    p = self.TestParams()
+    task = p.Instantiate()
+    task.FPropDefaultTheta()
+    task.BProp()
+    train_op = task.train_op
+    with self.session():
+      self.evaluate(tf.global_variables_initializer())
+      for _ in range(20):
+        self.evaluate(train_op)
+        c1, c2 = self.evaluate([task.vars.counter1, task.vars.counter2])
+        # Both vars should have the same value if the PostTrainingStep
+        # happens after the training step.
+        self.assertEqual(c1, c2)
 
 
 if __name__ == '__main__':

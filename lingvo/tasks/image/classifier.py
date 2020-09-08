@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,10 +15,6 @@
 # ==============================================================================
 """Image classification models."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import lingvo.compat as tf
 from lingvo.core import base_model
 from lingvo.core import layers
@@ -27,8 +23,27 @@ from lingvo.core import plot
 from lingvo.core import py_utils
 from lingvo.core import schedule
 import numpy as np
-from six.moves import range
-from six.moves import zip
+
+
+def TopKAccuracy(k, logits, labels, weights):
+  """Compute top-k accuracy.
+
+  Args:
+    k: An int scalar. Top-k.
+    logits: A [N, C] float tensor.
+    labels: A [N] int vector.
+    weights: A [N] float vector.
+
+  Returns:
+    A float scalar. The accuracy at precision k.
+  """
+  logits = py_utils.HasRank(logits, 2)
+  n, _ = tf.unstack(tf.shape(logits), 2)
+  labels = py_utils.HasShape(labels, [n])
+  weights = py_utils.HasShape(weights, [n])
+  correct = tf.nn.in_top_k(targets=labels, predictions=logits, k=k)
+  return tf.reduce_sum(tf.cast(correct, weights.dtype) * weights) / tf.maximum(
+      1e-8, tf.reduce_sum(weights))
 
 
 class BaseClassifier(base_model.BaseTask):
@@ -36,13 +51,16 @@ class BaseClassifier(base_model.BaseTask):
 
   @classmethod
   def Params(cls):
-    p = super(BaseClassifier, cls).Params()
+    p = super().Params()
     p.Define('softmax', layers.SimpleFullSoftmax.Params(), 'Softmax layer.')
+    p.Define('add_image_summary', True, 'If True, adds image summary in '
+             'evaler/decoder jobs.')
     return p
 
   def _AddSummary(self, batch, prediction):
     """Adds image summaries for the batch."""
-    if not self.do_eval:
+    p = self.params
+    if not self.do_eval or not p.add_image_summary:
       # Image summaries only works in evaler/decoder.
       return
 
@@ -77,13 +95,7 @@ class BaseClassifier(base_model.BaseTask):
     Returns:
       A float scalar. The accuracy at precision k.
     """
-    logits = py_utils.HasRank(logits, 2)
-    n, c = tf.unstack(tf.shape(logits), 2)
-    labels = py_utils.HasShape(labels, [n])
-    weights = py_utils.HasShape(weights, [n])
-    correct = tf.nn.in_top_k(targets=labels, predictions=logits, k=k)
-    return tf.reduce_sum(tf.cast(correct, weights.dtype) *
-                         weights) / tf.maximum(1e-8, tf.reduce_sum(weights))
+    return TopKAccuracy(k, logits, labels, weights)
 
 
 class ModelV1(BaseClassifier):
@@ -91,7 +103,7 @@ class ModelV1(BaseClassifier):
 
   @classmethod
   def Params(cls):
-    p = super(ModelV1, cls).Params()
+    p = super().Params()
     p.Define(
         'filter_shapes', [(0, 0, 0, 0)],
         'Conv filter shapes. Must be a list of sequences of 4. '
@@ -112,45 +124,43 @@ class ModelV1(BaseClassifier):
     return p
 
   def __init__(self, params):
-    super(ModelV1, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.name
 
-    with tf.variable_scope(p.name):
-      assert len(p.filter_shapes) == len(p.window_shapes)
+    assert len(p.filter_shapes) == len(p.window_shapes)
 
-      # A few conv + max pooling layers.
-      shape = [None] + list(p.input.data_shape)
-      conv_params = []
-      pooling_params = []
-      for i, (kernel,
-              window) in enumerate(zip(p.filter_shapes, p.window_shapes)):
-        conv_params.append(layers.ConvLayer.Params().Set(
-            name='conv%d' % i,
-            filter_shape=kernel,
-            filter_stride=(1, 1),
-            batch_norm=p.batch_norm))
-        pooling_params.append(layers.PoolingLayer.Params().Set(
-            name='pool%d' % i, window_shape=window, window_stride=window))
-      self.CreateChildren('conv', conv_params)
-      self.CreateChildren('pool', pooling_params)
+    # A few conv + max pooling layers.
+    shape = [None] + list(p.input.data_shape)
+    conv_params = []
+    pooling_params = []
+    for i, (kernel, window) in enumerate(zip(p.filter_shapes, p.window_shapes)):
+      conv_params.append(layers.ConvLayer.Params().Set(
+          name='conv%d' % i,
+          filter_shape=kernel,
+          filter_stride=(1, 1),
+          batch_norm=p.batch_norm))
+      pooling_params.append(layers.PoolingLayer.Params().Set(
+          name='pool%d' % i, window_shape=window, window_stride=window))
+    self.CreateChildren('conv', conv_params)
+    self.CreateChildren('pool', pooling_params)
 
-      # Logs expected activation shapes.
-      for i in range(len(self.conv)):
-        tf.logging.info('shape %d %s', i, shape)
-        shape = self.conv[i].OutShape(shape)
-        tf.logging.info('shape %d %s', i, shape)
-        shape = self.pool[i].OutShape(shape)
-      tf.logging.info('shape %s', shape)
+    # Logs expected activation shapes.
+    for i in range(len(self.conv)):
+      tf.logging.info('shape %d %s', i, shape)
+      shape = self.conv[i].OutShape(shape)
+      tf.logging.info('shape %d %s', i, shape)
+      shape = self.pool[i].OutShape(shape)
+    tf.logging.info('shape %s', shape)
 
-      # FC layer to project down to p.softmax.input_dim.
-      self.CreateChild(
-          'fc',
-          layers.FCLayer.Params().Set(
-              name='fc',
-              input_dim=np.prod(shape[1:]),
-              output_dim=p.softmax.input_dim))
-      self.CreateChild('softmax', p.softmax)
+    # FC layer to project down to p.softmax.input_dim.
+    self.CreateChild(
+        'fc',
+        layers.FCLayer.Params().Set(
+            name='fc',
+            input_dim=np.prod(shape[1:]),
+            output_dim=p.softmax.input_dim))
+    self.CreateChild('softmax', p.softmax)
 
   def FPropTower(self, theta, input_batch):
     p = self.params
@@ -212,7 +222,7 @@ class ModelV2(BaseClassifier):
 
   @classmethod
   def Params(cls):
-    p = super(ModelV2, cls).Params()
+    p = super().Params()
     p.Define('extract', None, 'Param for the layer to extract image features.')
     p.Define('label_smoothing', 0., 'Smooth the labels towards 1/num_classes.')
     p.Define('compute_accuracy_for_training', False,
@@ -220,13 +230,12 @@ class ModelV2(BaseClassifier):
     return p
 
   def __init__(self, params):
-    super(ModelV2, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.name
 
-    with tf.variable_scope(p.name):
-      self.CreateChild('extract', p.extract)
-      self.CreateChild('softmax', p.softmax)
+    self.CreateChild('extract', p.extract)
+    self.CreateChild('softmax', p.softmax)
 
   def ComputePredictions(self, theta, input_batch):
     # Forward through layers.
@@ -313,3 +322,14 @@ class ModelV2(BaseClassifier):
           'prediction': tf.argmax(logits, name='prediction'),
       }
       return fetches, feeds
+
+  def DecodeWithTheta(self, theta, input_batch):
+    """Constructs the decode graph for decoding with theta."""
+    predictions = self.ComputePredictions(theta, input_batch)
+    labels = tf.cast(input_batch.label, tf.int64)
+    ret = py_utils.NestedMap()
+    ret.correct_top1 = tf.nn.in_top_k(
+        targets=labels, predictions=predictions.logits, k=1)
+    ret.correct_top5 = tf.nn.in_top_k(
+        targets=labels, predictions=predictions.logits, k=5)
+    return ret

@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,15 +14,9 @@
 # limitations under the License.
 """Step APIs for RNN layers."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
-from lingvo import compat as tf
 from lingvo.core import py_utils
 from lingvo.core import rnn_cell
 from lingvo.core import step
-from six.moves import range
 
 
 class RnnStep(step.Step):
@@ -30,16 +24,15 @@ class RnnStep(step.Step):
 
   @classmethod
   def Params(cls):
-    p = super(RnnStep, cls).Params()
+    p = super().Params()
     p.Define('cell', rnn_cell.LSTMCellSimple.Params(),
              'Params for the RNN cell.')
     return p
 
   def __init__(self, params):
-    super(RnnStep, self).__init__(params)
+    super().__init__(params)
     p = params
-    with tf.variable_scope(p.name):
-      self.CreateChild('cell', p.cell)
+    self.CreateChild('cell', p.cell)
 
   def PrepareExternalInputs(self, theta, external_inputs):
     """Does not modify the external_inputs parameter.
@@ -123,7 +116,7 @@ class RnnStackStep(step.Step):
   @classmethod
   def Params(cls):
     """Constructs Params for an RnnStackStep."""
-    p = super(RnnStackStep, cls).Params()
+    p = super().Params()
     p.Define(
         'rnn_cell_tpl', rnn_cell.LSTMCellSimple.Params(),
         'RNNCell params template. '
@@ -161,7 +154,7 @@ class RnnStackStep(step.Step):
     return p
 
   def __init__(self, params):
-    super(RnnStackStep, self).__init__(params)
+    super().__init__(params)
     p = params
     sub = []
 
@@ -186,7 +179,7 @@ class RnnStackStep(step.Step):
     input_nodes = p.step_input_dim
     for i in range(p.rnn_layers):
       step_i = RnnStep.Params()
-      step_i.name = 'rnn_%d' % (i)
+      step_i.name = 'rnn_%d' % i
       step_i.cell = rnn_cell_tpls[i].Copy()
       step_i.cell.num_input_nodes = input_nodes + extra_dim
       step_i.cell.inputs_arity = arity
@@ -205,6 +198,12 @@ class RnnStackStep(step.Step):
     stack_params.residual_start = p.residual_start
     stack_params.residual_stride = p.residual_stride
     self.CreateChild('stack', stack_params)
+
+  def _CreateChildrenVariables(self):
+    # Backwards compatibility: manually call child.InstantiateVariables()
+    # outside of tf.variable_scope(p.name).
+    self.stack.InstantiateVariables()
+    super()._CreateChildrenVariables()
 
   def PrepareExternalInputs(self, theta, external_inputs):
     """Delegates external inputs preparation to sub-layers.

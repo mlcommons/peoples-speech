@@ -1,5 +1,4 @@
-# Lint as: python2, python3
-# -*- coding: utf-8 -*-
+# Lint as: python3
 # Lint as: python2, python3
 # Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 #
@@ -16,9 +15,6 @@
 # limitations under the License.
 # ==============================================================================
 """Programs for interleaving execution on TPU."""
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import multiprocessing.dummy
 import os
@@ -33,9 +29,6 @@ from lingvo.core import metrics
 from lingvo.core import ml_perf_log as mlp_log
 from lingvo.core import py_utils
 from lingvo.core import summary_utils
-import six
-from six.moves import range
-from six.moves import zip
 
 # pylint:disable=g-direct-tensorflow-import
 from tensorflow.core.protobuf.tpu import compilation_result_pb2 as tpu_compilation_result
@@ -46,7 +39,7 @@ from tensorflow.python.tpu.ops import tpu_ops
 # pylint:enable=g-direct-tensorflow-import
 
 
-class BaseProgram(object):
+class BaseProgram:
   """A Program associated with a Task.
 
   This is inspired by the "program" multi-tenancy that TPUs
@@ -77,15 +70,17 @@ class BaseProgram(object):
     p.Define('task_name', None,
              'If multi-task, what the high-level task name is')
     p.Define('num_threads', 1, 'Number of threads in multiprocessing pool.')
+    p.Define('spmd', False, 'Whether program is running under SPMD mode.')
     return p
 
-  def __init__(self, params):
+  def __init__(self, params, shared_model=None):
     self.params = params.Copy()
     p = self.params
     self._task_params = p.task
     self._logdir = p.logdir
     self._task_name = p.task_name
     self._program_name = ''
+    self._shared_model = shared_model
 
     # Program dirs are where the summaries are written to.
     if p.task_name:
@@ -94,7 +89,8 @@ class BaseProgram(object):
     else:
       program_dir_name = p.name + '_' + p.dataset_name.lower()
     self._program_dir = os.path.join(self._logdir, program_dir_name)
-    self._summary_writer = tf.summary.FileWriter(self._program_dir)
+    # Initialized on use; access via self._summary_writer property only.
+    self._summary_writer_obj = None
 
     tf.io.gfile.makedirs(self._logdir)
     # Just a standard spot that all programs may restore from.
@@ -110,6 +106,15 @@ class BaseProgram(object):
 
     self._compile_op = None
     self._status_msg_fn = None
+
+  @property
+  def _summary_writer(self):
+    """Returns the FileWriter object to use for summaries."""
+    # Initialize on first use, so that subclasses can override the
+    # implementation without creating a default FileWriter in the constructor.
+    if self._summary_writer_obj is None:
+      self._summary_writer_obj = tf.summary.FileWriter(self._program_dir)
+    return self._summary_writer_obj
 
   def _SummarizeValue(self, steps, tag, value):
     self._summary_writer.add_summary(
@@ -193,25 +198,29 @@ class BaseProgram(object):
   def RestoreIfNeeded(self, sess):
     self._checkpointer.RestoreIfNeeded(sess)
 
-  def SkipCreateChild(self, params):
-    if issubclass(params.cls, base_model.MultiTaskSubModel):
-      for _, sub_params in params.model_params.input.IterParams():
-        if 'skip_create_child' not in params:
-          sub_params.Define('skip_create_child', True, '')
-    params.input.Define('skip_create_child', True, '')
+  def _InstantiateTaskModel(self, task_params):
+    """Instantiates a model object for a particular task.
+
+    MultiTaskModels can accept a shared_model parameter, but SingleTaskModels
+    cannot, so we handle them separately here.
+
+    Args:
+      task_params: An params instance that constructs either a SingleTaskModel
+        or a MultiTaskSubModel.
+
+    Returns:
+      An instantiated object based on task_params.
+    """
+    if issubclass(task_params.cls, base_model.MultiTaskSubModel):
+      return task_params.Instantiate(shared_model=self._shared_model)
+    return task_params.Instantiate()
 
 
 class TrainProgram(BaseProgram):
   """TrainProgram trains a single task and handles checkpoints."""
 
-  @classmethod
-  def Params(cls):
-    """Parameters for TrainProgram."""
-    p = super(TrainProgram, cls).Params()
-    return p
-
-  def __init__(self, params):
-    super(TrainProgram, self).__init__(params)
+  def __init__(self, params, shared_model=None):
+    super().__init__(params, shared_model=shared_model)
     self._step_rate_tracker = summary_utils.StepRateTracker()
     self._program_name = 'TrainProgram'
 
@@ -219,7 +228,9 @@ class TrainProgram(BaseProgram):
     if not per_example_tensors:
       return tf.no_op()
     per_example_tensors = py_utils.NestedMap(per_example_tensors)
-    return tpu_ops.outfeed_enqueue_tuple(per_example_tensors.Flatten())
+    device = tpu.core(0) if self.spmd else ''
+    with tf.device(device):
+      return tpu_ops.outfeed_enqueue_tuple(per_example_tensors.Flatten())
 
   def _OutfeedDequeueLoop(self, per_example_tensors, num_loops, num_devices):
     """Process all per-example tensor outfeed data for a TPU sess.run.
@@ -260,7 +271,9 @@ class TrainProgram(BaseProgram):
       device_assignment = py_utils.GetTpuDeviceAssignment()
       assert device_assignment
       for replica in range(device_assignment.num_replicas):
-        for core in range(device_assignment.num_cores_per_replica):
+        num_cores_per_replica = 1 if self.spmd else (
+            device_assignment.num_cores_per_replica)
+        for core in range(num_cores_per_replica):
           with tf.device(device_assignment.host_device(replica, core)):
             outfeed_devices.append(
                 tpu_ops.outfeed_dequeue_tuple(
@@ -298,29 +311,32 @@ class TrainProgram(BaseProgram):
 
   def BuildTpuSubgraph(self):
     tf.logging.info('TrainProgram BuildTpuSubGraph')
+    self.spmd = (
+        self.params.spmd or
+        self._task_params.input.use_partitioned_infeed_queue)
 
-    with py_utils.OpportunisticVariableReuseScope(True):
-      self._eval_metrics = metrics.TpuEvalMetrics()
-      data_parallelism = self.data_parallelism
+    self._eval_metrics = metrics.TpuEvalMetrics()
+    data_parallelism = self.data_parallelism
 
-      # Instantiate input generator first.
-      self._input = self._task_params.input.Instantiate()
-      self._input.CreateTpuEnqueueOps()
-      self.SkipCreateChild(self._task_params)
+    with cluster_factory.SetImmediatelyInstantiateVariables(False):
+      self._model = self._InstantiateTaskModel(self._task_params)
+    self._task = self._model.GetTask()
+    self._task.input.InstantiateVariables()
+    self._task.input.CreateTpuEnqueueOps()
 
-      def TpuTrainStep(*args):
-        """Train a shard of a batch on a single TPU core.
+    def TpuTrainStep(*args):
+      """Train a shard of a batch on a single TPU core.
 
-        Args:
-          *args: metrics values from previous steps.
+      Args:
+        *args: metrics values from previous steps.
 
-        Returns:
-          New summed metrics values and a train_op.
-        """
-        self._model = self._task_params.Instantiate()
-        self._task = self._model.GetTask()
-        self._task.AddChild('input', self._input)
-        self._model.ConstructFPropBPropGraph()
+      Returns:
+        New summed metrics values and a train_op.
+      """
+      with tf.name_scope('tpu_train'):
+        with py_utils.OpportunisticVariableReuseScope(True):
+          self._model.InstantiateVariables()
+          self._model.ConstructFPropBPropGraph()
         per_step_eval_metrics = self._eval_metrics.SetMetrics(
             self._task.eval_metrics, args)
         outfeed_op = self._OutfeedEnqueue(self._task.per_example_tensors)
@@ -331,25 +347,49 @@ class TrainProgram(BaseProgram):
             summed_metrics.append(x + y)
         return summed_metrics + [self._task.train_op]
 
-      @tpu_function.on_device_training_loop
-      def TpuTrain():
-        loop_result = tpu_training_loop.repeat(
-            self._steps_per_loop,
-            TpuTrainStep,
-            inputs=self._eval_metrics.initial_values,
-            name='train_loop')
-        # Final metrics are the avg across self._steps_per_loop steps.
-        return self._eval_metrics.FinalizeMetrics(loop_result)
+    @tpu_function.on_device_training_loop
+    def TpuTrain():
+      loop_result = tpu_training_loop.repeat(
+          self._steps_per_loop,
+          TpuTrainStep,
+          inputs=self._eval_metrics.initial_values,
+          name='train_loop')
+      # Final metrics are the avg across self._steps_per_loop steps.
+      return self._eval_metrics.FinalizeMetrics(loop_result)
 
-      self._compile_op, batch_parallel_res = tpu.split_compile_and_shard(
-          TpuTrain,
-          num_shards=data_parallelism,
-          device_assignment=py_utils.GetTpuDeviceAssignment())
-      outfeed_dequeue_op = self._OutfeedDequeueLoop(
-          self._task.per_example_tensors, self._steps_per_loop,
-          self.num_splits_per_client)
-      # Get metric result from a single replica; they are all same here.
-      self.tpu_ops = [[t[0] for t in batch_parallel_res], outfeed_dequeue_op]
+    self._compile_op, batch_parallel_res = tpu.split_compile_and_shard(
+        TpuTrain,
+        num_shards=data_parallelism,
+        device_assignment=py_utils.GetTpuDeviceAssignment())
+    outfeed_dequeue_op = self._OutfeedDequeueLoop(
+        self._task.per_example_tensors, self._steps_per_loop,
+        self.num_splits_per_client)
+
+    # Get metric result from a single replica; they are all same here.
+
+    def _ConstructPostTrainingLoop(train_loop_op, outfeed_dequeue_op):
+      """Returns the op for tpu training with tail cpu computation."""
+      # Adds a tail computation that is run after the tpu_training loop
+      # step finishes. This allows us to run certain computation that
+      # acts on the variable between tpu_train_loop iterations and
+      # amortizing the cost of the operations. Alternative of running
+      # tpu.outside_compilation & using tf.cond is expenseive.
+      with tf.control_dependencies(train_loop_op):
+        self._model.ConstructPostTrainingLoop()
+        with tf.control_dependencies([self._task.post_training_loop_op]):
+          return ([[tf.identity(o) for o in train_loop_op], outfeed_dequeue_op])
+
+    # Get metric result from a single replica; they are all same here.
+    all_tpu_ops = [t[0] for t in batch_parallel_res]
+    self.tpu_ops = (_ConstructPostTrainingLoop(all_tpu_ops, outfeed_dequeue_op))
+    self._model_analysis, self._total_num_params = summary_utils.ModelAnalysis(
+        self._model)
+    try:
+      with tf.io.gfile.GFile(
+          os.path.join(self._program_dir, 'model_analysis.txt'), 'w') as f:
+        f.write(self._model_analysis)
+    except tf.errors.NotFoundError as e:
+      tf.logging.info('Failed to write model analysis %s', e)
 
     return self.tpu_ops
 
@@ -375,8 +415,9 @@ class TrainProgram(BaseProgram):
     self._SummarizeValue(global_step, 'global_step/sec', step_rate)
     self._SummarizeValue(global_step, 'examples/sec', example_rate)
     self._SummarizeValue(global_step, 'total_samples', total_examples)
-
-    for key, (val, _) in sorted(six.iteritems(eval_metrics)):
+    self._SummarizeValue(global_step, 'total_num_params',
+                         self._total_num_params)
+    for key, (val, _) in sorted(eval_metrics.items()):
       self._SummarizeValue(global_step, key, val)
 
     task_global_step = sess.run(self._task.global_step)
@@ -384,6 +425,13 @@ class TrainProgram(BaseProgram):
                                                eval_metrics, outfeeds)
     self._WriteSummaries(
         os.path.basename(self._program_dir), global_step, summaries)
+
+    # Simpler version of _ShouldStop without early stopping.
+    if task_global_step >= self._task_params.train.max_steps:
+      tf.logging.info('ShouldStop: step:%6d params.train.max_steps:%6d',
+                      task_global_step, self._task_params.train.max_steps)
+      return True
+
     return False
 
 
@@ -396,19 +444,20 @@ class EvalProgram(BaseProgram):
   evaluation.
   """
 
-  def __init__(self, params):
-    super(EvalProgram, self).__init__(params)
+  def __init__(self, params, shared_model=None):
+    super().__init__(params, shared_model=shared_model)
     self._program_name = 'EvalProgram'
 
   def BuildTpuSubgraph(self):
     tf.logging.info('EvalProgram BuildTpuSubGraph')
-    with py_utils.OpportunisticVariableReuseScope(True):
+    with cluster_factory.SetEval(True):
       self._eval_metrics = metrics.TpuEvalMetrics()
       data_parallelism = self.data_parallelism
-
-      self._input = self._task_params.input.Instantiate()
-      self._input.CreateTpuEnqueueOps()
-      self.SkipCreateChild(self._task_params)
+      with cluster_factory.SetImmediatelyInstantiateVariables(False):
+        self._model = self._InstantiateTaskModel(self._task_params)
+      self._task = self._model.GetTask()
+      self._task.input.InstantiateVariables()
+      self._task.input.CreateTpuEnqueueOps()
 
       def TpuEvalStep(*args):
         """Eval a shard of a batch on a single TPU core.
@@ -419,12 +468,10 @@ class EvalProgram(BaseProgram):
         Returns:
           Summed eval metrics.
         """
-        with cluster_factory.SetEval(True):
-          self._model = self._task_params.Instantiate()
-          self._task = self._model.GetTask()
-          self._task.AddChild('input', self._input)
-
-          self._model.ConstructFPropGraph()
+        with tf.name_scope('tpu_eval'):
+          with py_utils.OpportunisticVariableReuseScope(True):
+            self._model.InstantiateVariables()
+            self._model.ConstructFPropGraph()
           per_step_eval_metrics = self._eval_metrics.SetMetrics(
               self._task.eval_metrics, args)
           summed_metrics = []
@@ -461,8 +508,9 @@ class EvalProgram(BaseProgram):
     infeed_future.wait()
     values = ary[0]
     self._eval_metrics.PackMetricsValues(values)
-    for key, (val, _) in sorted(six.iteritems(self._eval_metrics.metrics)):
+    for key, (val, _) in sorted(self._eval_metrics.metrics.items()):
       self._SummarizeValue(global_step, key, val)
+    self._summary_writer.flush()
     return False
 
 
@@ -475,30 +523,26 @@ class DecodeProgram(BaseProgram):
   decoder run.
   """
 
-  def __init__(self, params):
-    super(DecodeProgram, self).__init__(params)
+  def __init__(self, params, shared_model=None):
+    super().__init__(params, shared_model=shared_model)
     self._program_name = 'DecodeProgram'
 
-  def BuildTpuSubgraph(self):
-    tf.logging.info('DecodeProgram BuildTpuSubGraph')
-    py_utils.ResetStepSeed()
-
-    # Instantiate input generator first.
-    self._input = self._task_params.input.Instantiate()
-    self._input.CreateTpuEnqueueOps()
-    self.SkipCreateChild(self._task_params)
+  def _CompileDecodeFn(self):
+    """Wrap the DecodeFn with split_compile_and_shard."""
+    with cluster_factory.SetImmediatelyInstantiateVariables(False):
+      self._model = self._InstantiateTaskModel(self._task_params)
+    self._task = self._model.GetTask()
+    self._task.input.InstantiateVariables()
+    self._task.input.CreateTpuEnqueueOps()
 
     def _DecodeFn():
       """Decode call to be compiled for TPU."""
       with py_utils.OpportunisticVariableReuseScope(True):
-        with cluster_factory.SetEval(True):
-          self._model = self._task_params.Instantiate()
-          self._task = self._model.GetTask()
-          self._task.AddChild('input', self._input)
-          input_batch = self._task.input.TpuDequeueBatch()
-          metrics_dict = self._task.Decode(input_batch)
-          self.metrics_nm = py_utils.NestedMap(metrics_dict)
-          return self.metrics_nm.Flatten()
+        self._model.InstantiateVariables()
+        input_batch = self._task.input.TpuDequeueBatch()
+        metrics_dict = self._task.Decode(input_batch)
+      self.metrics_nm = py_utils.NestedMap(metrics_dict)
+      return self.metrics_nm.Flatten()
 
     self._compile_op, batch_parallel_res = tpu.split_compile_and_shard(
         _DecodeFn,
@@ -507,6 +551,12 @@ class DecodeProgram(BaseProgram):
 
     self.metrics = py_utils.NestedMap(self.metrics_nm)
     self.metrics = self.metrics.Pack(batch_parallel_res)
+
+  def BuildTpuSubgraph(self):
+    tf.logging.info('DecodeProgram BuildTpuSubGraph')
+    py_utils.ResetStepSeed()
+    with cluster_factory.SetEval(True):
+      self._CompileDecodeFn()
     return None
 
   def Run(self, sess):
@@ -521,13 +571,13 @@ class DecodeProgram(BaseProgram):
       metrics_values = sess.run(self.metrics)
       decode_out = self._task.PostProcessDecodeOut(metrics_values, dec_metrics)
       tf.logging.info('step: %d %f' %
-                           (i, dec_metrics['num_samples_in_batch'].total_value))
+                      (i, dec_metrics['num_samples_in_batch'].total_value))
       if decode_out:
         buffered_decode_out.extend(decode_out)
     infeed_future.wait()
 
     num_examples_metric = dec_metrics['num_samples_in_batch']
-    summaries = {k: v.Summary(k) for k, v in six.iteritems(dec_metrics)}
+    summaries = {k: v.Summary(k) for k, v in dec_metrics.items()}
     elapsed_secs = time.time() - start_time
     example_rate = num_examples_metric.total_value / elapsed_secs
     summaries['examples/sec'] = tf.Summary(
@@ -551,31 +601,31 @@ class ExperimentalDecodeProgram(DecodeProgram):
 
   @classmethod
   def Params(cls):
-    p = super(ExperimentalDecodeProgram, cls).Params()
+    p = super().Params()
     p.num_threads = 2
     return p
 
-  def BuildTpuSubgraph(self):
-    tf.logging.info('DecodeProgram BuildTpuSubGraph')
-    py_utils.ResetStepSeed()
+  def _CompileDecodeLoop(self):
+    """Wrap the DecodeLoop with split_compile_and_shard."""
     device_assignment = py_utils.GetTpuDeviceAssignment()
-    self.spmd = self._task_params.input.use_partitioned_infeed_queue
-    with py_utils.OpportunisticVariableReuseScope(True):
-      with cluster_factory.SetEval(True):
-        self._model = self._task_params.Instantiate()
-        self._task = self._model.GetTask()
-        self._task.input.CreateTpuEnqueueOps()
+    with cluster_factory.SetImmediatelyInstantiateVariables(False):
+      self._model = self._InstantiateTaskModel(self._task_params)
+    self._task = self._model.GetTask()
+    self._task.input.InstantiateVariables()
+    self._task.input.CreateTpuEnqueueOps()
 
-        def _DecodeStep():
-          """Decode call to be compiled for TPU."""
-          input_batch = self._task.input.TpuDequeueBatch()
-          metrics_dict = self._task.Decode(input_batch)
-          self.metrics_nm = py_utils.NestedMap(metrics_dict)
-          device = tpu.core(0) if self.spmd else ''
-          with tf.device(device):
-            outfeed_enqueue = tpu_ops.outfeed_enqueue_tuple(
-                self.metrics_nm.Flatten())
-            return [outfeed_enqueue]
+    def _DecodeStep():
+      """Decode call to be compiled for TPU."""
+      with py_utils.OpportunisticVariableReuseScope(True):
+        self._model.InstantiateVariables()
+        input_batch = self._task.input.TpuDequeueBatch()
+        metrics_dict = self._task.Decode(input_batch)
+      self.metrics_nm = py_utils.NestedMap(metrics_dict)
+      device = tpu.core(0) if self.spmd else ''
+      with tf.device(device):
+        outfeed_enqueue = tpu_ops.outfeed_enqueue_tuple(
+            self.metrics_nm.Flatten())
+        return [outfeed_enqueue]
 
     @tpu_function.on_device_training_loop
     def DecodeLoopFn():
@@ -586,10 +636,20 @@ class ExperimentalDecodeProgram(DecodeProgram):
         DecodeLoopFn,
         num_shards=self.data_parallelism,
         device_assignment=device_assignment)
+
     # Get a list of outfeed ops.
     self.metrics = self._OutfeedDequeue()
     # Pack the list of outfeed ops with structure in self.metrics_nm.
     self.metrics = tf.nest.pack_sequence_as(self.metrics_nm, self.metrics)
+
+  def BuildTpuSubgraph(self):
+    tf.logging.info('DecodeProgram BuildTpuSubGraph')
+    py_utils.ResetStepSeed()
+    self.spmd = (
+        self.params.spmd or
+        self._task_params.input.use_partitioned_infeed_queue)
+    with cluster_factory.SetEval(True):
+      self._CompileDecodeLoop()
     return
 
   def _OutfeedDequeue(self):
@@ -629,7 +689,7 @@ class ExperimentalDecodeProgram(DecodeProgram):
       self._task.PostProcessDecodeOut(metrics_values, dec_metrics)
     decode_future.wait()
     infeed_future.wait()
-    summaries = {k: v.Summary(k) for k, v in six.iteritems(dec_metrics)}
+    summaries = {k: v.Summary(k) for k, v in dec_metrics.items()}
     elapsed_secs = time.time() - start_time
     num_examples_metric = dec_metrics['num_samples_in_batch']
     example_rate = num_examples_metric.total_value / elapsed_secs
@@ -647,7 +707,7 @@ class MLPerfTrainDecodeProgram(BaseProgram):
   @classmethod
   def Params(cls):
     """"Defaults parameters for Programs."""
-    p = super(MLPerfTrainDecodeProgram, cls).Params()
+    p = super().Params()
     p.Define('train_task', None, 'Underlying task')
     p.Define('decode_task', None, 'Underlying task')
     p.Define('train_dataset_name', None, '')
@@ -657,8 +717,8 @@ class MLPerfTrainDecodeProgram(BaseProgram):
     p.Define('ml_perf', None, 'MLPerf config')
     return p
 
-  def __init__(self, params):
-    super(MLPerfTrainDecodeProgram, self).__init__(params)
+  def __init__(self, params, shared_model=None):
+    super().__init__(params, shared_model=shared_model)
     p = self.params
     if p.ml_perf is not None and p.ml_perf.benchmark_name is not None:
       self._ml_perf_log = True
@@ -689,53 +749,53 @@ class MLPerfTrainDecodeProgram(BaseProgram):
       mlp_log.mlperf_print('opt_learning_rate_warmup_steps',
                            self._ml_perf.warmup_steps)
 
-    with py_utils.OpportunisticVariableReuseScope(True):
-      self._eval_metrics = metrics.TpuEvalMetrics()
-      data_parallelism = self.data_parallelism
-      self.SkipCreateChild(self._train_task_params)
-      self._train_input = self._train_task_params.input.Instantiate()
-      self._train_input.CreateTpuEnqueueOps()
+    self._eval_metrics = metrics.TpuEvalMetrics()
+    data_parallelism = self.data_parallelism
+    with cluster_factory.SetImmediatelyInstantiateVariables(False):
+      self._train_model = self._train_task_params.Instantiate()
+    self._train_task = self._train_model.GetTask()
+    self._train_task.input.InstantiateVariables()
+    self._train_task.input.CreateTpuEnqueueOps()
+    self._model = self._train_model
 
-      def TpuTrainStep():
-        """Train a shard of a batch on a single TPU core.
+    def TpuTrainStep():
+      """Train a shard of a batch on a single TPU core.
 
-        Do not calculate loss metrics.
+      Do not calculate loss metrics.
 
-        Returns:
-         [train_op].
-        """
-        self._train_model = self._train_task_params.Instantiate()
-        self._train_task = self._train_model.GetTask()
-        self._train_task.AddChild('input', self._train_input)
-        self._model = self._train_model
+      Returns:
+       [train_op].
+      """
+      with py_utils.OpportunisticVariableReuseScope(True):
+        self._train_model.InstantiateVariables()
         self._train_model.ConstructFPropBPropGraph()
-        return [self._train_task.train_op]
+      return [self._train_task.train_op]
 
-      def TpuTrain():
-        loop_result = tpu_training_loop.repeat(
-            self._train_steps_per_loop,
-            TpuTrainStep,
-            inputs=[],
-            name='train_loop')
-        return loop_result
+    def TpuTrain():
+      loop_result = tpu_training_loop.repeat(
+          self._train_steps_per_loop,
+          TpuTrainStep,
+          inputs=[],
+          name='train_loop')
+      return loop_result
 
     py_utils.ResetStepSeed()
 
-    self._decode_input = self._decode_task_params.input.Instantiate()
-    self._decode_input.CreateTpuEnqueueOps()
-    self.SkipCreateChild(self._decode_task_params)
+    with cluster_factory.SetImmediatelyInstantiateVariables(False):
+      self._decode_model = self._InstantiateTaskModel(self._decode_task_params)
+    self._decode_task = self._decode_model.GetTask()
+    self._decode_task.input.InstantiateVariables()
+    self._decode_task.input.CreateTpuEnqueueOps()
 
     def _DecodeFn():
       """Decode call to be compiled for TPU."""
       with py_utils.OpportunisticVariableReuseScope(True):
         with cluster_factory.SetEval(True):
-          self._decode_model = self._decode_task_params.Instantiate()
-          self._decode_task = self._decode_model.GetTask()
-          self._decode_task.AddChild('input', self._decode_input)
+          self._decode_model.InstantiateVariables()
           input_batch = self._decode_task.input.TpuDequeueBatch()
           metrics_dict = self._decode_task.Decode(input_batch)
-          self.metrics_nm = py_utils.NestedMap(metrics_dict)
-          return self.metrics_nm.Flatten()
+      self.metrics_nm = py_utils.NestedMap(metrics_dict)
+      return self.metrics_nm.Flatten()
 
     @tpu_function.on_device_training_loop
     def TrainAndDecode():
@@ -835,7 +895,7 @@ class MLPerfTrainDecodeProgram(BaseProgram):
     return False
 
 
-class MultiTaskProgramSchedule(object):
+class MultiTaskProgramSchedule:
   """Container for ProgramSchedules for a MultiTask model."""
 
   @classmethod
@@ -846,7 +906,7 @@ class MultiTaskProgramSchedule(object):
     return p
 
 
-class SimpleProgramSchedule(object):
+class SimpleProgramSchedule:
   """A schedule of programs associated with a single task.
 
   Simple sequence is:
@@ -873,9 +933,10 @@ class SimpleProgramSchedule(object):
     mlp.Define('benchmark_name', None, 'Benchmark name for compliance log.')
     return p
 
-  def __init__(self, params):
+  def __init__(self, params, shared_model=None):
     self.params = params.Copy()
     p = self.params
+    self._shared_model = shared_model
 
     # Propagate run-time parameters to programs:
     p.train_program.logdir = p.logdir
@@ -893,9 +954,10 @@ class SimpleProgramSchedule(object):
       eval_program_params.num_splits_per_client = p.num_splits_per_client
 
     self.eval_programs = []
-    self.train_program = p.train_program.Instantiate()
+    self.train_program = p.train_program.Instantiate(shared_model=shared_model)
     for eval_program in p.eval_programs:
-      self.eval_programs.append(eval_program.Instantiate())
+      self.eval_programs.append(
+          eval_program.Instantiate(shared_model=shared_model))
 
     self._programs = []
     self._programs.append(self.train_program)
@@ -907,7 +969,9 @@ class SimpleProgramSchedule(object):
   def Run(self, sess):
     p = self.params
     for _ in range(p.train_executions_per_eval):
-      self.train_program.Run(sess)
+      done = self.train_program.Run(sess)
+      if done:
+        break
     for eval_program in self.eval_programs:
       eval_program.Run(sess)
     return False
@@ -918,7 +982,9 @@ def SimpleProgramScheduleForTask(train_dataset_name,
                                  eval_dataset_names,
                                  eval_steps_per_loop,
                                  decode_steps_per_loop,
-                                 experimental_decoder=False):
+                                 experimental_decoder=False,
+                                 train_program_cls=TrainProgram,
+                                 eval_program_cls=EvalProgram):
   """Convenient helper method for common case.
 
   Args:
@@ -929,13 +995,17 @@ def SimpleProgramScheduleForTask(train_dataset_name,
     decode_steps_per_loop: Number of steps to execute the decode program.
     experimental_decoder: bool. Whether to use experimental deocder which is
       placed in a tpu loop.
+    train_program_cls: The class to use for training programs.  Defaults
+      to TrainProgram.
+    eval_program_cls: The class to use for eval programs.  Defaults to
+      EvalProgram.
 
   Returns:
     A populated SimpleProgramSchedule.Params()
   """
 
   program_schedule_params = SimpleProgramSchedule.Params()
-  train_program_params = TrainProgram.Params()
+  train_program_params = train_program_cls.Params()
   train_program_params.name = 'train'
   train_program_params.steps_per_loop = train_steps_per_loop
   train_program_params.dataset_name = train_dataset_name
@@ -946,7 +1016,7 @@ def SimpleProgramScheduleForTask(train_dataset_name,
   for dataset_name in eval_dataset_names:
     program_schedule_params.dataset_names.append(dataset_name)
     if eval_steps_per_loop > 0:
-      eval_program_params = EvalProgram.Params()
+      eval_program_params = eval_program_cls.Params()
       eval_program_params.name = 'eval_tpu'
       # TODO(blee): This should be derived from the Dataset size.
       eval_program_params.steps_per_loop = eval_steps_per_loop
@@ -966,7 +1036,7 @@ def SimpleProgramScheduleForTask(train_dataset_name,
   return program_schedule_params
 
 
-class MLPerfProgramSchedule(object):
+class MLPerfProgramSchedule:
   """Program schedule for ML Perf benchmark."""
 
   @classmethod
@@ -999,9 +1069,10 @@ class MLPerfProgramSchedule(object):
 
     return p
 
-  def __init__(self, params):
+  def __init__(self, params, shared_model=None):
     self.params = params.Copy()
     p = self.params
+    self._shared_model = shared_model
 
     # Propagate run-time parameters to programs:
     p.train_program.logdir = p.logdir
@@ -1021,7 +1092,7 @@ class MLPerfProgramSchedule(object):
     p.train_program.task_name = p.task_name
     p.train_program.ml_perf = p.ml_perf.Copy()
 
-    self.train_program = p.train_program.Instantiate()
+    self.train_program = p.train_program.Instantiate(shared_model=shared_model)
     self._programs = []
     self._programs.append(self.train_program)
 

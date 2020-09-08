@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,14 +21,9 @@
     https://arxiv.org/abs/1901.10430
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 from lingvo.core import base_layer
 from lingvo.core import batch_major_attention
 from lingvo.core import py_utils
-from six.moves import range
 
 MultiHeadedSelfAttention = batch_major_attention.MultiHeadedAttention
 
@@ -96,15 +91,11 @@ class StackedTransformerEncoderLayers(base_layer.BaseLayer):
     # Make this class a sub-class of params.base_cls
     self.__class__ = type(self.__class__.__name__, (params.base_cls, object),
                           dict(self.__class__.__dict__))
-    # pylint: disable=bad-super-call
-    super(self.__class__, self).__init__(params)
-    # pylint: enable=bad-super-call
+    super(self.__class__, self).__init__(params)  # pylint: disable=bad-super-call
 
   def FProp(self, theta, vec, paddings, segment_mask=None):
-    # pylint: disable=bad-super-call
-    outputs = super(self.__class__, self).FProp(
+    outputs = super(self.__class__, self).FProp(  # pylint: disable=bad-super-call
         theta,
         py_utils.NestedMap(
             vec=vec, paddings=paddings, segment_mask=segment_mask))
-    # pylint: enable=bad-super-call
     return outputs.vec, outputs.paddings

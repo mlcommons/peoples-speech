@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,10 +15,6 @@
 # ==============================================================================
 """Base class for all jobs."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import os
 import time
 import traceback
@@ -30,7 +26,7 @@ from lingvo.core import early_stop
 from lingvo.core import py_utils
 
 
-class BaseRunner(object):
+class BaseRunner:
   """Base class for all jobs."""
 
   def __init__(self,
@@ -57,6 +53,10 @@ class BaseRunner(object):
     tf.logging.info('=' * 60)
     for line in self.params.ToText().split('\n'):
       tf.logging.info('%s', line)
+    tf.logging.info('=' * 60)
+    tf.logging.info('FLAGS')
+    for attribute in dir(tf.flags.FLAGS):
+      tf.logging.info("%s=%s", attribute,  getattr(tf.flags.FLAGS, attribute))
     tf.logging.info('=' * 60)
 
     self._logdir = logdir
@@ -103,7 +103,7 @@ class BaseRunner(object):
     if self._trial.Name():
       message = 'Trial:{} {}'.format(self._trial.Name(), message)
     if retrying:
-      message = '<b>Retrying as expected</b> ' + str(message)
+      message = f'Job {self._job_name}: <b>Retrying as expected</b>\n{message}'
     return message
 
   def _SetStatusMessage(self, message, retrying=False):
@@ -142,25 +142,31 @@ class BaseRunner(object):
                   tag=filename, tensor=tf.make_tensor_proto([text]))
           ]))
 
-  @py_utils.Retry(retry_value=(tf.errors.FailedPreconditionError,))
   def _WaitUntilInit(self, sess, start_up_delay_steps=None):
     """Wait until the model is ready."""
-    try:
-      global_step = sess.run(py_utils.GetGlobalStep())
-    except tf.errors.FailedPreconditionError as e:
-      tf.logging.info('%s: Probably the expected race on global_step: %s',
-                           self._job_name, e)
-      raise
-    msg = 'step:%6d' % global_step
-    self._SetStatusMessage(msg)
-    if start_up_delay_steps:
-      if global_step < start_up_delay_steps:
-        msg = 'global step (%d) has not reached start up delay steps (%d)' % (
-            global_step, self._start_up_delay_steps)
-        tf.logging.info('%s: %s', self._job_name, msg)
-        raise tf.errors.FailedPreconditionError(
-            node_def=None, op=None, message=msg)
-    return global_step
+    # Wait a fix amount of time at start.
+    time.sleep(30)
+
+    @py_utils.Retry(retry_value=(tf.errors.FailedPreconditionError,))
+    def RetryLoop():
+      try:
+        global_step = sess.run(py_utils.GetGlobalStep())
+      except tf.errors.FailedPreconditionError as e:
+        tf.logging.info('%s: Probably the expected race on global_step: %s',
+                        self._job_name, e)
+        raise
+      msg = 'step:%6d' % global_step
+      self._SetStatusMessage(msg)
+      if start_up_delay_steps:
+        if global_step < start_up_delay_steps:
+          msg = 'global step (%d) has not reached start up delay steps (%d)' % (
+              global_step, self._start_up_delay_steps)
+          tf.logging.info('%s: %s', self._job_name, msg)
+          raise tf.errors.FailedPreconditionError(
+              node_def=None, op=None, message=msg)
+      return global_step
+
+    return RetryLoop()
 
   @py_utils.Retry(
       initial_delay_sec=1, delay_growth_factor=1.5, max_delay_sec=300)
@@ -179,7 +185,7 @@ class BaseRunner(object):
       raise RuntimeError(msg)
     return path
 
-  @py_utils.Retry()
+  @py_utils.Retry(max_retries=0)
   def _RunLoop(self, job_name, loop_func, loop_args=()):
     """Runs `loop_func`, retrying on expected errors.
 
@@ -213,27 +219,34 @@ class BaseRunner(object):
               'twice' in str(e)):
             retry = False
             tf.logging.info('%s done (infeasible error).', job_name)
-
-      elif isinstance(
-          e, py_utils.transient_tf_errors +
-          (tf.errors.OutOfRangeError, tf.errors.DataLossError,
-           tf.errors.InvalidArgumentError, tf.errors.CancelledError)):
-        # Retry on these errors.
-        #   FailedPreconditionError: variables are not initialized.
+      elif isinstance(e, tf.errors.OutOfRangeError):
         #   OutOfRangeError: Test/dev datasets are exhausted.
-        #   DataLossError: Race condition between evaler and trainer when saving
-        #       or removing checkpoints.
-        #   CancelledError: Node was closed (on TPU).
+        retry = self._cluster.do_eval
+      elif isinstance(e, tf.errors.InvalidArgumentError):
         #   InvalidArgumentError: variables were not initialized. Comes from
         #       ResourceVariableOp.
         retry = True
         # Do not retry within Vizier study when NaNs cause InvalidArgumentError.
-        if self._InVizierStudy() and isinstance(e,
-                                                tf.errors.InvalidArgumentError):
+        if self._InVizierStudy():
           if 'Tensor had NaN values' in str(e):
             retry = False
             tf.logging.info('%s done (infeasible result due to NaN values).',
                             job_name)
+      elif isinstance(
+          e, py_utils.transient_tf_errors +
+          (tf.errors.DataLossError, tf.errors.CancelledError)):
+        # Retry on these errors.
+        #   FailedPreconditionError: variables are not initialized.
+        #   DataLossError: Race condition between evaler and trainer when saving
+        #       or removing checkpoints.
+        #   CancelledError: Node was closed (on TPU).
+        if isinstance(e, tf.errors.FailedPreconditionError):
+          # GALV: This error frequently was due to global_step not
+          # being initialized, which as far as I can tell is a hard
+          # error, so I disabling retrying in this case.
+          retry = False
+        else:
+          retry = True
       else:
         retry = False
 
@@ -257,9 +270,11 @@ class BaseRunner(object):
         self._SetStatusMessage('%s exception: %s\n' % (job_name, e))
 
         # Prints the error message line by line to avoid message cropping.
-        msgv = traceback.format_exc().split('\n')
-        for msg in msgv:
-          tf.logging.error(msg)
+        # GALV: I don't know what "message cropping" means, but this causes
+        # the stack trace to be spit out twice, which I consider useless
+        # msgv = traceback.format_exc().split('\n')
+        # for msg in msgv:
+        #   tf.logging.error(msg)
 
         # Check if we are potentially running within an experiment. If so,
         # the worker should continue to the next trial instead of terminating
@@ -276,6 +291,9 @@ class BaseRunner(object):
         # Because tf.logging.error() may return before the flush is complete,
         # we need an extra sleep before exit.
         time.sleep(15)
+        # GALV: print() statements will not be flushed by os._exit, so
+        # I flush sys.stdouthere!
+        import sys; sys.stdout.flush()
         os._exit(1)  # pylint: disable=protected-access
 
   def _DequeueThreadComplete(self):

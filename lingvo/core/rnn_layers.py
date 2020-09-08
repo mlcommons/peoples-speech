@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,10 +14,6 @@
 # limitations under the License.
 """Lingvo RNN layers."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import math
 import lingvo.compat as tf
 from lingvo.core import attention
@@ -27,8 +23,6 @@ from lingvo.core import py_utils
 from lingvo.core import quant_utils
 from lingvo.core import recurrent
 from lingvo.core import rnn_cell
-from six.moves import range
-from six.moves import zip
 
 
 def GeneratePackedInputResetMask(segment_id, is_reverse=False):
@@ -62,13 +56,8 @@ def GeneratePackedInputResetMask(segment_id, is_reverse=False):
 class IdentitySeqLayer(base_layer.BaseLayer):
   """A no-op sequence layer."""
 
-  @classmethod
-  def Params(cls):
-    p = super(IdentitySeqLayer, cls).Params()
-    return p
-
   def __init__(self, params):
-    super(IdentitySeqLayer, self).__init__(params)
+    super().__init__(params)
 
   def zero_state(self, theta, batch_size):
     return py_utils.NestedMap()
@@ -82,7 +71,7 @@ class RNN(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(RNN, cls).Params()
+    p = super().Params()
     p.Define('cell', rnn_cell.LSTMCellSimple.Params(),
              'Configs for the RNN cell.')
     p.Define(
@@ -96,13 +85,19 @@ class RNN(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(RNN, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert not p.packed_input, ('Packed inputs are currently not supported by '
                                 'Static RNN')
     p.cell.reset_cell_state = p.packed_input
     assert p.sequence_length >= 0
     self.CreateChild('cell', p.cell)
+
+  def _CreateChildrenVariables(self):
+    # Backwards compatibility: manually call child.InstantiateVariables()
+    # outside of tf.variable_scope(p.name).
+    self.cell.InstantiateVariables()
+    super()._CreateChildrenVariables()
 
   def zero_state(self, theta, batch_size):
     return self.cell.zero_state(theta.cell, batch_size)
@@ -164,7 +159,7 @@ class StackedRNNBase(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(StackedRNNBase, cls).Params()
+    p = super().Params()
     p.Define('num_layers', 1, 'The number of RNN layers.')
     p.Define(
         'num_input_nodes', -1,
@@ -185,7 +180,7 @@ class StackedRNNBase(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(StackedRNNBase, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert not p.packed_input, ('Packed inputs are currently not supported by '
                                 'Static RNN Base')
@@ -210,12 +205,12 @@ class StackedFRNNLayerByLayer(StackedRNNBase, quant_utils.QuantizableLayer):
 
   @classmethod
   def Params(cls):
-    p = super(StackedFRNNLayerByLayer, cls).Params()
+    p = super().Params()
     p.Define('rnn_tpl', FRNN.Params(), 'Rnn cell default params.')
     return p
 
   def __init__(self, params):
-    super(StackedFRNNLayerByLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
 
     rnn_params = []
@@ -242,7 +237,18 @@ class StackedFRNNLayerByLayer(StackedRNNBase, quant_utils.QuantizableLayer):
 
     self.CreateChildren('rnn', rnn_params)
     self.CreateChild('dropout', p.dropout)
+
+  def _CreateLayerVariables(self):
+    super()._CreateLayerVariables()
     self.TrackQTensor('residual')
+
+  def _CreateChildrenVariables(self):
+    # Backwards compatibility: manually call child.InstantiateVariables()
+    # outside of tf.variable_scope(p.name).
+    for rnn in self.rnn:
+      rnn.InstantiateVariables()
+    self.dropout.InstantiateVariables()
+    super()._CreateChildrenVariables()
 
   def zero_state(self, theta, batch_size):
     p = self.params
@@ -293,12 +299,12 @@ class StackedBiFRNNLayerByLayer(StackedRNNBase, quant_utils.QuantizableLayer):
 
   @classmethod
   def Params(cls):
-    p = super(StackedBiFRNNLayerByLayer, cls).Params()
+    p = super().Params()
     p.Define('frnn_tpl', BidirectionalFRNN.Params(), 'Rnn cell default params.')
     return p
 
   def __init__(self, params):
-    super(StackedBiFRNNLayerByLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
 
     rnn_params = []
@@ -321,7 +327,18 @@ class StackedBiFRNNLayerByLayer(StackedRNNBase, quant_utils.QuantizableLayer):
 
     self.CreateChildren('rnn', rnn_params)
     self.CreateChild('dropout', p.dropout)
+
+  def _CreateLayerVariables(self):
+    super()._CreateLayerVariables()
     self.TrackQTensor('residual')
+
+  def _CreateChildrenVariables(self):
+    # Backwards compatibility: manually call child.InstantiateVariables()
+    # outside of tf.variable_scope(p.name).
+    for rnn in self.rnn:
+      rnn.InstantiateVariables()
+    self.dropout.InstantiateVariables()
+    super()._CreateChildrenVariables()
 
   def FProp(self, theta, inputs, paddings):
     """Compute the forward pass.
@@ -356,7 +373,7 @@ class FRNN(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(FRNN, cls).Params()
+    p = super().Params()
     p.Define('cell', rnn_cell.LSTMCellSimple.Params(),
              'Configs for the RNN cell.')
     p.Define('reverse', False,
@@ -365,10 +382,16 @@ class FRNN(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(FRNN, self).__init__(params)
+    super().__init__(params)
     p = self.params
     p.cell.reset_cell_state = p.packed_input
     self.CreateChild('cell', p.cell)
+
+  def _CreateChildrenVariables(self):
+    # Backwards compatibility: manually call child.InstantiateVariables()
+    # outside of tf.variable_scope(p.name).
+    self.cell.InstantiateVariables()
+    super()._CreateChildrenVariables()
 
   @property
   def rnn_cell(self):
@@ -401,7 +424,6 @@ class FRNN(base_layer.BaseLayer):
     rcell = self.cell
     assert isinstance(rcell, (rnn_cell.RNNCell))
 
-    @tf.Defun()
     def FlipUpDown(x):
       # Reverse the first dimension (time)
       return tf.reverse(x, [0])
@@ -452,7 +474,7 @@ class BidirectionalFRNN(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(BidirectionalFRNN, cls).Params()
+    p = super().Params()
     p.Define('fwd', rnn_cell.LSTMCellSimple.Params(),
              'Configs for the forward RNN cell.')
     p.Define('bak', rnn_cell.LSTMCellSimple.Params(),
@@ -462,8 +484,26 @@ class BidirectionalFRNN(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(BidirectionalFRNN, self).__init__(params)
+    super().__init__(params)
     p = params
+
+    params_forward = p.rnn.Copy()
+    params_forward.name = 'fwd'
+    params_forward.dtype = p.dtype
+    params_forward.reverse = False
+    params_forward.packed_input = p.packed_input
+    params_forward.cell = p.fwd.Copy()
+    self.CreateChild('fwd_rnn', params_forward)
+
+    params_backward = p.rnn.Copy()
+    params_backward.name = 'bak'
+    params_backward.dtype = p.dtype
+    params_backward.reverse = True
+    params_backward.packed_input = p.packed_input
+    params_backward.cell = p.bak.Copy()
+    self.CreateChild('bak_rnn', params_backward)
+
+  def _CreateChildrenVariables(self):
     if py_utils.use_tpu() and self.cluster.num_devices_per_split > 1:
       fwd_device = self.cluster.WorkerDeviceInModelSplit(0)
       bwd_device = self.cluster.WorkerDeviceInModelSplit(1)
@@ -471,22 +511,10 @@ class BidirectionalFRNN(base_layer.BaseLayer):
       fwd_device = ''
       bwd_device = ''
     with tf.device(fwd_device):
-      params_forward = p.rnn.Copy()
-      params_forward.name = 'fwd'
-      params_forward.dtype = p.dtype
-      params_forward.reverse = False
-      params_forward.packed_input = p.packed_input
-      params_forward.cell = p.fwd.Copy()
-      self.CreateChild('fwd_rnn', params_forward)
-
+      self.fwd_rnn.InstantiateVariables()
     with tf.device(bwd_device):
-      params_backward = p.rnn.Copy()
-      params_backward.name = 'bak'
-      params_backward.dtype = p.dtype
-      params_backward.reverse = True
-      params_backward.packed_input = p.packed_input
-      params_backward.cell = p.bak.Copy()
-      self.CreateChild('bak_rnn', params_backward)
+      self.bak_rnn.InstantiateVariables()
+    super()._CreateChildrenVariables()
 
   def FProp(self, theta, inputs, paddings, segment_id=None):
     """Compute bidi-RNN forward pass.
@@ -556,7 +584,7 @@ class BidirectionalRNN(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(BidirectionalRNN, cls).Params()
+    p = super().Params()
     p.Define('fwd', rnn_cell.LSTMCellSimple.Params(),
              'Configs for the forward RNN cell.')
     p.Define('bak', rnn_cell.LSTMCellSimple.Params(),
@@ -567,7 +595,7 @@ class BidirectionalRNN(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(BidirectionalRNN, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert not p.packed_input, ('Packed input is currently not supported by '
                                 'BiDirectionalRNN')
@@ -582,6 +610,13 @@ class BidirectionalRNN(base_layer.BaseLayer):
     params_backward.sequence_length = p.sequence_length
     params_backward.reverse = True
     self.CreateChild('bak_rnn', params_backward)
+
+  def _CreateChildrenVariables(self):
+    # Backwards compatibility: manually call child.InstantiateVariables()
+    # outside of tf.variable_scope(p.name).
+    self.fwd_rnn.InstantiateVariables()
+    self.bak_rnn.InstantiateVariables()
+    super()._CreateChildrenVariables()
 
   def FProp(self, theta, inputs, paddings):
     """Compute bidi-RNN forward pass.
@@ -617,7 +652,7 @@ class BidirectionalRNNV2(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(BidirectionalRNNV2, cls).Params()
+    p = super().Params()
     p.Define('fwd', rnn_cell.LSTMCellSimple.Params(),
              'Configs for the forward RNN cell.')
     p.Define('bak', rnn_cell.LSTMCellSimple.Params(),
@@ -627,7 +662,7 @@ class BidirectionalRNNV2(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(BidirectionalRNNV2, self).__init__(params)
+    super().__init__(params)
     assert not self.params.packed_input, ('Packed input is currently not '
                                           'supported by BiDirectionalRNNV2')
     p = BidirectionalRNN.Params()
@@ -637,6 +672,12 @@ class BidirectionalRNNV2(base_layer.BaseLayer):
     p.bak = self.params.bak.Copy()
     p.sequence_length = self.params.sequence_length
     self.CreateChild('brnn', p)
+
+  def _CreateChildrenVariables(self):
+    # Backwards compatibility: manually call child.InstantiateVariables()
+    # outside of tf.variable_scope(p.name).
+    self.brnn.InstantiateVariables()
+    super()._CreateChildrenVariables()
 
   def _PadSequenceToLength(self, t_input, length, pad_value):
     t_input = py_utils.with_dependencies(
@@ -711,7 +752,7 @@ class FRNNWithAttention(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(FRNNWithAttention, cls).Params()
+    p = super().Params()
     p.Define('cell', rnn_cell.LSTMCellSimple.Params(),
              'Configs for the RNN cell.')
     p.Define('attention', attention.AdditiveAttention.Params(),
@@ -734,7 +775,7 @@ class FRNNWithAttention(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(FRNNWithAttention, self).__init__(params)
+    super().__init__(params)
     p = self.params
     if p.use_zero_atten_state:
       assert p.atten_context_dim > 0, (
@@ -750,6 +791,13 @@ class FRNNWithAttention(base_layer.BaseLayer):
     # Set p.attention.atten_dropout_deterministic to True by default.
     p.attention.atten_dropout_deterministic = True
     self.CreateChild('atten', p.attention)
+
+  def _CreateChildrenVariables(self):
+    # Backwards compatibility: manually call child.InstantiateVariables()
+    # outside of tf.variable_scope(p.name).
+    self.cell.InstantiateVariables()
+    self.atten.InstantiateVariables()
+    super()._CreateChildrenVariables()
 
   @property
   def rnn_cell(self):
@@ -1063,7 +1111,7 @@ class MultiSourceFRNNWithAttention(base_layer.BaseLayer):
   @classmethod
   def Params(cls):
     """Params for this MultiSourceFRNNWithAttention class."""
-    p = super(MultiSourceFRNNWithAttention, cls).Params()
+    p = super().Params()
     p.Define(
         'cell',
         rnn_cell.LSTMCellSimple.Params().Set(
@@ -1099,7 +1147,7 @@ class MultiSourceFRNNWithAttention(base_layer.BaseLayer):
 
   def __init__(self, params):
     """Constructs a MultiSourceFRNNWithAttention layer with params."""
-    super(MultiSourceFRNNWithAttention, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert not p.packed_input, ('packed input is not supported for '
                                 'MultiSourceFRNNWithAttention')
@@ -1125,7 +1173,7 @@ class MultiSourceFRNNWithAttention(base_layer.BaseLayer):
         if p.share_attention:
           att_params.name = 'atten_shared'
         else:
-          att_params.name = 'atten_%s' % (src_name)
+          att_params.name = 'atten_%s' % src_name
       if att_params.params_init is None:
         att_params.params_init = py_utils.WeightInit.Gaussian(
             1. / math.sqrt(att_params.source_dim + att_params.query_dim),
@@ -1141,6 +1189,15 @@ class MultiSourceFRNNWithAttention(base_layer.BaseLayer):
     params = p.atten_merger.Copy()
     params.name = 'atten_merger'
     self.CreateChild('atten_merger', params)
+
+  def _CreateChildrenVariables(self):
+    # Backwards compatibility: manually call child.InstantiateVariables()
+    # outside of tf.variable_scope(p.name).
+    self.cell.InstantiateVariables()
+    for atten in self.attentions:
+      atten.InstantiateVariables()
+    self.atten_merger.InstantiateVariables()
+    super()._CreateChildrenVariables()
 
   def InitAttention(self, theta, src_encs, src_paddings, batch_size):
     """Computes initial states for attention layer(s).
@@ -1302,7 +1359,7 @@ class BidirectionalFRNNQuasi(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(BidirectionalFRNNQuasi, cls).Params()
+    p = super().Params()
     p.Define('fwd', rnn_cell.QRNNPoolingCell.Params(),
              'Configs for the forward RNN cell.')
     p.Define('bak', rnn_cell.QRNNPoolingCell.Params(),
@@ -1311,7 +1368,7 @@ class BidirectionalFRNNQuasi(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(BidirectionalFRNNQuasi, self).__init__(params)
+    super().__init__(params)
     p = params
     assert not p.packed_input, ('packed input is not supported for '
                                 'BidirectionalFRNNQuasi')
@@ -1328,6 +1385,13 @@ class BidirectionalFRNNQuasi(base_layer.BaseLayer):
     params_backward.reverse = True
     params_backward.cell = p.bak.Copy()
     self.CreateChild('bak_rnn', params_backward)
+
+  def _CreateChildrenVariables(self):
+    # Backwards compatibility: manually call child.InstantiateVariables()
+    # outside of tf.variable_scope(p.name).
+    self.fwd_rnn.InstantiateVariables()
+    self.bak_rnn.InstantiateVariables()
+    super()._CreateChildrenVariables()
 
   def FProp(self, theta, inputs, paddings):
     """Compute bidi-quasi-RNN forward pass.

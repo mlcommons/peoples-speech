@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,10 +31,6 @@ There are three types of batch sizes:
 TODO(rpang): Deal with on packed_inputs.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import inspect
 
 import lingvo.compat as tf
@@ -47,10 +43,6 @@ from lingvo.core import inspect_utils
 from lingvo.core import ops
 from lingvo.core import py_utils
 from lingvo.core import tokenizers
-import six
-from six.moves import map
-from six.moves import range
-from six.moves import zip
 import tensorflow.compat.v1 as tf1
 import tensorflow.compat.v2 as tf2
 
@@ -67,9 +59,41 @@ class BaseInputGenerator(base_layer.BaseLayer):
   """The abstract base input generator."""
 
   @classmethod
+  def DefineInfeedParams(cls, p):
+    # TPU related infeed tuning.
+    # Supported use cases:
+    #
+    # Data parallelism (num_partitions=None)
+    #  - single host (use_per_host_infeed=False, tpu_infeed_parallelism=1))
+    #  - multi host (use_per_host_infeed=False, tpu_infeed_parallelism>1)
+    #  - per host (use_per_host_infeed=True)
+    # Model parallelism (num_partitions>1 where)
+    #  - non-partitioned infeed (use_partitioned_infeed_queue=False):
+    #    - Only first partition gets infeed (e.g. manual partition)
+    #      - single host (use_per_host_infeed=False)
+    #      - per host (use_per_host_infeed=True)
+    #    - All partitions gets data parallel infeed (e.g. MoE)
+    #      - single host not supported
+    #      - per host (use_per_host_infeed=True, use_per_core_infeed=True)
+    #        num_partitions should be set to number of partitions per replica
+    #  - partitioned infeed (use_partitioned_infeed_queue=True)
+    #    - single host (use_per_host_infeed=False)
+    #    - per host (use_per_host_infeed=True)
+    #        num_partitions should be set to number of partitions per replica
+    #        and all partitions should exist on a single host
+    p.Define('use_per_host_infeed', False,
+             'Whether run infeed op on each host.')
+    p.Define('use_per_core_infeed', False,
+             'Whether to shard the infeed per TPU core instead of per replica')
+    p.Define('tpu_infeed_parallelism', 1,
+             'Uses these many python threads to drive infeed concurrently.')
+    p.Define('use_partitioned_infeed_queue', False, 'Use partitioned infeed')
+    p.Define('num_partitions', None, 'Num partitions')
+
+  @classmethod
   def Params(cls):
     """Defaults params for input generators."""
-    p = super(BaseInputGenerator, cls).Params()
+    p = super().Params()
     p.name = 'input'
     p.Define(
         'batch_size', 0, 'Batch size for a device split. This will be '
@@ -80,14 +104,9 @@ class BaseInputGenerator(base_layer.BaseLayer):
         'For test/eval dataset, if we want the test/evel job evaluate '
         'the whole dataset, this param must be set precisely. Otherwise, '
         'this param is optional.')
-
-    # TPU related infeed tuning.
-    p.Define('use_per_host_infeed', False,
-             'Whether run infeed op on each host.')
-    p.Define('tpu_infeed_parallelism', 1,
-             'Uses these many python threads to drive infeed concurrently.')
-    p.Define('use_partitioned_infeed_queue', False, 'Use partitioned infeed')
-    p.Define('num_partitions', None, 'Num partitions')
+    p.Define('resettable', False,
+             'If True, the input generator must implement Reset().')
+    cls.DefineInfeedParams(p)
 
     p.Define('remote', hyperparams.Params(),
              'Params to configure remote input policy.')
@@ -100,10 +119,11 @@ class BaseInputGenerator(base_layer.BaseLayer):
     pp.Define(
         'max_inflights_per_target', 32, 'The maximum number of '
         'concurrent inflight remote input fetches per remote target.')
+
     return p
 
   def __init__(self, params):
-    super(BaseInputGenerator, self).__init__(params)
+    super().__init__(params)
     # parameter to tell the bprop one hot for all the files.
     # TODO(ankurbpn): Initialize when using sources from mixed record yielders.
     self._bprop_onehot = tf.constant([1], dtype=tf.float32)
@@ -118,6 +138,9 @@ class BaseInputGenerator(base_layer.BaseLayer):
     self._tpu_infeed_op = None
     # A list of InfeedQueues.
     self._tpu_queues = []
+
+    # Set to true in GetProcessedInputBatch() (and thus _InputBatch())
+    self._in_get_processed_input_batch = False
 
   def CommonInputOpArgs(self):
     """Common input params."""
@@ -178,7 +201,10 @@ class BaseInputGenerator(base_layer.BaseLayer):
     Subclasses generally should not override this function directly. Instead,
     override _InputBatch and maybe _PreprocessInputBatch.
     """
-    return self._PreprocessInputBatch(self._InputBatch())
+    self._in_get_processed_input_batch = True
+    res = self._PreprocessInputBatch(self._InputBatch())
+    self._in_get_processed_input_batch = False
+    return res
 
   @property
   def tpu_number_of_shards(self):
@@ -186,8 +212,9 @@ class BaseInputGenerator(base_layer.BaseLayer):
     cluster = self.cluster
     num_tpu_hosts = cluster.num_tpu_hosts
     num_infeed_hosts = num_tpu_hosts if p.use_per_host_infeed else 1
-    shards = (cluster.total_worker_devices //
-              num_infeed_hosts) // cluster.num_devices_per_split
+    shards = (cluster.total_worker_devices // num_infeed_hosts)
+    if p.use_partitioned_infeed_queue or not p.use_per_core_infeed:
+      shards = shards // cluster.num_devices_per_split
     return shards
 
   def CreateTpuEnqueueOps(self):
@@ -209,16 +236,19 @@ class BaseInputGenerator(base_layer.BaseLayer):
                 num_tpu_hosts, p.use_per_host_infeed))
 
     assert num_tpu_hosts > 0, ('num_tpu_hosts: %d' % num_tpu_hosts)
+    if p.use_per_core_infeed:
+      if (not p.use_per_host_infeed) or p.use_partitioned_infeed_queue:
+        raise ValueError('use_per_core_infeed need to have use_per_host_infeed '
+                         'but not use_partitioned_infeed_queue.')
     if (cluster.num_devices_per_split > num_cores_per_host and
         p.use_per_host_infeed):
-      tf.logging.fatal(
-          'Doesn\'t support per host infeed mode when '
-          'num_devices_per_split({}) > num_cores_per_host({})'.format(
-              cluster.num_devices_per_split, num_cores_per_host))
-    num_infeed_hosts = num_tpu_hosts if p.use_per_host_infeed else 1
+      tf.logging.fatal('Doesn\'t support per host infeed mode when '
+                       'num_devices_per_split({}) > num_cores_per_host({}).'
+                       'Each host must be able to accommodate >= 1 split when '
+                       'using per_host_infeed.'.format(
+                           cluster.num_devices_per_split, num_cores_per_host))
 
-    shards = (cluster.total_worker_devices //
-              num_infeed_hosts) // cluster.num_devices_per_split
+    shards = self.tpu_number_of_shards
     tf.logging.info('shards {}'.format(shards))
 
     input_ops_list = []
@@ -236,8 +266,9 @@ class BaseInputGenerator(base_layer.BaseLayer):
         list(tpu_embedding.feature_to_config_dict.keys())
         if tpu_embedding is not None else [])
     tf.logging.info('tpu_emb_input_keys: %r', tpu_emb_input_keys)
-    tf.logging.info('num_infeed_hosts: %d', num_infeed_hosts)
 
+    num_infeed_hosts = num_tpu_hosts if p.use_per_host_infeed else 1
+    tf.logging.info('num_infeed_hosts: %d', num_infeed_hosts)
     for task_id in range(num_infeed_hosts):
       host_device = '/task:{}/device:CPU:0'.format(task_id)
       with tf.device(host_device):
@@ -282,7 +313,13 @@ class BaseInputGenerator(base_layer.BaseLayer):
               tuple_types=dtypes,
               tuple_shapes=shapes)
         else:
-          q = tpu_feed.InfeedQueue(tuple_types=dtypes, tuple_shapes=shapes)
+          if p.use_per_core_infeed:
+            q = tpu_feed.InfeedQueue(
+                tuple_types=dtypes,
+                tuple_shapes=shapes,
+                number_of_partitions=p.num_partitions)
+          else:
+            q = tpu_feed.InfeedQueue(tuple_types=dtypes, tuple_shapes=shapes)
           assert shards is not None
           q.set_number_of_shards(shards)
 
@@ -293,6 +330,8 @@ class BaseInputGenerator(base_layer.BaseLayer):
         elif p.use_per_host_infeed:
           # TODO(ylc/zhifengc): Add this to a policy module and test it.
           def TPUOrdinalFunction(shard_index_in_host):
+            if p.use_per_core_infeed:
+              return shard_index_in_host
             device_assignment = py_utils.GetTpuDeviceAssignment()
             if device_assignment:
               # We put both enqueue/dequeue ops at core 0 in each replica.
@@ -425,6 +464,17 @@ class BaseInputGenerator(base_layer.BaseLayer):
       ret += [split]
     return ret
 
+  def Reset(self, tf_session):
+    """Reset the input-generator.
+
+    Override so that the input_generator reproduces examples as if from a fresh
+    instantiation.
+
+    Args:
+      tf_session: A tensorflow session.
+    """
+    raise NotImplementedError()
+
 
 class BaseInputGeneratorFromFiles(BaseInputGenerator):
   """Base class for input generators that reads from files."""
@@ -432,7 +482,7 @@ class BaseInputGeneratorFromFiles(BaseInputGenerator):
   @classmethod
   def Params(cls):
     """Defaults params for input generators."""
-    p = super(BaseInputGeneratorFromFiles, cls).Params()
+    p = super().Params()
     p.Define(
         # NOTE: file_pattern is deprecated.  New params should use
         # file_datasource instead.
@@ -510,7 +560,7 @@ class BaseInputGeneratorFromFiles(BaseInputGenerator):
     return p
 
   def __init__(self, params):
-    super(BaseInputGeneratorFromFiles, self).__init__(params)
+    super().__init__(params)
     p = self.params
     if p.use_per_host_infeed and p.file_random_seed != 0:
       raise ValueError('file_random_seed needs to be 0 when '
@@ -521,11 +571,11 @@ class BaseInputGeneratorFromFiles(BaseInputGenerator):
 
     # TODO(b/139345706) remove support for file_pattern
     if not p.file_datasource:
-      if isinstance(p.file_pattern, six.string_types):
+      if isinstance(p.file_pattern, str):
         p.file_datasource = datasource.SimpleDataSource.Params().Set(
             file_pattern=p.file_pattern)
       elif isinstance(p.file_pattern, (list, tuple)):
-        if all([isinstance(x, six.string_types) for x in p.file_pattern]):
+        if all([isinstance(x, str) for x in p.file_pattern]):
           # While this violates the documentation and intended use, there are
           # subclasses that have used a tuple of strings, rather than a list of
           # string, weight tuples.  Rather than treating lists and tuples
@@ -540,7 +590,7 @@ class BaseInputGeneratorFromFiles(BaseInputGenerator):
             # file_pattern param contains a list of
             # <file_pattern, weight, [bprop_variable_filter]> tuples.
             raise ValueError('Expected a list of pairs, got %s' %
-                             (p.file_pattern,))
+                             p.file_pattern)
 
           file_patterns, weights = (list(x) for x in zip(*p.file_pattern))
 
@@ -556,10 +606,10 @@ class BaseInputGeneratorFromFiles(BaseInputGenerator):
           weights = []
           bprop_variable_filters = []
           for input_entry in p.file_pattern:
-            if isinstance(input_entry, six.string_types):
+            if isinstance(input_entry, str):
               raise ValueError(
                   'Should explicitly specify weights, got string: %s' %
-                  (input_entry,))
+                  input_entry)
             file_pattern, weight = input_entry[:2]
             file_patterns.append(file_pattern)
             weights.append(weight)
@@ -579,7 +629,7 @@ class BaseInputGeneratorFromFiles(BaseInputGenerator):
   def CommonInputOpArgs(self):
     """Common input params."""
     p = self.params
-    args = super(BaseInputGeneratorFromFiles, self).CommonInputOpArgs()
+    args = super().CommonInputOpArgs()
     if p.file_datasource and issubclass(p.file_datasource.cls,
                                         datasource.ChainingDataSource):
       # If a user provides a ChainingDataSource make sure that the
@@ -649,6 +699,12 @@ class BaseInputGeneratorFromFiles(BaseInputGenerator):
       ValueError: If file_datasource is not set
     """
     p = self.params
+    if p.use_per_host_infeed and not self._in_get_processed_input_batch:
+      raise ValueError(
+          'This input generator does not support p.use_per_host_infeed. '
+          'Please set it to False, or move the call to self._BuildDataSource() '
+          'from self.__init__() to self._InputBatch() for batches to be '
+          'correctly replicated per host.')
     if not p.file_datasource and p.file_pattern:
       # This is a workaround for subclasses which have defined
       # their own data source-like functionality.
@@ -692,7 +748,7 @@ class BaseSequenceInputGenerator(BaseInputGeneratorFromFiles):
   @classmethod
   def Params(cls):
     """Defaults params for sequence input generators."""
-    p = super(BaseSequenceInputGenerator, cls).Params()
+    p = super().Params()
     p.Delete('batch_size')
     p.remote.shardable_batch = False
 
@@ -721,7 +777,7 @@ class BaseSequenceInputGenerator(BaseInputGeneratorFromFiles):
     return p
 
   def __init__(self, params):
-    super(BaseSequenceInputGenerator, self).__init__(params)
+    super().__init__(params)
 
     p = self.params
 
@@ -730,7 +786,7 @@ class BaseSequenceInputGenerator(BaseInputGeneratorFromFiles):
       p.tokenizer_dict[DEFAULT_TOKENIZER_KEY] = p.tokenizer
 
     self.tokenizer_dict = {}
-    for k, p in six.iteritems(p.tokenizer_dict):
+    for k, p in p.tokenizer_dict.items():
       if p:
         name = '_tokenizer_' + k
         self.CreateChild(name, p)
@@ -865,7 +921,7 @@ class BaseTinyDatasetInput(BaseInputGenerator):
   @classmethod
   def Params(cls):
     """Defaults params."""
-    p = super(BaseTinyDatasetInput, cls).Params()
+    p = super().Params()
     p.Define('ckpt', None, 'A TensorFlow checkpoint.')
     p.Define('data', 'x_train', 'The tensor name in the ckpt.')
     p.Define('data_dtype', tf.uint8, 'The tensor dtype in the ckpt.')
@@ -920,7 +976,7 @@ class BaseDataExampleInputGenerator(BaseInputGenerator):
 
   @classmethod
   def Params(cls):
-    p = super(BaseDataExampleInputGenerator, cls).Params()
+    p = super().Params()
     p.Define('input_files', None, 'Delimited glob of input files.')
     p.Define(
         'dataset_type', None,
@@ -940,7 +996,7 @@ class BaseDataExampleInputGenerator(BaseInputGenerator):
     return p
 
   def __init__(self, params):
-    super(BaseDataExampleInputGenerator, self).__init__(params)
+    super().__init__(params)
     p = params
     assert p.input_files, (
         'input_files is required for a tf.data example input generator')
@@ -1010,9 +1066,10 @@ def DefineTFDataInput(name, func, ignore_args=None, map_args=None):
   symbol with the same identifier with given `name`.
 
   Example:
-    >>> # A tf.data pipeline function defined externally.
+    >>> # A tf.data pipeline which returns a dict of Tensors.
     >>> def my_dataset(begin=0, end=10):
-    ...   return tf.data.Dataset.from_tensor_slices(tf.range(begin, end))
+    ...   ds = tf.data.Dataset.from_tensor_slices(tf.range(begin, end))
+    ...   return ds.map(lambda x: {'value': x})
 
     >>> # Defines the InputGenerator class for my_dataset.
     >>> MyInput = DefineTFDataInput('MyInput', my_dataset)
@@ -1027,20 +1084,26 @@ def DefineTFDataInput(name, func, ignore_args=None, map_args=None):
     >>> assert isinstance(ig, MyInput)
 
     >>> # Obtains the data tensors.
+
+    >>> # In TFv1:
     >>> data = ig.GetPreprocessedInputBatch()
     >>> with tf.Session() as sess:
-    ...   assert sess.run(data) == 0
-    ...   assert sess.run(data) == 1
-    ...   assert sess.run(data) == 2
+    ...   values = sess.run(data)  # {'value': 0}
+    ...   values = sess.run(data)  # {'value': 1}
+    ...   values = sess.run(data)  # {'value': 2}
 
+    >>> # In TFv2:
+    >>> values = ig.GetPreprocessedInputBatch()  # {'value': 0}
+    >>> values = ig.GetPreprocessedInputBatch()  # {'value': 1}
+    >>> values = ig.GetPreprocessedInputBatch()  # {'value': 2}
 
   Args:
     name: A string, representing the name of the new InputGenerator class.
     func: A callable to be analysed to generate the new InputGenerator. The
-      return value of `func` must be a single `tf.data.Dataset` representing the
-      pipeline. The signature (parameter list) of `func` must have all explicit
-      parameters needed to configure the pipeline. `*args` and `**kwargs`
-      parameters would be ignored from defining `Params`.
+      return value of `func` must be a single `tf.data.Dataset` which yields a
+      dict or its subclasses. The signature (parameter list) of `func` must have
+      all explicit parameters needed to configure the pipeline. `*args` and
+      `**kwargs` parameters would be ignored from defining `Params`.
     ignore_args: A collection of strings, representing the set of parameter
       names to be ignored from defining `Params`.
     map_args: A {str: str} dict, representing mappings from existing fields in
@@ -1053,9 +1116,11 @@ def DefineTFDataInput(name, func, ignore_args=None, map_args=None):
       to avoid duplicated definitions about the same parameters.
 
   Returns:
-    A new InputGenerator class that invokes `func` internally. The `Params`
+    A new InputGenerator class that invokes `func` internally. The `Params()`
     method of the returned class makes a new Params containing the `args` field
-    representing the parameters of `func`.
+    representing the parameters of `func`. The `GetPreprocessedInputBatch()`
+    method returns a `py_utils.NestedMap` representing the same dict of the
+    obtained data from the dataset.
   """
   ignore_args = set(ignore_args if ignore_args is not None else ())
   map_args = dict(map_args if map_args is not None else {})
@@ -1112,7 +1177,18 @@ def DefineTFDataInput(name, func, ignore_args=None, map_args=None):
 
     # TFv1: Returns Tensors which will be determined by Session.run().
     # TFv2: Returns Tensors with actual values.
-    return self.iterator.get_next()
+    data = self.iterator.get_next()
+
+    # Converts dict to NestedMap to maintain consistency with existing
+    # functionalities in base_input_generator.
+    # TODO(oday): Consider mitigating this restriction.
+    assert isinstance(data, dict), (
+        'DefineTFDataInput accepts only datasets that returns a dict or its '
+        'subclasses.')
+    if not isinstance(data, py_utils.NestedMap):
+      data = py_utils.NestedMap.FromNestedDict(data)
+
+    return data
 
   # Overrides member methods.
   generated_cls.Params = _Params

@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,10 +14,6 @@
 # limitations under the License.
 # ==============================================================================
 """Common utility functions for generating summaries."""
-
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import time
 import lingvo.compat as tf
@@ -295,12 +291,12 @@ def PlotSequenceFeatures(plots, name, **kwargs):
                      **kwargs)
 
 
-class StatsCounter(object):
+class StatsCounter:
   """A single counter in TF."""
 
   def __init__(self, name):
     self._name = name
-    _, self._var = py_utils.CreateVariable(
+    self._var = py_utils.CreateVariable(
         name=name,
         params=py_utils.WeightParams([], py_utils.WeightInit.Constant(0),
                                      tf.int64),
@@ -321,7 +317,7 @@ class StatsCounter(object):
       return tf.identity(tf.assign_add(self._var, delta))
 
 
-class StepRateTracker(object):
+class StepRateTracker:
   """A class that tracks step/example rate."""
 
   def __init__(self):
@@ -348,3 +344,38 @@ class StepRateTracker(object):
     tf.logging.info('Steps/second: %f, Examples/second: %f', rate,
                          example_rate)
     return rate, example_rate, total_examples
+
+
+def ModelAnalysis(model):
+  """Returns a text showing variable sizes and their total size."""
+
+  class Analyzer:
+    """Helper class."""
+
+    def __init__(self):
+      self._seen_var = {}
+      self.total = 0
+
+    def __call__(self, v):
+      assert isinstance(v, tf.Variable)
+      # pylint: disable=protected-access
+      if not v.shape.is_fully_defined():
+        # Only Cudnn RNN params lack static shapes.
+        if hasattr(v, 'approx_size'):
+          size = v.approx_size
+        else:
+          return '%-20s %10s %s' % (v.shape, 'n/a', v._shared_name)
+      else:
+        size = v.shape.num_elements()
+      if v._shared_name not in self._seen_var:
+        self._seen_var[v._shared_name] = size
+        self.total += size
+      return '%-20s %10d %s' % (v.shape, size, v._shared_name)
+
+  analyzer = Analyzer()
+  output = '\n'
+  output += model.vars.Transform(analyzer).DebugString()
+  output += '\n'
+  output += '=' * 100
+  output += f'\ntotal #params: {analyzer.total:,}\n'
+  return output, analyzer.total

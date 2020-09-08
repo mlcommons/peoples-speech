@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,11 +28,6 @@ To run locally:
 To use GPU, add `--config=cuda` to build command and set `--run_locally=gpu`.
 """
 # pylint: enable=line-too-long
-
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import os
 import re
 import sys
@@ -45,7 +40,6 @@ from lingvo import executor
 from lingvo import model_imports
 from lingvo import model_registry
 import lingvo.compat as tf
-from lingvo.core import base_layer
 from lingvo.core import base_model
 from lingvo.core import base_model_params
 from lingvo.core import checkpointer
@@ -55,13 +49,13 @@ from lingvo.core import metrics
 from lingvo.core import py_utils
 from lingvo.core import summary_utils
 import numpy as np
-import six
-from six.moves import range
-from six.moves import zip
 
 from lingvo import base_runner
+
 # pylint:disable=g-direct-tensorflow-import
+from tensorflow.core.protobuf.tpu import compilation_result_pb2 as tpu_compilation_result
 from tensorflow.python.tpu import device_assignment as device_assignment_lib
+from tensorflow.python.tpu import tpu
 from tensorflow.python.tpu import tpu_function
 from tensorflow.python.tpu import training_loop as tpu_training_loop
 from tensorflow.python.tpu.ops import tpu_ops
@@ -135,15 +129,23 @@ tf.flags.DEFINE_integer(
     'inference_graph_random_seed', None,
     'Random seed to fix when exporting inference graph. '
     'Not fixed when set to None.')
+tf.flags.DEFINE_string(
+    'inference_graph_filename', None,
+    'Output inference graph filename. If unspecified, output two inference '
+    'graphs, one for CPU and one for TPU using the default settings.')
+tf.flags.DEFINE_string(
+    'inference_graph_device', None,
+    'Type of device the output inference graph is for. This flag is applicable '
+    'only when FLAGS.inference_graph_filename is specified.')
 
 tf.flags.DEFINE_bool(
     'evaler_in_same_address_as_controller', False,
     'Whether or not evaler is in the same address space as '
-    ' controller. This flag is meant for unittest only.')
+    'controller. This flag is meant for unittest only.')
 
 tf.flags.DEFINE_string(
     'vizier_reporting_job', 'evaler',
-    'Job reponsible for reporting metrics. This specifies a '
+    'Job responsible for reporting metrics. This specifies a '
     'job prefix, evaler will match all evaler jobs, while '
     'evaler_dev and decoder_dev will only match the corresponding '
     'jobs that are on the dev set.')
@@ -213,45 +215,11 @@ def _StartShell(local_ns=None):
   IPython.start_ipython(argv=[], user_ns=user_ns)
 
 
-def _ModelAnalysis(model):
-  """Returns a text showing variable sizes and their total size."""
-
-  class Analyzer(object):
-
-    def __init__(self):
-      self._seen_var = {}
-      self.total = 0
-
-    def __call__(self, v):
-      assert isinstance(v, tf.Variable)
-      # pylint: disable=protected-access
-      if not v.shape.is_fully_defined():
-        # Only Cudnn RNN params lack static shapes.
-        if hasattr(v, 'approx_size'):
-          size = v.approx_size
-        else:
-          return '%-20s %10s %s' % (v.shape, 'n/a', v._shared_name)
-      else:
-        size = v.shape.num_elements()
-      if v._shared_name not in self._seen_var:
-        self._seen_var[v._shared_name] = size
-        self.total += size
-      return '%-20s %10d %s' % (v.shape, size, v._shared_name)
-
-  analyzer = Analyzer()
-  output = '\n'
-  output += model.vars.Transform(analyzer).DebugString()
-  output += '\n'
-  output += '=' * 100
-  output += '\ntotal #params: %10d\n' % (analyzer.total)
-  return output, analyzer.total
-
-
 class Controller(base_runner.BaseRunner):
   """Controller for a training cluster."""
 
   def __init__(self, *args, **kwargs):
-    super(Controller, self).__init__(*args, **kwargs)
+    super().__init__(*args, **kwargs)
     self._job_name = 'controller'
     assert not self._model_task_name, 'Controller needs all tasks!'
     self._control_dir = os.path.join(self._logdir, 'control')
@@ -269,13 +237,17 @@ class Controller(base_runner.BaseRunner):
         self._summary_op = tf.summary.merge_all()
         self._initialize_tables = tf.tables_initializer()
         self._initialize_local_vars = tf.local_variables_initializer()
+        self._initialize_global_vars = tf.global_variables_initializer()
         self.enqueue_ops = tf.get_collection(py_utils.ENQUEUE_OPS)
         if self._checkpoint_in_controller:
-          self.checkpointer = self._CreateCheckpointer(self._train_dir,
-                                                       self._model)
+          self.checkpointer = self._CreateCheckpointer(
+              self._train_dir,
+              self._model,
+              init_op=self._initialize_global_vars)
 
     self._ExportMetrics(params=self.params)
-    self._model_analysis, self._total_num_params = _ModelAnalysis(self._model)
+    self._model_analysis, self._total_num_params = summary_utils.ModelAnalysis(
+        self._model)
     py_utils.LogMultiLines('MODEL ANALYSIS', self._model_analysis)
     self._WriteToLog(self._model_analysis, self._control_dir,
                      'model_analysis.txt')
@@ -283,9 +255,9 @@ class Controller(base_runner.BaseRunner):
     tf.io.write_graph(self._graph.as_graph_def(), self._control_dir,
                       'train.pbtxt')
 
-  def _CreateCheckpointer(self, train_dir, model):
+  def _CreateCheckpointer(self, train_dir, model, init_op=None):
     """Wrapper method for override purposes."""
-    return checkpointer.Checkpointer(train_dir, model)
+    return checkpointer.Checkpointer(train_dir, model, init_op)
 
   def Start(self):
     self._RunLoop('controller', self._Loop)
@@ -364,7 +336,7 @@ class Trainer(base_runner.BaseRunner):
   """Trainer on non-TPU."""
 
   def __init__(self, *args, **kwargs):
-    super(Trainer, self).__init__(*args, **kwargs)
+    super().__init__(*args, **kwargs)
     self._job_name = 'trainer'
     with self._graph.as_default(), tf.container(self._container_id):
       with self._cluster, tf.device(self._cluster.GetPlacer()):
@@ -423,7 +395,7 @@ class Trainer(base_runner.BaseRunner):
     if self._trial.ShouldStop():
       tf.logging.info('Training skipped (trial requested to stop).')
       return
-    return super(Trainer, self)._LoopEnqueue(op)
+    return super()._LoopEnqueue(op)
 
   def _Loop(self):
     # Evaler/Controller jobs may find that the trial is infeasible and report
@@ -494,13 +466,14 @@ class Trainer(base_runner.BaseRunner):
 
         msg = 'step:%6d, steps/sec: %0.2f, examples/sec: %0.2f' % (
             global_step, step_rate, example_rate)
-        for key, (val, _) in sorted(six.iteritems(eval_metrics)):
+        for key, (val, _) in sorted(eval_metrics.items()):
           msg += ' %s:%.8g' % (key, val)
           self._SummarizeValue(global_step, key, val)
         if global_step >= next_status_step:
           self._SetStatusMessage(msg)
           self._ExportMetrics(
-              global_step=global_step,
+              # Metrics expects python int, but global_step is numpy.int64.
+              global_step=int(global_step),
               step_rate=step_rate,
               example_rate=example_rate)
           next_status_step = global_step + status_interval_steps
@@ -514,7 +487,7 @@ class TrainerTpu(base_runner.BaseRunner):
   """Trainer on TPU."""
 
   def __init__(self, *args, **kwargs):
-    super(TrainerTpu, self).__init__(*args, **kwargs)
+    super().__init__(*args, **kwargs)
     self._job_name = 'trainer_tpu'
 
     # Multiple TPU trainer tasks not tested/implemented.
@@ -530,6 +503,7 @@ class TrainerTpu(base_runner.BaseRunner):
     self._step_rate_tracker = summary_utils.StepRateTracker()
 
     self._cluster_def = self._cluster.worker_cluster_def
+    self._compile_op = None
 
     self._initialized = threading.Event()
 
@@ -556,7 +530,8 @@ class TrainerTpu(base_runner.BaseRunner):
 
         device_assignment = device_assignment_lib.device_assignment(
             topology,
-            computation_shape=py_utils.ComputationShape(num_devices_per_split),
+            computation_shape=py_utils.ComputationShape(num_devices_per_split,
+                                                        topology),
             num_replicas=data_parallelism)
         py_utils.SetTpuDeviceAssignment(device_assignment)
         tf.logging.info('device_assignment.core_assignment: %s',
@@ -571,16 +546,15 @@ class TrainerTpu(base_runner.BaseRunner):
 
     with self._graph.as_default(), tf.container(self._container_id):
       with self._cluster, tf.device(self._cluster.job_spec.name):
+        with cluster_factory.SetImmediatelyInstantiateVariables(False):
+          self._model = self.params.Instantiate()
+        self._task = self._model.GetTask()
+        self._task.input.InstantiateVariables()
+        self._task.input.CreateTpuEnqueueOps()
         self._eval_metrics = metrics.TpuEvalMetrics()
-        # Needed due to the AddExtraTheta() reference to global_Step when
+        # Needed due to the AddExtraTheta() reference to global_step when
         # instantiating the InputGenerator.
         _ = py_utils.GetOrCreateGlobalStepVar()
-        input_params = base_layer.BaseLayer.CopyBaseParams(
-            self.params, self.params.input.Copy())
-        input_params = self._cluster.PlaceInput(input_params)
-        self._input = input_params.Instantiate()
-        self._input.CreateTpuEnqueueOps()
-        self.params.input.Define('skip_create_child', True, '')
 
         def TpuTrainStep(*args):
           """Train a shard of a batch on a single TPU core.
@@ -591,17 +565,15 @@ class TrainerTpu(base_runner.BaseRunner):
           Returns:
             New summed metrics values and a train_op.
           """
-          self._model = self.params.Instantiate()
-          self._task = self._model.GetTask()
-          self._task.AddChild('input', self._input)
-
+          self._model.InstantiateVariables()
+          self._model.ConstructFPropBPropGraph()
           self._load_ops = tf.get_collection(py_utils.TPU_EMBEDDING_LOAD_OPS)
           self._retrieve_ops = tf.get_collection(
               py_utils.TPU_EMBEDDING_RETRIEVE_OPS)
           tpu_embedding_collection = tf.get_collection(py_utils.TPU_EMBEDDING)
           self._tpu_embedding = (
               tpu_embedding_collection[0] if tpu_embedding_collection else None)
-          self._model.ConstructFPropBPropGraph()
+
           per_step_eval_metrics = self._eval_metrics.SetMetrics(
               self._task.eval_metrics, args)
           outfeed_op = self._OutfeedEnqueue(self._task.per_example_tensors)
@@ -622,14 +594,14 @@ class TrainerTpu(base_runner.BaseRunner):
           # Final metrics are the avg across self._steps_per_loop steps.
           return self._eval_metrics.FinalizeMetrics(loop_result)
 
-        batch_parallel_res = tf.tpu.batch_parallel(
+        self._compile_op, batch_parallel_res = tpu.split_compile_and_shard(
             TpuTrain,
             num_shards=data_parallelism,
             device_assignment=py_utils.GetTpuDeviceAssignment())
         outfeed_dequeue_op = self._OutfeedDequeueLoop(
             self._task.per_example_tensors, self._steps_per_loop,
             self._cluster.num_splits_per_client)
-        self._input.CreateTpuEmbeddingEnqueueOps()
+        self._task.input.CreateTpuEmbeddingEnqueueOps()
 
         def _ConstructPostTrainingLoop(train_loop_op, outfeed_dequeue_op):
           """Returns the op for tpu training with tail cpu computation."""
@@ -649,18 +621,25 @@ class TrainerTpu(base_runner.BaseRunner):
         self._tpu_train_ops = (
             _ConstructPostTrainingLoop(all_tpu_ops, outfeed_dequeue_op))
 
-        if FLAGS.checkpoint_in_trainer_tpu:
-          self.checkpointer = checkpointer.Checkpointer(self._train_dir,
-                                                        self._model)
-      self._initialize_tables = tf.tables_initializer()
       self._initialize_local_vars = tf.local_variables_initializer()
+      self._initialize_global_vars = tf.global_variables_initializer()
+      self._initialize_tables = tf.tables_initializer()
 
-      self.enqueue_ops = self._input.tpu_infeed_op
+      if FLAGS.checkpoint_in_trainer_tpu:
+        self.checkpointer = checkpointer.Checkpointer(
+            self._train_dir, self._model, init_op=self._initialize_global_vars)
+
+      self.enqueue_ops = self._task.input.tpu_infeed_op
       tf.logging.info('Trainer number of enqueue ops: %d',
                       len(self.enqueue_ops))
 
     self._summary_writer = self._CreateSummaryWriter(self._train_dir)
-
+    if FLAGS.checkpoint_in_trainer_tpu:
+      self._model_analysis, self._total_num_params = (
+          summary_utils.ModelAnalysis(self._model))
+      py_utils.LogMultiLines('MODEL ANALYSIS', self._model_analysis)
+      self._WriteToLog(self._model_analysis, self._train_dir,
+                       'model_analysis.txt')
     # Saves the graph def.
     tf.io.write_graph(self._graph.as_graph_def(), self._train_dir,
                       'train.pbtxt')
@@ -670,8 +649,7 @@ class TrainerTpu(base_runner.BaseRunner):
                      'trainer_params.txt')
 
   def _GetSession(self, **kwargs):
-    return super(TrainerTpu, self)._GetSession(
-        cluster_def=self._cluster_def, **kwargs)
+    return super()._GetSession(cluster_def=self._cluster_def, **kwargs)
 
   def _OutfeedEnqueue(self, per_example_tensors):
     if not per_example_tensors:
@@ -784,7 +762,9 @@ class TrainerTpu(base_runner.BaseRunner):
       tf.logging.info('Training skipped (trial requested to stop).')
       return
     # Wait for _Loop to initialize variables first before attempting to infeed.
+    tf.logging.info('_LoopEnqueue waiting for _initialized...')
     self._initialized.wait()
+    tf.logging.info('_LoopEnqueue proceeding.')
 
     # The global step may not be initialized in this thread if the target server
     # uses session state isolation (e.g. Cloud TPUs).
@@ -792,7 +772,7 @@ class TrainerTpu(base_runner.BaseRunner):
     if FLAGS.checkpoint_in_trainer_tpu:
       self.checkpointer.RestoreGlobalStepIfNeeded(sess)
 
-    return super(TrainerTpu, self)._LoopEnqueue(op, sess)
+    return super()._LoopEnqueue(op, sess)
 
   def _Loop(self):
     # Evaler/Controller jobs may find that the trial is infeasible and report
@@ -811,8 +791,18 @@ class TrainerTpu(base_runner.BaseRunner):
           tf.tpu.initialize_system(embedding_config=config_proto, job=None))
       sess.run(self._initialize_tables)
       sess.run(self._initialize_local_vars)
+
       if FLAGS.run_locally == 'tpu':
-        sess.run(tf.global_variables_initializer())
+        sess.run(self._initialize_global_vars)
+
+      self._SetStatusMessage('Compiling ...')
+      compilation_result = sess.run(self._compile_op)
+      comp_result_proto = tpu_compilation_result.CompilationResultProto()
+      comp_result_proto.ParseFromString(compilation_result)
+      if comp_result_proto.status_error_message:
+        tf.logging.fatal('Compilation failed: {}'.format(
+            comp_result_proto.status_error_message))
+      self._SetStatusMessage('Compiling done.')
 
       if FLAGS.checkpoint_in_trainer_tpu:
         # For b/134415393 -- better to initialize to a known state than
@@ -826,6 +816,7 @@ class TrainerTpu(base_runner.BaseRunner):
 
       sess.run(self._load_ops)
       while True:
+        train_steps_start = time.perf_counter()
         if FLAGS.checkpoint_in_trainer_tpu:
           # Init/restore variable if needed.
           self.checkpointer.RestoreIfNeeded(sess)
@@ -849,7 +840,9 @@ class TrainerTpu(base_runner.BaseRunner):
               target=self._InfeedLoop, args=(sess,))
           infeed_loop_thread.start()
 
+        tpu_train_op_start = time.perf_counter()
         values, outfeeds = sess.run(self._tpu_train_ops)
+        tpu_train_op_secs = time.perf_counter() - tpu_train_op_start
 
         if self._retrieve_ops:
           infeed_loop_thread.join()
@@ -879,62 +872,40 @@ class TrainerTpu(base_runner.BaseRunner):
         self._SummarizeValue(global_step, 'global_step/sec', step_rate)
         self._SummarizeValue(global_step, 'examples/sec', example_rate)
         self._SummarizeValue(global_step, 'total_samples', total_examples)
-
+        if FLAGS.checkpoint_in_trainer_tpu:
+          self._SummarizeValue(global_step, 'total_num_params',
+                               self._total_num_params)
         msg = 'step:%6d, steps/sec: %0.2f, examples/sec: %0.2f' % (
             global_step, step_rate, example_rate)
-        for key, (val, _) in sorted(six.iteritems(eval_metrics)):
+        for key, (val, _) in sorted(eval_metrics.items()):
           msg += ' %s:%.8g' % (key, val)
           self._SummarizeValue(global_step, key, val)
 
         self._SetStatusMessage(msg)
 
+        checkpoint_write_secs = 0.0
         if FLAGS.checkpoint_in_trainer_tpu:
-          self.checkpointer.MaybeSave(sess, self._model.global_step)
-
-
-def _GetSpecificCheckpoint(load_checkpoint_from):
-  """Returns a specific checkpoint given `load_checkpoint_from`.
-
-  When load_checkpoint_from is a directory, we find the latest
-  checkpoint in the directory and use that as the checkpoint
-  to evaluate.
-
-  When load_checkpoint_from is a specific checkpoint, we
-  validate the path and return it.
-
-  Args:
-    load_checkpoint_from: If not None, specifies the directory or specific
-      checkpoint to load.  If a directory, the latest checkpoint in the
-      directory will be used.
-  """
-  if not load_checkpoint_from:
-    # No location specified, use existing train_dir.
-    return None
-
-  # If load_checkpoint_from is a directory, return the latest
-  # checkpoint in the directory.
-  if tf.io.gfile.isdir(load_checkpoint_from):
-    return tf.train.latest_checkpoint(load_checkpoint_from)
-
-  # We assume that load_checkpoint_from is a specific checkpoint to
-  # evaluate since it is not a directory.
-  #
-  # Check validity of eval path by looking for the index file.
-  if tf.io.gfile.exists(load_checkpoint_from + '.index'):
-    return load_checkpoint_from
-
-  # Fail if we see an unexpected load_checkpoint_from.
-  #
-  # This might happen if load_checkpoint_from refers to a checkpoint
-  # but the index file cannot be found.
-  raise ValueError('Invalid load_checkpoint_from: %s' % load_checkpoint_from)
+          checkpoint_write_start = time.perf_counter()
+          checkpoint_saved = self.checkpointer.MaybeSave(
+              sess, self._model.global_step)
+          if checkpoint_saved:
+            checkpoint_write_secs = time.perf_counter() - checkpoint_write_start
+        train_steps_secs = time.perf_counter() - train_steps_start
+        self._ExportMetrics(
+            # Metrics expects python int, but global_step is numpy.int64.
+            global_step=int(global_step),
+            step_rate=step_rate,
+            example_rate=example_rate,
+            tpu_train_op_secs=tpu_train_op_secs,
+            checkpoint_write_secs=checkpoint_write_secs,
+            total_train_steps_secs=train_steps_secs)
 
 
 class Evaler(base_runner.BaseRunner):
   """Evaler."""
 
   def __init__(self, eval_type, *args, **kwargs):
-    super(Evaler, self).__init__(*args, **kwargs)
+    super().__init__(*args, **kwargs)
     self._job_name = 'evaler_' + eval_type
     self._output_name = 'eval_' + eval_type
     self.params.cluster.do_eval = True
@@ -947,7 +918,7 @@ class Evaler(base_runner.BaseRunner):
     self._eval_path = None
     # Multitask params doesn't have 'task'.
     if 'task' in self.params:
-      self._eval_path = _GetSpecificCheckpoint(
+      self._eval_path = checkpointer.GetSpecificCheckpoint(
           self.params.task.eval.load_checkpoint_from)
 
     self._summary_writer = self._CreateSummaryWriter(self._eval_dir)
@@ -958,8 +929,6 @@ class Evaler(base_runner.BaseRunner):
       with self._cluster, tf.device(self._cluster.GetPlacer()):
         self._model = self.params.Instantiate()
         self._params = self._model.params
-        # Always create the same graph to make sure node names are always
-        # exactly the same.
         self._model.ConstructFPropGraph()
         self._task = self._model.GetTask(self._model_task_name)
       self._initialize_tables = tf.tables_initializer()
@@ -1056,6 +1025,11 @@ class Evaler(base_runner.BaseRunner):
     # And decide whether to run an evaluation.
     if global_step < self._task.params.eval.start_eval_after:
       return False
+
+    if self._task.params.input.resettable:
+      tf.logging.info('Resetting input_generator.')
+      self._task.input_generator.Reset(sess)
+
     metrics_dict = {
         name: metrics.AverageMetric() for name in self._task.eval_metrics
     }
@@ -1067,7 +1041,7 @@ class Evaler(base_runner.BaseRunner):
       # summaries at the same step is often confusing. Instead, models should
       # update eval_metrics and generate aggregate summaries.
       ans = sess.run(self._task.eval_metrics)
-      for name, (value, weight) in six.iteritems(ans):
+      for name, (value, weight) in ans.items():
         metrics_dict[name].Update(value, weight)
       tf.logging.info('Total examples done: %d/%d',
                       num_samples_metric.total_value,
@@ -1083,7 +1057,7 @@ class Evaler(base_runner.BaseRunner):
     self._WriteSummaries(
         self._summary_writer,
         os.path.basename(self._eval_dir),
-        global_step, {k: v.Summary(k) for k, v in six.iteritems(metrics_dict)},
+        global_step, {k: v.Summary(k) for k, v in metrics_dict.items()},
         text_filename=os.path.join(self._eval_dir,
                                    'score-{:08d}.txt'.format(global_step)))
 
@@ -1132,7 +1106,7 @@ class Decoder(base_runner.BaseRunner):
   """Decoder."""
 
   def __init__(self, decoder_type, *args, **kwargs):
-    super(Decoder, self).__init__(*args, **kwargs)
+    super().__init__(*args, **kwargs)
     self._job_name = 'decoder_' + decoder_type
     self.params.cluster.do_eval = True
     self._cluster = cluster_factory.Cluster(self.params.cluster)
@@ -1143,7 +1117,7 @@ class Decoder(base_runner.BaseRunner):
     self._decode_path = None
     # Multitask params doesn't have 'task'.
     if 'task' in self.params:
-      self._decode_path = _GetSpecificCheckpoint(
+      self._decode_path = checkpointer.GetSpecificCheckpoint(
           self.params.task.eval.load_checkpoint_from)
 
     self._summary_writer = self._CreateSummaryWriter(self._decoder_dir)
@@ -1234,6 +1208,11 @@ class Decoder(base_runner.BaseRunner):
     self.checkpointer.RestoreFromPath(sess, checkpoint_path)
 
     global_step = sess.run(py_utils.GetGlobalStep())
+
+    if self._task.params.input.resettable:
+      tf.logging.info('Resetting input_generator.')
+      self._task.input.Reset(sess)
+
     dec_metrics = self._task.CreateDecoderMetrics()
     if not dec_metrics:
       tf.logging.info('Empty decoder metrics')
@@ -1265,7 +1244,7 @@ class Decoder(base_runner.BaseRunner):
           time.time() - post_process_start)
     tf.logging.info('Done decoding ckpt: %s', checkpoint_path)
 
-    summaries = {k: v.Summary(k) for k, v in six.iteritems(dec_metrics)}
+    summaries = {k: v.Summary(k) for k, v in dec_metrics.items()}
     elapsed_secs = time.time() - start_time
     example_rate = num_examples_metric.total_value / elapsed_secs
     summaries['examples/sec'] = metrics.CreateScalarSummary(
@@ -1278,7 +1257,8 @@ class Decoder(base_runner.BaseRunner):
         text_filename=os.path.join(self._decoder_dir,
                                    'score-{:08d}.txt'.format(global_step)))
     self._ExportMetrics(
-        decode_checkpoint=global_step,
+        # Metrics expects python int, but global_step is numpy.int64.
+        decode_checkpoint=int(global_step),
         dec_metrics=dec_metrics,
         example_rate=example_rate)
     # global_step and the checkpoint id from the checkpoint file might be
@@ -1332,7 +1312,7 @@ def _GetClusterSpecDict():
   return cluster_spec_dict
 
 
-class RunnerManager(object):
+class RunnerManager:
   """Helper class for managing runners."""
 
   # This is a hack so these classes can be overridded with internal
@@ -1459,6 +1439,7 @@ class RunnerManager(object):
     if not FLAGS.job:
       FLAGS.job = 'trainer_client'
 
+    # Is it possible that TPU just simply won't do inference?
     if FLAGS.job not in ('trainer_client', 'executor_tpu'):
       raise ValueError('Only trainer_client and executor_tpu jobs are '
                        'supported on TPU.')
@@ -1481,9 +1462,8 @@ class RunnerManager(object):
     FLAGS.ps_job = FLAGS.worker_job
     FLAGS.ps_replicas = FLAGS.worker_replicas
 
-    FLAGS.cluster_spec = ('@'.join(
-        '{}={}'.format(job, ','.join(hosts))
-        for job, hosts in six.iteritems(cluster_spec_dict)))
+    FLAGS.cluster_spec = ('@'.join('{}={}'.format(job, ','.join(hosts))
+                                   for job, hosts in cluster_spec_dict.items()))
 
     FLAGS.xla_device = 'tpu'
     FLAGS.enable_asserts = False
@@ -1706,7 +1686,7 @@ class RunnerManager(object):
     p = self.GetParamsForDataset('controller', 'Train')
     c = cluster_factory.Cluster(p.cluster)
     with tf.Graph().as_default(), c, tf.device(c.GetPlacer()):
-      analysis, _ = _ModelAnalysis(p.Instantiate())
+      analysis, _ = summary_utils.ModelAnalysis(p.Instantiate())
     print(analysis)
 
   def InspectDatasets(self):
@@ -1745,40 +1725,69 @@ class RunnerManager(object):
     tf.logging.info('Writing inference graphs to dir: %s', inference_graph_dir)
 
     cfg = self.model_registry.GetParams(self._model_name, 'Test')
+    task_names = [FLAGS.model_task_name]
     if (issubclass(cfg.cls, base_model.MultiTaskModel) and
         not FLAGS.model_task_name):
-      tf.logging.info('Cannot write inference graphs for multi-task model '
-                      'when model_task_name is not specified.')
-      return
-    try:
-      filename_prefix = 'inference'
-      if FLAGS.model_task_name:
-        filename_prefix = '%s_inference' % FLAGS.model_task_name
-      filename_prefix = os.path.join(inference_graph_dir, filename_prefix)
-      # Standard inference graph.
-      self.inference_graph_exporter.InferenceGraphExporter.Export(
-          model_cfg=cfg,
-          model_task_name=FLAGS.model_task_name,
-          export_path=filename_prefix + '.pbtxt',
-          random_seed=FLAGS.inference_graph_random_seed)
-    except NotImplementedError as e:
-      tf.logging.error('Cannot write inference graph: %s', e)
+      task_names = base_model.MultiTaskModel.TaskNames(cfg)
 
-    # TPU inference graph. Not all models support it so fail silently.
-    try:
-      self.inference_graph_exporter.InferenceGraphExporter.Export(
-          model_cfg=cfg,
-          model_task_name=FLAGS.model_task_name,
-          device_options=self.inference_graph_exporter.InferenceDeviceOptions(
+    if FLAGS.inference_graph_filename:
+      # Custom inference graph.
+      for task_name in task_names:
+        filename_prefix = FLAGS.inference_graph_filename
+        if task_name:
+          filename_prefix = '%s_inference' % task_name
+        filename_prefix = os.path.join(inference_graph_dir, filename_prefix)
+
+        device = ''
+        var_options = None
+        if FLAGS.inference_graph_device == 'tpu':
+          device = 'tpu'
+          var_options = 'ON_DEVICE'
+        device_options = inference_graph_exporter.InferenceDeviceOptions(
+            device=device,
+            retain_device_placement=False,
+            var_options=var_options,
+            gen_init_op=True,
+            dtype_override=None)
+        self.inference_graph_exporter.InferenceGraphExporter.Export(
+            model_cfg=cfg,
+            model_task_name=task_name,
+            device_options=device_options,
+            export_path=filename_prefix + '.pbtxt',
+            random_seed=FLAGS.inference_graph_random_seed)
+    else:
+      for task_name in task_names:
+        filename_prefix = 'inference'
+        if task_name:
+          filename_prefix = '%s_inference' % task_name
+        filename_prefix = os.path.join(inference_graph_dir, filename_prefix)
+
+        # Standard inference graph.
+        try:
+          self.inference_graph_exporter.InferenceGraphExporter.Export(
+              model_cfg=cfg,
+              model_task_name=task_name,
+              export_path=filename_prefix + '.pbtxt',
+              random_seed=FLAGS.inference_graph_random_seed)
+        except NotImplementedError as e:
+          tf.logging.error('Cannot write inference graph: %s', e)
+
+        # TPU inference graph. Not all models support it so fail silently.
+        try:
+          device_options = self.inference_graph_exporter.InferenceDeviceOptions(
               device='tpu',
               retain_device_placement=False,
               var_options='ON_DEVICE',
               gen_init_op=True,
-              dtype_override=None),
-          export_path=filename_prefix + '_tpu.pbtxt',
-          random_seed=FLAGS.inference_graph_random_seed)
-    except Exception as e:  # pylint: disable=broad-except
-      tf.logging.error('Error exporting TPU inference graph: %s' % e)
+              dtype_override=None)
+          self.inference_graph_exporter.InferenceGraphExporter.Export(
+              model_cfg=cfg,
+              model_task_name=task_name,
+              device_options=device_options,
+              export_path=filename_prefix + '_tpu.pbtxt',
+              random_seed=FLAGS.inference_graph_random_seed)
+        except Exception as e:  # pylint: disable=broad-except
+          tf.logging.error('Error exporting TPU inference graph: %s' % e)
 
   def RunEvalerOnce(self):
     """Run once evaler."""

@@ -1,3 +1,4 @@
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,11 +15,11 @@
 # ==============================================================================
 """Tests for metrics."""
 
-
 import lingvo.compat as tf
 from lingvo.core import metrics
+from lingvo.core import py_utils
 from lingvo.core import test_utils
-from six.moves import range
+import numpy as np
 
 
 class MetricsTest(test_utils.TestCase):
@@ -76,6 +77,37 @@ class MetricsTest(test_utils.TestCase):
     m.Update([1.0, 2.0, 3.0], [0.1, 0.2, 0.3])
     m.Update([1.0, 2.0, 3.0], [0.1, 0.2, 0.3])
     self.assertEqual(1.0, m.value)
+
+  def testSamplingMetric(self):
+
+    class TestSamplingMetric(metrics.SamplingMetric):
+
+      def _CreateSummary(self, name):
+        ret = tf.Summary()
+        for sample in self.samples:
+          value = sample.value
+          ret.value.add(tag=name, simple_value=value)
+        return ret
+
+    np.random.seed(1337)
+    p = TestSamplingMetric.Params()
+    p.num_samples = 2
+    m = p.Instantiate()
+    m.Update(py_utils.NestedMap(value=1))
+    summary = m.Summary('test')
+    self.assertEqual(1, summary.value[0].simple_value)
+
+    # Add four more updates.
+    m.Update(py_utils.NestedMap(value=2))
+    m.Update(py_utils.NestedMap(value=3))
+    m.Update(py_utils.NestedMap(value=4))
+    m.Update(py_utils.NestedMap(value=5))
+    summary = m.Summary('test')
+    # Reservoir sampling will sample values 5 and 3 to remain with the current
+    # seed.
+    self.assertEqual(2, len(summary.value))
+    self.assertEqual(5, summary.value[0].simple_value)
+    self.assertEqual(3, summary.value[1].simple_value)
 
 
 if __name__ == '__main__':

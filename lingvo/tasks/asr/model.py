@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,10 +14,6 @@
 # limitations under the License.
 """Speech model."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import collections
 import lingvo.compat as tf
 from lingvo.core import base_model
@@ -29,8 +25,6 @@ from lingvo.tasks.asr import decoder_utils
 from lingvo.tasks.asr import encoder
 from lingvo.tasks.asr import frontend as asr_frontend
 from lingvo.tools import audio_lib
-from six.moves import range
-from six.moves import zip
 
 
 # hyps: [num_beams, num_hyps_per_beam] of serialized Hypothesis protos.
@@ -47,7 +41,7 @@ class AsrModel(base_model.BaseTask):
 
   @classmethod
   def Params(cls):
-    p = super(AsrModel, cls).Params()
+    p = super().Params()
     p.encoder = encoder.AsrEncoder.Params()
     p.decoder = decoder.AsrDecoder.Params()
     p.Define(
@@ -78,21 +72,20 @@ class AsrModel(base_model.BaseTask):
   def __init__(self, params):
     if not params.name:
       raise ValueError('params.name not set.')
-    super(AsrModel, self).__init__(params)
+    super().__init__(params)
     p = self.params
 
-    with tf.variable_scope(p.name):
-      # Construct the model.
-      if p.encoder:
-        if not p.encoder.name:
-          p.encoder.name = 'enc'
-        self.CreateChild('encoder', p.encoder)
-      if p.decoder:
-        if not p.decoder.name:
-          p.decoder.name = 'dec'
-        self.CreateChild('decoder', p.decoder)
-      if p.frontend:
-        self.CreateChild('frontend', p.frontend)
+    # Construct the model.
+    if p.encoder:
+      if not p.encoder.name:
+        p.encoder.name = 'enc'
+      self.CreateChild('encoder', p.encoder)
+    if p.decoder:
+      if not p.decoder.name:
+        p.decoder.name = 'dec'
+      self.CreateChild('decoder', p.decoder)
+    if p.frontend:
+      self.CreateChild('frontend', p.frontend)
 
   def _GetDecoderTargets(self, input_batch):
     """Returns targets which will be forwarded to the decoder.
@@ -212,10 +205,12 @@ class AsrModel(base_model.BaseTask):
   def DecodeWithTheta(self, theta, input_batch):
     """Constructs the inference graph."""
     p = self.params
-    with tf.name_scope('fprop'), tf.name_scope(p.name):
-      encoder_outputs = self._FrontendAndEncoderFProp(theta, input_batch.src)
-      decoder_outs = self.decoder.BeamSearchDecodeWithTheta(
-          theta.decoder, encoder_outputs)
+    with tf.name_scope('decode'), tf.name_scope(p.name):
+      with tf.name_scope('encoder'):
+        encoder_outputs = self._FrontendAndEncoderFProp(theta, input_batch.src)
+      with tf.name_scope('beam_search'):
+        decoder_outs = self.decoder.BeamSearchDecodeWithTheta(
+            theta.decoder, encoder_outputs)
 
       if py_utils.use_tpu():
         # Decoder metric computation contains arbitrary execution
@@ -415,8 +410,8 @@ class AsrModel(base_model.BaseTask):
           # Note that these numbers are not consistent with what is used to
           # compute normalized WER.  In particular, these numbers will be
           # inflated when the transcript contains punctuation.
-          tf.logging.info('  ins: %d, subs: %d, del: %d, total: %d', ins,
-                               subs, dels, errs)
+          tf.logging.info('  ins: %d, subs: %d, del: %d, total: %d', ins, subs,
+                          dels, errs)
           # Only aggregate scores of the top hypothesis.
           if n == 0:
             total_errs += errs
@@ -426,14 +421,14 @@ class AsrModel(base_model.BaseTask):
           oracle_errs = min(oracle_errs, norm_wer_errors[i, n])
         total_oracle_errs += oracle_errs
 
-      dec_metrics_dict['wer'].Update(total_errs / total_ref_words,
+      dec_metrics_dict['wer'].Update(total_errs / max(1., total_ref_words),
                                      total_ref_words)
       dec_metrics_dict['oracle_norm_wer'].Update(
-          total_oracle_errs / total_ref_words, total_ref_words)
+          total_oracle_errs / max(1., total_ref_words), total_ref_words)
       dec_metrics_dict['sacc'].Update(
           total_accurate_sentences / len(transcripts), len(transcripts))
-      dec_metrics_dict['ter'].Update(total_token_errs / total_ref_tokens,
-                                     total_ref_tokens)
+      dec_metrics_dict['ter'].Update(
+          total_token_errs / max(1., total_ref_tokens), total_ref_tokens)
 
     # Update any additional metrics.
     dec_metrics_dict = self.UpdateAdditionalMetrics(dec_out_dict,

@@ -24,69 +24,77 @@ from lingvo.core import generic_input
 from lingvo.core import py_utils
 from lingvo.core import test_utils
 import numpy as np
-from six.moves import range
+
+
+def get_test_input(path, bucket_batch_limit=8, **kwargs):
+  return generic_input.GenericInput(
+      file_pattern='tfrecord:' + path,
+      file_random_seed=0,
+      file_buffer_size=32,
+      file_parallelism=4,
+      bucket_batch_limit=[bucket_batch_limit],
+      **kwargs)
+
+
+def run_basic_graph(use_nested_map,
+                    bucket_fn=lambda x: 1,
+                    bucket_batch_limit=8):
+  # Generate a test file w/ 100 records.
+  tmp = os.path.join(tf.test.get_temp_dir(), 'basic')
+  with tf.python_io.TFRecordWriter(tmp) as w:
+    for i in range(100):
+      w.write(('%08d' % i).encode('utf-8'))
+
+  # A simple string parsing routine. Just convert a string to a
+  # number.
+  def str_to_num(s):
+    return np.array(float(s), dtype=np.float32)
+
+  # A record processor written in TF graph.
+  def _process(source_id, record):
+    num, = tf.py_func(str_to_num, [record], [tf.float32])
+    num = tf.stack([num, tf.square(num)])
+    if use_nested_map:
+      return py_utils.NestedMap(
+          source_id=source_id, record=record, num=num), bucket_fn(num)
+    else:
+      return [source_id, record, num], bucket_fn(num)
+
+  # Samples random records from the data files and processes them
+  # to generate batches.
+  inputs, _ = get_test_input(
+      tmp,
+      bucket_batch_limit=bucket_batch_limit,
+      bucket_upper_bound=[1],
+      processor=_process)
+  if use_nested_map:
+    return inputs
+  else:
+    src_ids, strs, vals = inputs
+    return py_utils.NestedMap(source_id=src_ids, record=strs, num=vals)
 
 
 class GenericInputOpTest(test_utils.TestCase, parameterized.TestCase):
 
-  def get_test_input(self, path, **kwargs):
-    return generic_input.GenericInput(
-        file_pattern='tfrecord:' + path,
-        file_random_seed=0,
-        file_buffer_size=32,
-        file_parallelism=4,
-        bucket_batch_limit=[8],
-        **kwargs)
-
-  @parameterized.named_parameters(('OutputList', False),
-                                  ('OutputNestedMap', True))
-  def testBasic(self, use_nested_map):
-    input_batch = self._RunBasicGraph(use_nested_map=use_nested_map)
+  @parameterized.named_parameters(('OutputList', False, 8),
+                                  ('OutputNestedMap', True, 8),
+                                  ('OutputNestedMap_Batch1', True, 1))
+  def testBasic(self, use_nested_map, bucket_batch_limit):
+    input_batch = run_basic_graph(
+        use_nested_map=use_nested_map, bucket_batch_limit=bucket_batch_limit)
     with self.session():
       record_seen = set()
       for i in range(100):
         ans_input_batch = self.evaluate(input_batch)
         for s in ans_input_batch.record:
           record_seen.add(s)
-        self.assertEqual(ans_input_batch.source_id.shape, (8,))
-        self.assertEqual(ans_input_batch.record.shape, (8,))
-        self.assertEqual(ans_input_batch.num.shape, (8, 2))
+        self.assertEqual(ans_input_batch.source_id.shape, (bucket_batch_limit,))
+        self.assertEqual(ans_input_batch.record.shape, (bucket_batch_limit,))
+        self.assertEqual(ans_input_batch.num.shape, (bucket_batch_limit, 2))
         ans_vals = ans_input_batch.num
         self.assertAllEqual(np.square(ans_vals[:, 0]), ans_vals[:, 1])
       for i in range(100):
         self.assertIn(('%08d' % i).encode('utf-8'), record_seen)
-
-  def _RunBasicGraph(self, use_nested_map, bucket_fn=lambda x: 1):
-    # Generate a test file w/ 100 records.
-    tmp = os.path.join(tf.test.get_temp_dir(), 'basic')
-    with tf.python_io.TFRecordWriter(tmp) as w:
-      for i in range(100):
-        w.write(('%08d' % i).encode('utf-8'))
-
-    # A simple string parsing routine. Just convert a string to a
-    # number.
-    def str_to_num(s):
-      return np.array(float(s), dtype=np.float32)
-
-    # A record processor written in TF graph.
-    def _process(source_id, record):
-      num, = tf.py_func(str_to_num, [record], [tf.float32])
-      num = tf.stack([num, tf.square(num)])
-      if use_nested_map:
-        return py_utils.NestedMap(
-            source_id=source_id, record=record, num=num), bucket_fn(num)
-      else:
-        return [source_id, record, num], bucket_fn(num)
-
-    # Samples random records from the data files and processes them
-    # to generate batches.
-    inputs, _ = self.get_test_input(
-        tmp, bucket_upper_bound=[1], processor=_process)
-    if use_nested_map:
-      return inputs
-    else:
-      src_ids, strs, vals = inputs
-      return py_utils.NestedMap(source_id=src_ids, record=strs, num=vals)
 
   def testPadding(self):
     # Generate a test file w/ 50 records of different lengths.
@@ -105,7 +113,7 @@ class GenericInputOpTest(test_utils.TestCase, parameterized.TestCase):
 
       # Samples random records from the data files and processes them
       # to generate batches.
-      (vals_t, transposed_vals_t), _ = self.get_test_input(
+      (vals_t, transposed_vals_t), _ = get_test_input(
           tmp,
           bucket_upper_bound=[10],
           processor=_process,
@@ -136,7 +144,7 @@ class GenericInputOpTest(test_utils.TestCase, parameterized.TestCase):
           tf.equal(tf.math.floormod(num[0], 2), 0), lambda: 1,
           lambda: -tf.cast(num[0], tf.int32))
 
-    input_batch = self._RunBasicGraph(use_nested_map=False, bucket_fn=bucket_fn)
+    input_batch = run_basic_graph(use_nested_map=False, bucket_fn=bucket_fn)
 
     with self.session():
       record_seen = set()
@@ -224,7 +232,7 @@ class GenericInputOpTest(test_utils.TestCase, parameterized.TestCase):
 
       # Samples random records from the data files and processes them
       # to generate batches.
-      inputs, _ = self.get_test_input(
+      inputs, _ = get_test_input(
           tmp, bucket_upper_bound=[1], processor=_process)
 
     with self.session(graph=g):
@@ -259,6 +267,33 @@ class GenericInputOpTest(test_utils.TestCase, parameterized.TestCase):
           file_pattern='',
           bucket_upper_bound=[1],
           bucket_batch_limit=[1])
+
+  def testTfData(self):
+    """Checks that GenericInput can be invoked from a tf.data.Dataset.
+
+    TODO(b/162015923): Fix generic_input op to work with tf.data.
+    """
+
+    def _input_batch():
+      return run_basic_graph(use_nested_map=True)
+
+    # Trick to create dataset from tensor coming from custom op.
+    dummy_dataset = tf.data.Dataset.from_tensors(0).repeat()
+    dataset = dummy_dataset.map(lambda _: _input_batch())
+
+    with self.session(use_gpu=False) as sess:
+      it = tf.compat.v1.data.make_initializable_iterator(dataset)
+      with self.assertRaises(tf.errors.NotFoundError):
+        # Gives an error that the user-provided function is undefined.
+        sess.run(it.initializer)
+
+
+class GenericInputOpBenchmark(tf.test.Benchmark):
+
+  def benchmark_basic(self):
+    input_batch = run_basic_graph(use_nested_map=True)
+    with tf.Session() as sess:
+      print(self.run_op_benchmark(sess, input_batch, min_iters=10))
 
 
 if __name__ == '__main__':

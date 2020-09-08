@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,9 +15,6 @@
 # limitations under the License.
 """Machine translation decoder.
 """
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import math
 import lingvo.compat as tf
@@ -33,18 +30,6 @@ from lingvo.core import quant_utils
 from lingvo.core import rnn_cell
 from lingvo.core import rnn_layers
 from lingvo.core import summary_utils
-import six
-from six.moves import zip
-
-from tensorflow.python.ops import inplace_ops  # pylint: disable=g-direct-tensorflow-import
-
-
-@tf.Defun()
-def AssertIdShape(expected_ids_shape_pattern, ids_shape, *args):
-  dependencies = [
-      py_utils.assert_shape_match(ids_shape, expected_ids_shape_pattern)
-  ] + [py_utils.assert_shape_match(ids_shape, x_shape) for x_shape in args]
-  return py_utils.with_dependencies(dependencies, ids_shape)
 
 
 class MTBaseDecoder(base_decoder.BaseBeamSearchDecoder):
@@ -52,7 +37,7 @@ class MTBaseDecoder(base_decoder.BaseBeamSearchDecoder):
 
   @classmethod
   def Params(cls):
-    p = super(MTBaseDecoder, cls).Params()
+    p = super().Params()
     p.Define('label_smoothing', None, 'Label smoothing class.')
     p.Define('softmax', layers.SimpleFullSoftmax.Params(), 'Softmax params.')
     p.Define(
@@ -72,7 +57,7 @@ class MTBaseDecoder(base_decoder.BaseBeamSearchDecoder):
     return p
 
   def __init__(self, params):
-    super(MTBaseDecoder, self).__init__(params)
+    super().__init__(params)
     p = self.params
     if p.label_smoothing is not None:
       p.label_smoothing.name = 'smoother'
@@ -314,7 +299,7 @@ class MTBaseDecoder(base_decoder.BaseBeamSearchDecoder):
             tf.reduce_all(target_paddings[:, max_seq_length:] > 0.5))
     ], target_paddings)
     target_ids = py_utils.with_dependencies([
-        AssertIdShape(
+        py_utils.AssertIdShape(
             py_utils.GetShape(target_ids), py_utils.GetShape(target_labels),
             py_utils.GetShape(target_paddings),
             py_utils.GetShape(target_weights))
@@ -413,7 +398,7 @@ class MTDecoderV1(MTBaseDecoder, quant_utils.QuantizableLayer):
 
   @classmethod
   def Params(cls):
-    p = super(MTDecoderV1, cls).Params()
+    p = super().Params()
     # Shared embedding.
     p.Define('emb', layers.EmbeddingLayer.Params(), 'Embedding layer params.')
     p.Define('source_dim', 1024, 'Dimension of the source encoding.')
@@ -494,84 +479,91 @@ class MTDecoderV1(MTBaseDecoder, quant_utils.QuantizableLayer):
     Returns:
       Model params updated with the vocab size and wpm model.
     """
-    p = super(MTDecoderV1, cls).UpdateTargetVocabSize(p, vocab_size)
+    p = super().UpdateTargetVocabSize(p, vocab_size)
     p.emb.vocab_size = vocab_size
     return p
 
   def __init__(self, params):
-    super(MTDecoderV1, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.emb.vocab_size == p.softmax.num_classes
 
-    with tf.variable_scope(p.name):
-      if p.cc_schedule is None:
-        self.cc_schedule = None
-      else:
-        self.CreateChild('cc_schedule', p.cc_schedule)
+    if p.cc_schedule is None:
+      self.cc_schedule = None
+    else:
+      self.CreateChild('cc_schedule', p.cc_schedule)
 
+    self.CreateChild('emb', p.emb)
+
+    p.attention.dtype = p.dtype
+    p.attention.source_dim = p.source_dim
+    p.attention.query_dim = p.rnn_cell_dim
+    p.attention.packed_input = p.packed_input
+    if p.attention.params_init is None:
+      p.attention.params_init = py_utils.WeightInit.Gaussian(
+          1. / math.sqrt(p.attention.source_dim + p.attention.query_dim),
+          seed=p.random_seed)
+    atten_params = p.attention.Copy()
+
+    params = p.atten_rnn_cell_tpl.Copy()
+    params.name = 'atten_rnn'
+    params.dtype = p.dtype
+    params.reset_cell_state = p.packed_input
+    params.num_input_nodes = p.emb.embedding_dim + p.attention.source_dim
+    params.num_output_nodes = p.rnn_cell_dim
+    atten_rnn_cell = params.Copy()
+
+    params = p.atten_rnn_cls.Params()
+    params.name = 'frnn_with_atten'
+    params.dtype = p.dtype
+    params.cell = atten_rnn_cell
+    params.attention = atten_params
+    params.output_prev_atten_ctx = p.use_prev_atten_ctx
+    params.packed_input = p.packed_input
+    params.use_zero_atten_state = p.use_zero_atten_state
+    params.atten_context_dim = p.attention.source_dim
+    self.CreateChild('frnn_with_atten', params)
+
+    # TODO(zhifengc): Avoid this?
+    self._atten = self.frnn_with_atten.attention
+
+    rnn_layers_params = []
+    for i in range(1, p.rnn_layers):
+      params = p.rnn_cell_tpl.Copy()
+      params.name = 'rnn%d' % i
+      params.dtype = p.dtype
+      params.num_input_nodes = p.rnn_cell_dim + p.attention.source_dim
+      params.num_output_nodes = p.rnn_cell_dim
+      params.reset_cell_state = p.packed_input
+      rnn_cell_p = params
+
+      params = model_helper.CreateUnidirectionalRNNParams(
+          self.params, rnn_cell_p)
+      params.name = 'frnn%d' % i
+      params.packed_input = p.packed_input
+      rnn_layers_params.append(params)
+
+    self.CreateChildren('frnn', rnn_layers_params)
+
+    p.softmax.dtype = p.dtype
+    if p.feed_attention_context_vec_to_softmax:
+      p.softmax.input_dim = p.rnn_cell_dim + p.attention.source_dim
+    else:
+      p.softmax.input_dim = p.rnn_cell_dim
+    self.CreateChild('softmax', p.softmax)
+
+  def _CreateChildrenVariables(self):
+    with tf.variable_scope(self.params.name):
       if py_utils.use_tpu():
         emb_device = self.cluster.WorkerDeviceInModelSplit(0)
       else:
         emb_device = ''
       with tf.device(emb_device):
-        self.CreateChild('emb', p.emb)
-
-        p.attention.dtype = p.dtype
-        p.attention.source_dim = p.source_dim
-        p.attention.query_dim = p.rnn_cell_dim
-        p.attention.packed_input = p.packed_input
-        if p.attention.params_init is None:
-          p.attention.params_init = py_utils.WeightInit.Gaussian(
-              1. / math.sqrt(p.attention.source_dim + p.attention.query_dim),
-              seed=p.random_seed)
-        atten_params = p.attention.Copy()
-
-        params = p.atten_rnn_cell_tpl.Copy()
-        params.name = 'atten_rnn'
-        params.dtype = p.dtype
-        params.reset_cell_state = p.packed_input
-        params.num_input_nodes = p.emb.embedding_dim + p.attention.source_dim
-        params.num_output_nodes = p.rnn_cell_dim
-        atten_rnn_cell = params.Copy()
-
-        params = p.atten_rnn_cls.Params()
-        params.name = 'frnn_with_atten'
-        params.dtype = p.dtype
-        params.cell = atten_rnn_cell
-        params.attention = atten_params
-        params.output_prev_atten_ctx = p.use_prev_atten_ctx
-        params.packed_input = p.packed_input
-        params.use_zero_atten_state = p.use_zero_atten_state
-        params.atten_context_dim = p.attention.source_dim
-        self.CreateChild('frnn_with_atten', params)
-
-        # TODO(zhifengc): Avoid this?
-        self._atten = self.frnn_with_atten.attention
-
-        rnn_layers_params = []
-        for i in range(1, p.rnn_layers):
-          params = p.rnn_cell_tpl.Copy()
-          params.name = 'rnn%d' % i
-          params.dtype = p.dtype
-          params.num_input_nodes = p.rnn_cell_dim + p.attention.source_dim
-          params.num_output_nodes = p.rnn_cell_dim
-          params.reset_cell_state = p.packed_input
-          rnn_cell_p = params
-
-          params = model_helper.CreateUnidirectionalRNNParams(
-              self.params, rnn_cell_p)
-          params.name = 'frnn%d' % i
-          params.packed_input = p.packed_input
-          rnn_layers_params.append(params)
-
-        self.CreateChildren('frnn', rnn_layers_params)
-
-      p.softmax.dtype = p.dtype
-      if p.feed_attention_context_vec_to_softmax:
-        p.softmax.input_dim = p.rnn_cell_dim + p.attention.source_dim
-      else:
-        p.softmax.input_dim = p.rnn_cell_dim
-      self.CreateChild('softmax', p.softmax)
+        self.emb.InstantiateVariables()
+        self.frnn_with_atten.InstantiateVariables()
+        for frnn in self.frnn:
+          frnn.InstantiateVariables()
+    super()._CreateChildrenVariables()
 
   def ApplyDropout(self, x_in):
     p = self.params
@@ -962,7 +954,7 @@ class TransformerDecoder(MTBaseDecoder):
 
   @classmethod
   def Params(cls):
-    p = super(TransformerDecoder, cls).Params()
+    p = super().Params()
     p.Define('token_emb', layers.EmbeddingLayer.Params(),
              'Token embedding layer params.')
     p.Define('position_emb', layers.PositionalEmbeddingLayer.Params(),
@@ -984,6 +976,10 @@ class TransformerDecoder(MTBaseDecoder):
         'add_multiheaded_attention_scalar_summary', False,
         'If set, will include scalar summaries for multi-headed attention'
         ' to visualize the sparsity statistics of attention weights.')
+    p.Define('ln_tpl', layers.LayerNorm.Params(), 'Layer norm default params')
+    p.Define(
+        'ln_output', False, 'If True, layer normalization is applied to the '
+        'final output of the decoder.')
 
     # TODO(miachen): Extend this to more general logic of adding multiple
     # embedding fields.
@@ -998,6 +994,9 @@ class TransformerDecoder(MTBaseDecoder):
     p.Define(
         'use_lang_dependent_atten', False, 'If True, attention between '
         'encoder and decoder is language dependent.')
+
+    p.Define('zero_token_embs_first_time_step', False,
+             'If True, the first time step uses zeros as the post-emb lookup.')
 
     # Default config for the token embedding.
     p.token_emb.vocab_size = 32000
@@ -1026,7 +1025,7 @@ class TransformerDecoder(MTBaseDecoder):
     return p
 
   def __init__(self, params):
-    super(TransformerDecoder, self).__init__(params)
+    super().__init__(params)
     p = self.params
 
     if p.softmax.cls == layers.SharedSoftmaxLayer:
@@ -1053,49 +1052,56 @@ class TransformerDecoder(MTBaseDecoder):
     if p.use_lang_dependent_atten and p.task_emb:
       p.trans_tpl.num_aux_atten_post_proj = p.task_emb.vocab_size
 
+    if not self._share_sm_emb:
+      self.CreateChild('token_emb', p.token_emb)
+    self.CreateChild('position_emb', p.position_emb)
+    if p.task_emb:
+      assert p.task_emb.embedding_dim == self._token_emb_dim
+      self.CreateChild('task_emb', p.task_emb)
+
+    dropout_tpl = layers.DropoutLayer.Params()
+    dropout_tpl.keep_prob = (1.0 - p.input_dropout_prob)
+    self.CreateChild('input_dropout', dropout_tpl)
+
+    params_trans_layers = []
+    denom = 1
+    if isinstance(p.trans_tpl, list):
+      denom = len(p.trans_tpl)
+    assert p.num_trans_layers % denom == 0
+    for i in range(p.num_trans_layers // denom):
+      if isinstance(p.trans_tpl, list):
+        for q in p.trans_tpl:
+          params = q.Copy()
+          params_trans_layers.append(params)
+      else:
+        params = p.trans_tpl.Copy()
+        params_trans_layers.append(params)
+
+    for i, params in enumerate(params_trans_layers):
+      params.name = 'trans_layer_%d' % i
+      params.packed_input = p.packed_input
+      params.has_aux_atten = True
+      params.mask_self_atten = True
+
+    # Initialize decoder output layer norm
+    if p.ln_output:
+      params = p.ln_tpl.Copy()
+      params.name = 'dec_out_ln'
+      params.input_dim = p.model_dim
+      self.CreateChild('layer_norm_out', params)
+
+    self.CreateChildren('trans', params_trans_layers)
+
     p.softmax.input_dim = p.model_dim
+    self.CreateChild('softmax', p.softmax)
+
+  def _CreateChildrenVariables(self):
     if self._share_sm_emb:
       # Taking shared emb/softmax layer out of the decoder variable scope so
       # that it can also be shared by encoder if needed.
       with tf.variable_scope('shared_emb', reuse=tf.AUTO_REUSE):
-        self.CreateChild('softmax', p.softmax)
-
-    with tf.variable_scope(p.name):
-      if not self._share_sm_emb:
-        self.CreateChild('token_emb', p.token_emb)
-      self.CreateChild('position_emb', p.position_emb)
-      if p.task_emb:
-        assert p.task_emb.embedding_dim == self._token_emb_dim
-        self.CreateChild('task_emb', p.task_emb)
-
-      dropout_tpl = layers.DropoutLayer.Params()
-      dropout_tpl.keep_prob = (1.0 - p.input_dropout_prob)
-      self.CreateChild('input_dropout', dropout_tpl)
-
-      params_trans_layers = []
-      denom = 1
-      if isinstance(p.trans_tpl, list):
-        denom = len(p.trans_tpl)
-      assert p.num_trans_layers % denom == 0
-      for i in range(p.num_trans_layers // denom):
-        if isinstance(p.trans_tpl, list):
-          for q in p.trans_tpl:
-            params = q.Copy()
-            params_trans_layers.append(params)
-        else:
-          params = p.trans_tpl.Copy()
-          params_trans_layers.append(params)
-
-      for i, params in enumerate(params_trans_layers):
-        params.name = 'trans_layer_%d' % i
-        params.packed_input = p.packed_input
-        params.has_aux_atten = True
-        params.mask_self_atten = True
-
-      self.CreateChildren('trans', params_trans_layers)
-
-      if not self._share_sm_emb:
-        self.CreateChild('softmax', p.softmax)
+        self.softmax.InstantiateVariables()
+    super()._CreateChildrenVariables()
 
   def _RemoveEOSProbs(self, p, probs, source_enc_len):
     """Remove the attention probs on EOS symbol and renormalize.
@@ -1148,6 +1154,30 @@ class TransformerDecoder(MTBaseDecoder):
     res /= s
     return res
 
+  def _ZeroOutFirstTimeStep(self, token_embs, batch, target_time):
+    """Zeroes out the first time step.
+
+    Args:
+      token_embs:  [batch, time, model_dim] embeding lookups
+      batch: Batch size scalar
+      target_time: Target sequence length scalar.
+
+    Returns:
+      modified token_embs with the first time step zeroed out.
+    """
+    p = self.params
+
+    zero_out_index = tf.expand_dims(tf.constant([0]), axis=1)
+    # [[[0]]]
+    zero_out_index = tf.expand_dims(zero_out_index, axis=1)
+
+    # [[0]...[target_time-1]]
+    time_steps = tf.expand_dims(tf.range(target_time), axis=1)
+    condition = tf.equal(zero_out_index, time_steps)
+    mask = tf.logical_not(tf.tile(condition, [batch, 1, p.model_dim]))
+    mask = tf.cast(mask, dtype=tf.float32)
+    return token_embs * mask
+
   def _FProp(self, theta, encoder_outputs, targets):
     """Decodes `targets` given encoded source.
 
@@ -1155,16 +1185,13 @@ class TransformerDecoder(MTBaseDecoder):
       theta: A `.NestedMap` object containing weights' values of this layer and
         its children layers.
       encoder_outputs: a NestedMap computed by encoder. Expected to contain:
-
         encoded - source encoding. When `p.is_transparent` is False, it is a
-                  tensor of shape [time, batch, depth]. When `p.is_transparent`
-                  is True, it is a tensor of shape
-                  [time, batch, depth, num_trans_layers] if `self.do_eval` is
-                  True, and a list of `num_trans_layers` tensors of shape
-                  [time, batch, depth] if `self.do_eval` is False.
-
-        padding - source encoding's padding, of shape [time, batch].
-        segment_id - source segment id, of shape [time, batch].
+        tensor of shape [time, batch, depth]. When `p.is_transparent` is True,
+        it is a tensor of shape [time, batch, depth, num_trans_layers] if
+        `self.do_eval` is True, and a list of `num_trans_layers` tensors of
+        shape [time, batch, depth] if `self.do_eval` is False.  padding - source
+        encoding's padding, of shape [time, batch]. segment_id - source segment
+        id, of shape [time, batch].
       targets: A dict of string to tensors representing the targets one try to
         predict. Each tensor in targets is of shape [batch, time].
 
@@ -1213,7 +1240,16 @@ class TransformerDecoder(MTBaseDecoder):
         token_embs = self.token_emb.EmbLookup(theta.token_emb, target_ids)
       else:
         token_embs = self.softmax.EmbLookup(theta.softmax, target_ids)
+
+      target_batch = py_utils.GetShape(target_ids)[0]
       target_time = py_utils.GetShape(target_ids)[1]
+
+      if p.zero_token_embs_first_time_step:
+        # For models that do not use an explicit start-of-sequence token
+        # with associated embedding, but instead use zeros.
+        token_embs = self._ZeroOutFirstTimeStep(token_embs, target_batch,
+                                                target_time)
+
       # [1, time, model_dim]
       if p.packed_input:
         posit_embs = self.position_emb.FPropWithPosition(
@@ -1278,6 +1314,9 @@ class TransformerDecoder(MTBaseDecoder):
           # Original probs shape: [trg time, batch, src time]
           norma_atten_probs_3d = self._RemoveEOSProbs(p, pl_probs, src_enc_len)
           per_layer_attn_probs.append(norma_atten_probs_3d)
+
+      if p.ln_output:
+        layer_out = self.layer_norm_out.FProp(theta.layer_norm_out, layer_out)
 
       # per_layer_attn_probs shape: [batch, trg time, src time]
       self._AddAttenProbsSummary(source_paddings, targets, per_layer_attn_probs)
@@ -1352,6 +1391,13 @@ class TransformerDecoder(MTBaseDecoder):
         token_embs = self.token_emb.EmbLookup(theta.token_emb, new_ids)
       else:
         token_embs = self.softmax.EmbLookup(theta.softmax, new_ids)
+
+      if p.zero_token_embs_first_time_step:
+        # For models that do not use an explicit start-of-sequence token
+        # with associated embedding, but instead use zeros.
+        zeros = tf.zeros_like(token_embs)
+        token_embs = tf.cond(tf.equal(t, 0), lambda: zeros, lambda: token_embs)
+
       # [time, model_dim]
       posit_embs = tf.slice(
           self.position_emb.FProp(theta.position_emb, p.target_seq_len), [t, 0],
@@ -1410,7 +1456,7 @@ class TransformerDecoder(MTBaseDecoder):
         out_prefix_states['layer_%i' % i] = updated_prefix_states
         layer_in = layer_out
         # Enforce shape: [batch, src_len]
-        probs = tf.squeeze(probs)
+        probs = tf.squeeze(probs, [0])
         # Remove attention weight on last (EOS) token and re-normalize
         # so that last dimension sums to 1. See b/129097156.
         probs_3d = tf.expand_dims(probs, axis=1)
@@ -1418,6 +1464,9 @@ class TransformerDecoder(MTBaseDecoder):
         probs = tf.squeeze(probs_3d, axis=1)
 
         atten_probs.append(probs)
+
+      if p.ln_output:
+        layer_out = self.layer_norm_out.FProp(theta.layer_norm_out, layer_out)
 
       # Aggregate per-layer attention probs.
       aggregated_atten_probs = tf.math.add_n(atten_probs) / len(atten_probs)
@@ -1484,8 +1533,9 @@ class TransformerDecoder(MTBaseDecoder):
         for layer in range(p.num_trans_layers):
           key = prefix_states['layer_%d' % layer]['key']
           value = prefix_states['layer_%d' % layer]['value']
-          bs = key.shape[1]
-          atten_dim = key.shape[2]
+          key_shapes = py_utils.GetShape(key)
+          bs = key_shapes[1]
+          atten_dim = key_shapes[2]
           zeros = tf.zeros([p.target_seq_len, bs, atten_dim],
                            dtype=py_utils.FPropDtype(p))
           prefix_states['layer_%d' % layer]['key'] = tf.concat([key, zeros], 0)
@@ -1824,8 +1874,7 @@ class TransformerDecoder(MTBaseDecoder):
       atten_probs: a list of attention probs, each element is of shape [tgt_len,
         tgt_batch, src_len].
     """
-    super(TransformerDecoder,
-          self)._AddAttenProbsSummary(source_paddings, targets, atten_probs)
+    super()._AddAttenProbsSummary(source_paddings, targets, atten_probs)
     if self.cluster.add_summary and self.params.add_multiheaded_attention_scalar_summary:
       self._AddAttenProbsScalarSummary(source_paddings, targets, atten_probs)
 
@@ -1840,7 +1889,7 @@ class InsertionDecoder(base_decoder.BaseBeamSearchDecoder):
 
   @classmethod
   def Params(cls):
-    p = super(InsertionDecoder, cls).Params()
+    p = super().Params()
     p.Define('token_emb', layers.EmbeddingLayer.Params(),
              'Token embedding layer params.')
     p.Define('position_emb', layers.PositionalEmbeddingLayer.Params(),
@@ -1896,32 +1945,31 @@ class InsertionDecoder(base_decoder.BaseBeamSearchDecoder):
     return p
 
   def __init__(self, params):
-    super(InsertionDecoder, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.token_emb.vocab_size % p.softmax.num_classes == 0
     assert p.token_emb.embedding_dim == p.position_emb.embedding_dim
     assert p.token_emb.embedding_dim == p.model_dim
 
-    with tf.variable_scope(p.name):
-      self.CreateChild('token_emb', p.token_emb)
-      self.CreateChild('position_emb', p.position_emb)
+    self.CreateChild('token_emb', p.token_emb)
+    self.CreateChild('position_emb', p.position_emb)
 
-      dropout_tpl = layers.DropoutLayer.Params()
-      dropout_tpl.keep_prob = (1.0 - p.input_dropout_prob)
-      self.CreateChild('input_dropout', dropout_tpl)
+    dropout_tpl = layers.DropoutLayer.Params()
+    dropout_tpl.keep_prob = (1.0 - p.input_dropout_prob)
+    self.CreateChild('input_dropout', dropout_tpl)
 
-      params_trans_layers = []
-      for i in range(p.num_trans_layers):
-        params = p.trans_tpl.Copy()
-        params.name = 'trans_layer_%d' % i
-        params.packed_input = p.packed_input
-        params.has_aux_atten = False
-        params.mask_self_atten = True
-        params_trans_layers.append(params)
-      self.CreateChildren('trans', params_trans_layers)
+    params_trans_layers = []
+    for i in range(p.num_trans_layers):
+      params = p.trans_tpl.Copy()
+      params.name = 'trans_layer_%d' % i
+      params.packed_input = p.packed_input
+      params.has_aux_atten = False
+      params.mask_self_atten = True
+      params_trans_layers.append(params)
+    self.CreateChildren('trans', params_trans_layers)
 
-      p.softmax.input_dim = p.model_dim
-      self.CreateChild('softmax', p.softmax)
+    p.softmax.input_dim = p.model_dim
+    self.CreateChild('softmax', p.softmax)
 
   def ComputePredictions(self, theta, encoder_outputs, targets):
     """Compute 1-step of the insertion iteration.
@@ -2041,7 +2089,7 @@ class TransformerBatchMajorDecoder(MTBaseDecoder):
 
   @classmethod
   def Params(cls):
-    p = super(TransformerBatchMajorDecoder, cls).Params()
+    p = super().Params()
     p.Define('token_emb', layers.EmbeddingLayer.Params(),
              'Token embedding layer params.')
     p.Define('shared_emb', None, 'Embedding shared with softmax.')
@@ -2102,40 +2150,44 @@ class TransformerBatchMajorDecoder(MTBaseDecoder):
     return p
 
   def __init__(self, params):
-    super(TransformerBatchMajorDecoder, self).__init__(params)
+    super().__init__(params)
     p = self.params
 
     if p.shared_emb:
+      self.CreateChild('softmax', p.shared_emb)
+
+    if not p.shared_emb:
+      self.CreateChild('token_emb', p.token_emb)
+    self.CreateChild('position_emb', p.position_emb)
+
+    dropout_tpl = p.input_dropout_tpl.Copy()
+    dropout_tpl.keep_prob = (1.0 - p.input_dropout_prob)
+    self.CreateChild('input_dropout', dropout_tpl)
+
+    params_trans_layers = []
+    for i in range(p.num_trans_layers):
+      params = p.trans_decoder_tpl.Copy()
+      params.name = 'decoder_trans_layer_%d' % i
+      params_trans_layers.append(params)
+    self.CreateChildren('decoder_trans', params_trans_layers)
+
+    p.softmax.input_dim = p.model_dim
+    if not p.shared_emb:
+      self.CreateChild('softmax', p.softmax)
+
+    if p.final_layer_norm:
+      layer_norm_p = layers.LayerNorm.Params().Set(
+          name='final_ln',
+          input_dim=p.model_dim,
+          use_fused_layernorm=p.use_fused_layernorm,
+          fprop_dtype=p.input_dropout_tpl.fprop_dtype)
+      self.CreateChild('final_ln', layer_norm_p)
+
+  def _CreateChildrenVariables(self):
+    if self.params.shared_emb:
       with tf.variable_scope('shared_emb', reuse=tf.AUTO_REUSE):
-        self.CreateChild('softmax', p.shared_emb)
-
-    with tf.variable_scope(p.name):
-      if not p.shared_emb:
-        self.CreateChild('token_emb', p.token_emb)
-      self.CreateChild('position_emb', p.position_emb)
-
-      dropout_tpl = p.input_dropout_tpl.Copy()
-      dropout_tpl.keep_prob = (1.0 - p.input_dropout_prob)
-      self.CreateChild('input_dropout', dropout_tpl)
-
-      params_trans_layers = []
-      for i in range(p.num_trans_layers):
-        params = p.trans_decoder_tpl.Copy()
-        params.name = 'decoder_trans_layer_%d' % i
-        params_trans_layers.append(params)
-      self.CreateChildren('decoder_trans', params_trans_layers)
-
-      p.softmax.input_dim = p.model_dim
-      if not p.shared_emb:
-        self.CreateChild('softmax', p.softmax)
-
-      if p.final_layer_norm:
-        layer_norm_p = layers.LayerNorm.Params().Set(
-            name='final_ln',
-            input_dim=p.model_dim,
-            use_fused_layernorm=p.use_fused_layernorm,
-            fprop_dtype=p.input_dropout_tpl.fprop_dtype)
-        self.CreateChild('final_ln', layer_norm_p)
+        self.softmax.InstantiateVariables()
+    super()._CreateChildrenVariables()
 
   def _MaybeTransposeEncoderOutputs(self, encoder_outputs, target_data_format):
     p = self.params
@@ -2310,7 +2362,7 @@ class TransformerBatchMajorDecoder(MTBaseDecoder):
       # [1, 1, dim]
       if isinstance(time_step, tf.Tensor):
         time_step_t = tf.reshape(time_step, [1, 1])
-      elif isinstance(time_step, six.integer_types):
+      elif isinstance(time_step, int):
         time_step_t = tf.constant([[time_step]], dtype=tf.int32)
       else:
         raise ValueError('Unexpected input type `%s` for `time_step`.' %
@@ -2545,32 +2597,10 @@ class TransformerBatchMajorDecoder(MTBaseDecoder):
     initial_results = py_utils.NestedMap(
         log_probs=log_probs, atten_probs=atten_probs)
 
-    dim = p.trans_decoder_tpl.tr_atten_tpl.hidden_dim
-    if not dim:
-      dim = p.model_dim
-    num_heads = p.trans_decoder_tpl.tr_atten_tpl.num_heads
-    # If per-head dim is less than 128, make the cached shape 128 to avoid
-    # padding and more efficient interpolation in beamsearch.
-    if dim // num_heads < 128 and dim % 128 == 0:
-      num_heads = dim // 128
-
-    def _GenStates():
-      return py_utils.NestedMap({
-          'key':
-              inplace_ops.empty(
-                  [target_time, target_batch, num_heads, dim // num_heads],
-                  dtype=py_utils.FPropDtype(p.trans_decoder_tpl),
-                  init=True),
-          'value':
-              inplace_ops.empty(
-                  [target_time, target_batch, num_heads, dim // num_heads],
-                  dtype=py_utils.FPropDtype(p.trans_decoder_tpl),
-                  init=True),
-      })
-
-    prefix_states = py_utils.NestedMap({
-        'layer_%d' % layer: _GenStates() for layer in range(p.num_trans_layers)
-    })
+    prefix_states = py_utils.NestedMap()
+    for layer in range(p.num_trans_layers):
+      prefix_states['layer_%d' % layer] = self.decoder_trans[layer].InitStates(
+          theta.decoder_trans[layer], target_batch, target_time)
 
     return initial_results, py_utils.NestedMap({
         'prefix_states': prefix_states,

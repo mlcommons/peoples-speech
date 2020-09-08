@@ -15,28 +15,26 @@
 # ==============================================================================
 """Tests for hyperparams."""
 
-
 import collections
 import enum
 
+import dataclasses
 import lingvo.compat as tf
 from lingvo.core import hyperparams as _params
 from lingvo.core import hyperparams_pb2
 from lingvo.core import symbolic
 from lingvo.core import test_utils
-from six.moves import range
-from six.moves import zip
 
 FLAGS = tf.flags.FLAGS
 
 
-class TestClass1(object):
-  """This class is used in ParamsToSimpleTextTest as a value of a variable."""
+class TestClass1:
+  """This class is used in ParamsTest.testToText as a value of a variable."""
   pass
 
 
-class TestClass2(object):
-  """This class is used in ParamsToSimpleTextTest as a value of a variable."""
+class TestClass2:
+  """This class is used in ParamsTest.testToText as a value of a variable."""
   pass
 
 
@@ -46,9 +44,24 @@ class TestEnum(enum.Enum):
   B = 2
 
 
+@dataclasses.dataclass
+class TestDataClass:
+  """Test dataclasses.dataclass."""
+  a: str
+  b: tf.DType
+
+
 class TestNamedTuple(collections.namedtuple('TestNamedTuple', ['a', 'b'])):
   """Test namedtuple class."""
   pass
+
+
+class InstantiableClass:
+  """Used for testing InstantiableParams."""
+
+  def __init__(self, params, other=None):
+    self.params = params
+    self.other = other
 
 
 class ParamsTest(test_utils.TestCase):
@@ -301,6 +314,7 @@ class ParamsTest(test_utils.TestCase):
     outer.Define('some_class', complex(0, 1), '')
     outer.Define('optional_bool', None, '')
     outer.Define('enum', TestEnum.B, '')
+    outer.Define('dataclass', TestDataClass(a=[42], b=tf.float32), '')
     outer.Define('namedtuple', TestNamedTuple([42], tf.float32), '')
     outer.Define('namedtuple2', tf.io.FixedLenSequenceFeature([42], tf.float32),
                  '')
@@ -312,6 +326,7 @@ class ParamsTest(test_utils.TestCase):
 class : type/__main__/TestClass1
 complex_dict : {'a': 10, 'b': {'bar': 2.71, 'baz': 'hello'}}
 complex_dict_escape : {'a': 'abc"\'\ndef'}
+dataclass : {'a': [42], 'b': 'float32'}
 dtype : float32
 dtype2 : int32
 enum : TestEnum.B
@@ -332,6 +347,7 @@ tuple : (1, 'NoneType')
 """)
 
     outer.FromText("""
+        dataclass : {'a': 27, 'b': 'int32'}
         dtype2 : float32
         inner.baz : 'world'
         # foo : 123
@@ -355,6 +371,7 @@ tuple : (1, 'NoneType')
 class : type/__main__/TestClass2
 complex_dict : {'a': 10, 'b': {'bar': 2.71, 'baz': 'world'}}
 complex_dict_escape : {'a': 'abc"\'\ndef'}
+dataclass : {'a': 27, 'b': 'int32'}
 dtype : float32
 dtype2 : float32
 enum : TestEnum.A
@@ -373,6 +390,7 @@ some_class : complex
 tau : True
 tuple : (2, 3)
 """)
+    self.assertEqual(outer.dataclass.b, tf.int32)
     self.assertEqual(outer.namedtuple.b, tf.int32)
     self.assertEqual(outer.namedtuple2.dtype, tf.int32)
     self.assertIsNone(outer.namedtuple2.default_value, tf.int32)
@@ -393,6 +411,7 @@ tuple : (2, 3)
     outer.Define('empty_dict', {}, '')
     outer.Define('enum', TestEnum.B, '')
     outer.Define('proto', hyperparams_pb2.HyperparamValue(int_val=42), '')
+    outer.Define('dataclass', TestDataClass(a=[42], b=tf.float32), '')
     outer.Define('namedtuple', tf.io.FixedLenSequenceFeature([42], tf.float32),
                  '')
 
@@ -412,6 +431,7 @@ tuple : (2, 3)
     self.assertEqual(outer.empty_dict, rebuilt_outer.empty_dict)
     self.assertEqual(outer.enum, rebuilt_outer.enum)
     self.assertEqual(outer.proto, rebuilt_outer.proto)
+    self.assertEqual(outer.dataclass, rebuilt_outer.dataclass)
     self.assertEqual(outer.namedtuple, rebuilt_outer.namedtuple)
 
   def testStringEscaping(self):
@@ -566,6 +586,27 @@ escaping_single : 'In "quotes"'
         '? d:\n'
         '>   hey: hi\n'
         '<   hey: hello\n')
+
+  def testInstantiate(self):
+    a = _params.InstantiableParams(InstantiableClass)
+    a.Define('new_param', None, 'A meaningless param.')
+    a.new_param = 'hi'
+
+    obj = a.Instantiate()
+    self.assertIsInstance(obj, InstantiableClass)
+    self.assertEqual(obj.params.new_param, 'hi')
+
+  def testInstantiateWithParams(self):
+    a = _params.InstantiableParams(InstantiableClass)
+    a.Define('new_param', None, 'A meaningless param.')
+    a.new_param = 'hi'
+
+    # Same as the previous test, but InstantiableClass should also get
+    # other=15 passed as a keyword argument to the constructor.
+    obj = a.Instantiate(other=15)
+    self.assertIsInstance(obj, InstantiableClass)
+    self.assertEqual(obj.params.new_param, 'hi')
+    self.assertEqual(obj.other, 15)
 
 
 if __name__ == '__main__':

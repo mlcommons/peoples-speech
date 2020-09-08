@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,9 +14,6 @@
 # limitations under the License.
 """Encoders for the machine translation model.
 """
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import math
 import lingvo.compat as tf
@@ -28,7 +25,6 @@ from lingvo.core import py_utils
 from lingvo.core import rnn_cell
 from lingvo.core import summary_utils
 from lingvo.tasks.mt import layers as mt_layers
-from six.moves import range
 
 tf.flags.DEFINE_bool('transformer_encoder_truncates_inputs', False,
                      'Whether TransformerEncoder truncates inputs to max len.')
@@ -40,7 +36,7 @@ class MTEncoderV1(base_layer.BaseLayer):
   @classmethod
   def Params(cls):
     """Configs for `MTEncoderV1`."""
-    p = super(MTEncoderV1, cls).Params()
+    p = super().Params()
     p.Define('emb', layers.EmbeddingLayer.Params(), 'Embedding layer params.')
     p.Define('lstm_tpl',
              rnn_cell.LSTMCellSimple.Params(),
@@ -77,66 +73,66 @@ class MTEncoderV1(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(MTEncoderV1, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert not p.packed_input, ('Packed inputs are not yet supported for '
                                 'MTEncoderV1.')
 
-    with tf.variable_scope(p.name):
-      if p.cc_schedule is not None:
-        self.CreateChild('cc_schedule', p.cc_schedule)
+    if p.cc_schedule is not None:
+      self.CreateChild('cc_schedule', p.cc_schedule)
 
-      self.CreateChild('emb', p.emb)
+    self.CreateChild('emb', p.emb)
 
-      rnn_layers_params = []
+    rnn_layers_params = []
 
-      # L0 is a bi-directional lstm.
+    # L0 is a bi-directional lstm.
 
-      # L0's forward lstm cell
-      if p.lstm_tpl_bidi is None:
-        params = p.lstm_tpl.Copy()
+    # L0's forward lstm cell
+    if p.lstm_tpl_bidi is None:
+      params = p.lstm_tpl.Copy()
+    else:
+      params = p.lstm_tpl_bidi.Copy()
+    params.name = 'L0_rnn_fwd'
+    params.num_input_nodes = p.emb.embedding_dim
+    params.num_output_nodes = p.lstm_cell_size
+    forward_lstm = params
+
+    # L0's backward lstm cell
+    params = params.Copy()
+    params.name = 'L0_rnn_bak'
+    backward_lstm = params
+
+    # L0 layer.
+    params = model_helper.CreateBidirectionalRNNParams(self.params,
+                                                       forward_lstm,
+                                                       backward_lstm)
+    params.name = 'L0'
+    rnn_layers_params.append(params)
+
+    # The latter layers are all uni-directional lstm.
+    input_size = 2 * p.lstm_cell_size
+    for i in range(1, p.num_lstm_layers):
+      # Forward lstm cell.
+      if p.lstm_tpl_uni is None:
+        cell = p.lstm_tpl.Copy()
       else:
-        params = p.lstm_tpl_bidi.Copy()
-      params.name = 'L0_rnn_fwd'
-      params.num_input_nodes = p.emb.embedding_dim
-      params.num_output_nodes = p.lstm_cell_size
-      forward_lstm = params
-
-      # L0's backward lstm cell
-      params = params.Copy()
-      params.name = 'L0_rnn_bak'
-      backward_lstm = params
-
-      # L0 layer.
-      params = model_helper.CreateBidirectionalRNNParams(
-          self.params, forward_lstm, backward_lstm)
-      params.name = 'L0'
+        cell = p.lstm_tpl_uni.Copy()
+      cell.name = 'L%d_rnn' % i
+      cell.num_input_nodes = input_size
+      cell.num_output_nodes = p.lstm_cell_size
+      # Forward lstm layer.
+      params = model_helper.CreateUnidirectionalRNNParams(self.params, cell)
+      params.name = 'L%d' % i
       rnn_layers_params.append(params)
+      input_size = p.lstm_cell_size
 
-      # The latter layers are all uni-directional lstm.
-      input_size = 2 * p.lstm_cell_size
-      for i in range(1, p.num_lstm_layers):
-        # Forward lstm cell.
-        if p.lstm_tpl_uni is None:
-          cell = p.lstm_tpl.Copy()
-        else:
-          cell = p.lstm_tpl_uni.Copy()
-        cell.name = 'L%d_rnn' % i
-        cell.num_input_nodes = input_size
-        cell.num_output_nodes = p.lstm_cell_size
-        # Forward lstm layer.
-        params = model_helper.CreateUnidirectionalRNNParams(self.params, cell)
-        params.name = 'L%d' % i
-        rnn_layers_params.append(params)
-        input_size = p.lstm_cell_size
+    self.CreateChildren('rnn', rnn_layers_params)
 
-      self.CreateChildren('rnn', rnn_layers_params)
-
-      dropout_p = layers.DropoutLayer.Params().Set(
-          name='dropout_layer',
-          keep_prob=1.0 - p.dropout_prob,
-          random_seed=p.random_seed + 84828474 if p.random_seed else None)
-      self.CreateChild('dropout', dropout_p)
+    dropout_p = layers.DropoutLayer.Params().Set(
+        name='dropout_layer',
+        keep_prob=1.0 - p.dropout_prob,
+        random_seed=p.random_seed + 84828474 if p.random_seed else None)
+    self.CreateChild('dropout', dropout_p)
 
   def ApplyClipping(self, theta, x):
     p = self.params
@@ -208,7 +204,7 @@ class MTEncoderUniRNN(base_layer.BaseLayer):
   @classmethod
   def Params(cls):
     """Configs for `MTEncoderUniRNN`."""
-    p = super(MTEncoderUniRNN, cls).Params()
+    p = super().Params()
     p.Define('emb', layers.EmbeddingLayer.Params(), 'Embedding layer params.')
     p.Define('lstm_tpl', rnn_cell.LSTMCellSimple.Params(),
              'Configs template for the RNN layer.')
@@ -245,45 +241,44 @@ class MTEncoderUniRNN(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(MTEncoderUniRNN, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert not p.packed_input, ('Packed inputs are not yet supported for '
                                 'MTEncoderUniRNN.')
 
-    with tf.variable_scope(p.name):
-      if p.cc_schedule is None:
-        self.cc_schedule = None
-      else:
-        self.CreateChild('cc_schedule', p.cc_schedule)
+    if p.cc_schedule is None:
+      self.cc_schedule = None
+    else:
+      self.CreateChild('cc_schedule', p.cc_schedule)
 
-      self.CreateChild('emb', p.emb)
+    self.CreateChild('emb', p.emb)
 
-      rnn_layers_params = []
+    rnn_layers_params = []
 
-      num_input_nodes = p.emb.embedding_dim
-      for i in range(p.num_lstm_layers):
-        cell = p.lstm_tpl.Copy()
-        cell.name = 'L%d_rnn' % i
-        cell.num_input_nodes = num_input_nodes
-        cell.num_output_nodes = p.lstm_cell_size
-        params = model_helper.CreateUnidirectionalRNNParams(self.params, cell)
-        params.name = 'L%d' % i
-        rnn_layers_params.append(params)
-        num_input_nodes = cell.num_output_nodes
+    num_input_nodes = p.emb.embedding_dim
+    for i in range(p.num_lstm_layers):
+      cell = p.lstm_tpl.Copy()
+      cell.name = 'L%d_rnn' % i
+      cell.num_input_nodes = num_input_nodes
+      cell.num_output_nodes = p.lstm_cell_size
+      params = model_helper.CreateUnidirectionalRNNParams(self.params, cell)
+      params.name = 'L%d' % i
+      rnn_layers_params.append(params)
+      num_input_nodes = cell.num_output_nodes
 
-      self.CreateChildren('rnn', rnn_layers_params)
+    self.CreateChildren('rnn', rnn_layers_params)
 
-      dropout_p = layers.DropoutLayer.Params().Set(
-          name='dropout_layer',
-          keep_prob=1.0 - p.dropout_prob,
-          random_seed=p.random_seed + 827366448 if p.random_seed else None)
-      self.CreateChild('dropout', dropout_p)
+    dropout_p = layers.DropoutLayer.Params().Set(
+        name='dropout_layer',
+        keep_prob=1.0 - p.dropout_prob,
+        random_seed=p.random_seed + 827366448 if p.random_seed else None)
+    self.CreateChild('dropout', dropout_p)
 
-      if p.is_transparent:
-        transparent_params = p.transparent_merger_tpl.Copy()
-        transparent_params.name = 'transparent'
-        transparent_params.num_sources = p.num_lstm_layers
-        self.CreateChild('transparent_merger', transparent_params)
+    if p.is_transparent:
+      transparent_params = p.transparent_merger_tpl.Copy()
+      transparent_params.name = 'transparent'
+      transparent_params.num_sources = p.num_lstm_layers
+      self.CreateChild('transparent_merger', transparent_params)
 
   def ApplyClipping(self, theta, x):
     if self.cc_schedule:
@@ -351,7 +346,7 @@ class MTEncoderBiRNN(base_layer.BaseLayer):
   @classmethod
   def Params(cls):
     """Configs for `MTEncoderBiRNN`."""
-    p = super(MTEncoderBiRNN, cls).Params()
+    p = super().Params()
     p.Define('emb', layers.EmbeddingLayer.Params(), 'Embedding layer params.')
     p.Define('lstm_tpl',
              rnn_cell.LSTMCellSimple.Params(),
@@ -393,69 +388,68 @@ class MTEncoderBiRNN(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(MTEncoderBiRNN, self).__init__(params)
+    super().__init__(params)
     p = self.params
 
-    with tf.variable_scope(p.name):
-      if p.cc_schedule is None:
-        self.cc_schedule = None
+    if p.cc_schedule is None:
+      self.cc_schedule = None
+    else:
+      self.CreateChild('cc_schedule', p.cc_schedule)
+
+    self.CreateChild('emb', p.emb)
+
+    rnn_layers_params = []
+
+    for i in range(p.num_lstm_layers):
+      params = p.lstm_tpl.Copy()
+      params.name = 'L%d_rnn_fwd' % i
+      if i == 0:
+        params.num_input_nodes = p.emb.embedding_dim
       else:
-        self.CreateChild('cc_schedule', p.cc_schedule)
+        params.num_input_nodes = 2 * p.lstm_cell_size
+      params.num_output_nodes = p.lstm_cell_size
+      params.reset_cell_state = p.packed_input
+      forward_lstm = params
 
-      self.CreateChild('emb', p.emb)
+      params = params.Copy()
+      params.name = 'L%d_rnn_bak' % i
+      params.reset_cell_state = p.packed_input
+      backward_lstm = params
 
-      rnn_layers_params = []
+      params = model_helper.CreateBidirectionalRNNParams(
+          self.params, forward_lstm, backward_lstm)
+      params.packed_input = p.packed_input
+      params.name = 'L%d' % i
+      rnn_layers_params.append(params)
 
-      for i in range(p.num_lstm_layers):
-        params = p.lstm_tpl.Copy()
-        params.name = 'L%d_rnn_fwd' % i
-        if i == 0:
-          params.num_input_nodes = p.emb.embedding_dim
-        else:
-          params.num_input_nodes = 2 * p.lstm_cell_size
-        params.num_output_nodes = p.lstm_cell_size
-        params.reset_cell_state = p.packed_input
-        forward_lstm = params
+    self.CreateChildren('rnn', rnn_layers_params)
 
-        params = params.Copy()
-        params.name = 'L%d_rnn_bak' % i
-        params.reset_cell_state = p.packed_input
-        backward_lstm = params
+    if p.lstm_cell_size * 2 != p.encoder_out_dim:
+      # Project the encoder output to the desired dim.
+      proj_p = p.proj_tpl.Copy().Set(
+          name='proj',
+          batch_norm=False,
+          input_dim=p.lstm_cell_size * 2,
+          output_dim=p.encoder_out_dim)
+      if p.cc_schedule is not None:
+        proj_p.has_bias = False
+        proj_p.activation = 'TANH'
+      else:
+        proj_p.has_bias = True
+        proj_p.activation = 'NONE'
+      self.CreateChild('final_proj', proj_p)
 
-        params = model_helper.CreateBidirectionalRNNParams(
-            self.params, forward_lstm, backward_lstm)
-        params.packed_input = p.packed_input
-        params.name = 'L%d' % i
-        rnn_layers_params.append(params)
+    dropout_p = layers.DropoutLayer.Params().Set(
+        name='dropout_layer',
+        keep_prob=1.0 - p.dropout_prob,
+        random_seed=p.random_seed + 827366448 if p.random_seed else None)
+    self.CreateChild('dropout', dropout_p)
 
-      self.CreateChildren('rnn', rnn_layers_params)
-
-      if p.lstm_cell_size * 2 != p.encoder_out_dim:
-        # Project the encoder output to the desired dim.
-        proj_p = p.proj_tpl.Copy().Set(
-            name='proj',
-            batch_norm=False,
-            input_dim=p.lstm_cell_size * 2,
-            output_dim=p.encoder_out_dim)
-        if p.cc_schedule is not None:
-          proj_p.has_bias = False
-          proj_p.activation = 'TANH'
-        else:
-          proj_p.has_bias = True
-          proj_p.activation = 'NONE'
-        self.CreateChild('final_proj', proj_p)
-
-      dropout_p = layers.DropoutLayer.Params().Set(
-          name='dropout_layer',
-          keep_prob=1.0 - p.dropout_prob,
-          random_seed=p.random_seed + 827366448 if p.random_seed else None)
-      self.CreateChild('dropout', dropout_p)
-
-      if p.is_transparent:
-        transparent_params = p.transparent_merger_tpl.Copy()
-        transparent_params.name = 'transparent'
-        transparent_params.num_sources = p.num_lstm_layers
-        self.CreateChild('transparent_merger', transparent_params)
+    if p.is_transparent:
+      transparent_params = p.transparent_merger_tpl.Copy()
+      transparent_params.name = 'transparent'
+      transparent_params.num_sources = p.num_lstm_layers
+      self.CreateChild('transparent_merger', transparent_params)
 
   def ApplyClipping(self, theta, x):
     if self.cc_schedule:
@@ -522,7 +516,7 @@ class TransformerEncoder(base_layer.BaseLayer):
   @classmethod
   def Params(cls):
     """Configs for `TransformerEncoder`."""
-    p = super(TransformerEncoder, cls).Params()
+    p = super().Params()
 
     # Embedding related
     p.Define('token_emb',
@@ -570,49 +564,52 @@ class TransformerEncoder(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(TransformerEncoder, self).__init__(params)
+    super().__init__(params)
     p = self.params
 
     if p.shared_emb:
-      with tf.variable_scope('shared_emb', reuse=tf.AUTO_REUSE):
-        # Naming this 'softmax' to match the name of the same component in the
-        # decoder. Variable names need to be the same in order to be reused.
-        self.CreateChild('softmax', p.shared_emb)
+      # Naming this 'softmax' to match the name of the same component in the
+      # decoder. Variable names need to be the same in order to be reused.
+      self.CreateChild('softmax', p.shared_emb)
 
-    with tf.variable_scope(p.name):
-      assert p.token_emb.embedding_dim == p.position_emb.embedding_dim
-      p.transformer_stack.Set(
-          model_dim=p.model_dim, packed_input=p.packed_input)
-      if p.model_dim != p.token_emb.embedding_dim:
-        tf.logging.warning(
-            'token_emb.embedding_dim != model_dim (%s vs. %s), '
-            'creating a projection!')
-        proj_p = layers.ProjectionLayer.Params().Copy()
-        proj_p.name = 'emb_proj'
-        proj_p.input_dim = p.token_emb.embedding_dim
-        proj_p.output_dim = p.model_dim
-        proj_p.batch_norm = True
-        self.CreateChild('emb_proj', proj_p)
+    assert p.token_emb.embedding_dim == p.position_emb.embedding_dim
+    p.transformer_stack.Set(model_dim=p.model_dim, packed_input=p.packed_input)
+    if p.model_dim != p.token_emb.embedding_dim:
+      tf.logging.warning('token_emb.embedding_dim != model_dim (%s vs. %s), '
+                         'creating a projection!')
+      proj_p = layers.ProjectionLayer.Params().Copy()
+      proj_p.name = 'emb_proj'
+      proj_p.input_dim = p.token_emb.embedding_dim
+      proj_p.output_dim = p.model_dim
+      proj_p.batch_norm = True
+      self.CreateChild('emb_proj', proj_p)
 
-      # Token embeddings
-      if not p.shared_emb:
-        p.token_emb.dtype = p.dtype
-        self.CreateChild('token_emb', p.token_emb)
+    # Token embeddings
+    if not p.shared_emb:
+      p.token_emb.dtype = p.dtype
+      self.CreateChild('token_emb', p.token_emb)
 
-      # Positional embeddings
-      self.CreateChild('position_emb', p.position_emb)
+    # Positional embeddings
+    self.CreateChild('position_emb', p.position_emb)
 
-      # Task embeddings.
-      if p.task_emb:
-        assert p.task_emb.embedding_dim == p.token_emb.embedding_dim
-        self.CreateChild('task_emb', p.task_emb)
+    # Task embeddings.
+    if p.task_emb:
+      assert p.task_emb.embedding_dim == p.token_emb.embedding_dim
+      self.CreateChild('task_emb', p.task_emb)
 
-      dropout_tpl = layers.DropoutLayer.Params()
-      dropout_tpl.keep_prob = (1.0 - p.input_dropout_prob)
-      self.CreateChild('input_dropout', dropout_tpl)
+    dropout_tpl = layers.DropoutLayer.Params()
+    dropout_tpl.keep_prob = (1.0 - p.input_dropout_prob)
+    self.CreateChild('input_dropout', dropout_tpl)
 
     p.transformer_stack.name = p.name
     self.CreateChild('transformer_stack', p.transformer_stack)
+
+  def _CreateChildrenVariables(self):
+    if self.params.shared_emb:
+      with tf.variable_scope('shared_emb', reuse=tf.AUTO_REUSE):
+        self.softmax.InstantiateVariables()
+    self.transformer_stack.InstantiateVariables()
+    super()._CreateChildrenVariables()
 
   def FProp(self, theta, input_batch):
     """Embeds source ids and transforms with TransformerStack.
@@ -758,7 +755,7 @@ class TransformerBatchMajorEncoder(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(TransformerBatchMajorEncoder, cls).Params()
+    p = super().Params()
 
     # Default config for the token embedding.
     p.Define(
@@ -795,35 +792,39 @@ class TransformerBatchMajorEncoder(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(TransformerBatchMajorEncoder, self).__init__(params)
+    super().__init__(params)
     p = self.params
 
     assert p.output_data_format in ('TBC', 'BTC')
 
     if p.shared_emb:
+      self.CreateChild('softmax', p.shared_emb)
+
+    p.token_emb.dtype = p.dtype
+    if not p.shared_emb:
+      self.CreateChild('token_emb', p.token_emb)
+    self.CreateChild('position_emb', p.position_emb)
+
+    dropout_tpl = p.input_dropout_tpl.Copy()
+    dropout_tpl.keep_prob = (1.0 - p.input_dropout_prob)
+    self.CreateChild('input_dropout', dropout_tpl)
+
+    if p.transformer_stack:
+      self.CreateChild('transformer_stack', p.transformer_stack)
+
+    if p.final_layer_norm:
+      layer_norm_p = layers.LayerNorm.Params().Set(
+          name='final_ln',
+          input_dim=p.model_dim,
+          use_fused_layernorm=p.use_fused_layernorm,
+          fprop_dtype=p.input_dropout_tpl.fprop_dtype)
+      self.CreateChild('final_ln', layer_norm_p)
+
+  def _CreateChildrenVariables(self):
+    if self.params.shared_emb:
       with tf.variable_scope('shared_emb', reuse=tf.AUTO_REUSE):
-        self.CreateChild('softmax', p.shared_emb)
-
-    with tf.variable_scope(p.name):
-      p.token_emb.dtype = p.dtype
-      if not p.shared_emb:
-        self.CreateChild('token_emb', p.token_emb)
-      self.CreateChild('position_emb', p.position_emb)
-
-      dropout_tpl = p.input_dropout_tpl.Copy()
-      dropout_tpl.keep_prob = (1.0 - p.input_dropout_prob)
-      self.CreateChild('input_dropout', dropout_tpl)
-
-      if p.transformer_stack:
-        self.CreateChild('transformer_stack', p.transformer_stack)
-
-      if p.final_layer_norm:
-        layer_norm_p = layers.LayerNorm.Params().Set(
-            name='final_ln',
-            input_dim=p.model_dim,
-            use_fused_layernorm=p.use_fused_layernorm,
-            fprop_dtype=p.input_dropout_tpl.fprop_dtype)
-        self.CreateChild('final_ln', layer_norm_p)
+        self.softmax.InstantiateVariables()
+    super()._CreateChildrenVariables()
 
   def FProp(self, theta, input_batch):
     """Embeds source ids and transforms with TransformerStack.

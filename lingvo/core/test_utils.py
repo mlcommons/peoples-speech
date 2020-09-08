@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,10 +15,6 @@
 # ==============================================================================
 """Helpers for unittests."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import inspect
 import re
 
@@ -26,7 +22,23 @@ import lingvo.compat as tf
 from lingvo.core import cluster_factory
 from lingvo.core import py_utils
 import numpy as np
-from six.moves import range
+
+FLAGS = tf.flags.FLAGS
+
+# Enable tf.function when eager execution is on-by-default, which is the case
+# when:
+# - the test target doesn't depend on the disable_tf2 target, and
+# - --define=tf_api_version=1 is not specified during the build.
+#
+# TODO(laigd): remove TF version check when 312743821 and 313682500 are in the
+# release.
+if tf.executing_eagerly() and tf.compat.v1.__version__ >= '2.3.0':
+  try:
+    FLAGS.if_use_tf_function = True
+    FLAGS.while_loop_use_tf_function = True
+    FLAGS.call_defun_use_tf_function = True
+  except tf.flags.UnrecognizedFlagError:
+    pass
 
 # Disable eager execution for all tests.
 tf.disable_eager_execution()
@@ -35,19 +47,17 @@ tf.flags.DEFINE_boolean(
     'update_goldens', False,
     'Update the goldens, rather than diffing against them.')
 
-FLAGS = tf.flags.FLAGS
-
 
 class TestCase(tf.test.TestCase):
   """TestCase that performs Lingvo-specific setup."""
 
   def setUp(self):
-    super(TestCase, self).setUp()
+    super().setUp()
     # Ensure the global_step variable is created in the default graph.
     py_utils.GetOrCreateGlobalStepVar()
 
   def _create_session(self, *args, **kwargs):
-    sess = super(TestCase, self)._create_session(*args, **kwargs)
+    sess = super()._create_session(*args, **kwargs)
     with sess.graph.as_default():
       # Ensure the global_step variable is created in every new session.
       py_utils.GetOrCreateGlobalStepVar()

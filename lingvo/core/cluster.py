@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,22 +15,17 @@
 # ==============================================================================
 """Specification of a training cluster."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import heapq
 import lingvo.compat as tf
 from lingvo.core import hyperparams
 from lingvo.core import py_utils
 import numpy as np
-from six.moves import range
 
 
 _CLUSTER_STACK = py_utils.ThreadLocalStack()
 
 
-class _Cluster(object):
+class _Cluster:
   """The whole training cluster from a single task's point of view."""
 
   @classmethod
@@ -107,6 +102,8 @@ class _Cluster(object):
         'decides based on the job type.')
     p.Define('do_eval', None, 'Whether to do eval.')
     p.Define('split_id', 0, 'Split id for the model.')
+    p.Define('immediately_create_variables', True,
+             'Whether to create variables immediately.')
     return p
 
   @classmethod
@@ -355,11 +352,11 @@ class _Cluster(object):
 
       def __init__(self, params):
         with tf.device(self.cluster.input_device):
-          super(_UseInputDevice, self).__init__(params)
+          super().__init__(params)
 
       def SplitInputBatch(self, num_splits):
         with tf.device(self.cluster.input_device):
-          return super(_UseInputDevice, self).SplitInputBatch(num_splits)
+          return super().SplitInputBatch(num_splits)
 
     return input_params.Copy().Set(cls=_UseInputDevice)
 
@@ -430,6 +427,10 @@ class _Cluster(object):
     return self.params.do_eval
 
   @property
+  def immediately_create_variables(self):
+    return self.params.immediately_create_variables
+
+  @property
   def worker_cluster_def(self):
     """Returns a tf.train.ClusterDef representing the worker cluster."""
     p = self.params.worker
@@ -447,7 +448,7 @@ class _Cluster(object):
 _VAR_OPS = ['Variable', 'VariableV2', 'AutoReloadVariable', 'VarHandleOp']
 
 
-class VarPlacer(object):
+class VarPlacer:
   """Placer which places variables across a set of devices.
 
   VarPlacer places non-variable ops on the worker device.
@@ -494,7 +495,7 @@ class _LeastLoadedPlacer(VarPlacer):
   """
 
   def __init__(self, cluster):
-    super(_LeastLoadedPlacer, self).__init__(cluster)
+    super().__init__(cluster)
     # A min heap of (size, device)
     var_devices = cluster.ListDevices(cluster.params.ps).flatten().tolist()
     tf.logging.info('_LeastLoadedPlacer : %s', var_devices)

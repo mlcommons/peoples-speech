@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,17 +15,12 @@
 # ==============================================================================
 """Helper classes for computing performance metrics."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import lingvo.compat as tf
+from lingvo.core import hyperparams
 from lingvo.core import plot
 from lingvo.core import py_utils
 from lingvo.core import scorers
 import numpy as np
-from six.moves import range
-from six.moves import zip
 try:
   import sklearn.metrics  # pylint: disable=g-import-not-at-top
   HAS_SKLEARN = True
@@ -43,7 +38,7 @@ def CreateScalarSummary(name, simple_value):
       value=[tf.Summary.Value(tag=name, simple_value=simple_value)])
 
 
-class BaseMetric(object):
+class BaseMetric:
   """Base class for aggregating statistics to compute a performance metric."""
 
   def Update(self, *args, **kwargs):
@@ -65,6 +60,18 @@ class BaseMetric(object):
       A `tf.Summary` proto.
     """
     return CreateScalarSummary(name, self.value)
+
+
+class ConfigurableMetric(BaseMetric):
+  """A Metric class with configurable params."""
+
+  @classmethod
+  def Params(cls):
+    p = hyperparams.InstantiableParams(cls)
+    return p
+
+  def __init__(self, params):
+    self.params = params
 
 
 class AverageMetric(BaseMetric):
@@ -155,7 +162,7 @@ class CorpusBleuMetric(BaseMetric):
     return self._scorer.ComputeOverallScore()
 
 
-class TpuEvalMetrics(object):
+class TpuEvalMetrics:
   """Manages computation of metrics during TPU execution.
 
   TPU execution runs a training loop on device. To get eval metrics out of this,
@@ -178,7 +185,7 @@ class TpuEvalMetrics(object):
 
   def __init__(self):
     self._metrics = None
-    self._max_metrics = 100
+    self._max_metrics = 256
 
     # Loop-carried values alternate value and weight; all values are scalars.
     self._initial_values = (2 *
@@ -390,3 +397,47 @@ class CorrelationMetric(BaseMetric):
       return scipy.stats.spearmanr(self._target, self._pred)[0]
     else:
       return scipy.stats.kendalltau(self._target, self._pred)[0]
+
+
+class SamplingMetric(ConfigurableMetric):
+  """Sampling metric base class.
+
+  Subclasses must implement _CreateSummary(); sampling will be handled
+  by this base class.
+  """
+
+  @classmethod
+  def Params(cls):
+    p = super().Params()
+    p.Define('num_samples', 8, 'The number of samples to store uniformly.')
+    return p
+
+  def __init__(self, params):
+    super().__init__(params)
+    p = self.params
+    self._sampler = py_utils.UniformSampler(num_samples=p.num_samples)
+    self._summary = None
+
+  @property
+  def samples(self):
+    """Returns an iterable of sampled decoded outputs to compute Summaries."""
+    return self._sampler.samples
+
+  def Update(self, decoded_outputs):
+    """Samples the input decoded_outputs NestedMap.
+
+    Args:
+      decoded_outputs: A `.NestedMap`.
+    """
+    self._sampler.Add(decoded_outputs)
+    # Invalidate cache.
+    self._summary = None
+
+  def Summary(self, name):
+    if self._summary is None:
+      self._summary = self._CreateSummary(name)
+    return self._summary
+
+  def _CreateSummary(self, name):
+    """Returns a tf.Summary for this metric."""
+    raise NotImplementedError()

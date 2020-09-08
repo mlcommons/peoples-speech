@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,9 +15,6 @@
 # ==============================================================================
 """Library of useful for functions for working with 3D object detection."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 from lingvo import compat as tf
 from lingvo.core import py_utils
 from lingvo.tasks.car import geometry
@@ -25,7 +22,7 @@ from lingvo.tasks.car import ops
 import numpy as np
 
 
-class Utils3D(object):
+class Utils3D:
   """Helper routines for 3D detection problems.
 
   One common method to do 3D anchor box assignment is to match anchors to
@@ -126,10 +123,8 @@ class Utils3D(object):
 
     gt_corners = geometry.BBoxCorners(gt_bboxes)
     predicted_corners = geometry.BBoxCorners(predicted_bboxes)
-    corner_dist = tf.norm(predicted_corners - gt_corners, axis=-1)
-    huber_loss = self.ScaledHuberLoss(
-        labels=tf.zeros_like(corner_dist), predictions=corner_dist)
-    huber_loss = tf.reduce_sum(huber_loss, axis=-1)
+    huber_loss = self.ScaledHuberLoss(gt_corners, predicted_corners)
+    huber_loss = tf.reduce_sum(huber_loss, axis=[-2, -1])
 
     if symmetric:
       # Compute the loss assuming the ground truth is flipped 180, and
@@ -137,12 +132,9 @@ class Utils3D(object):
       rot = tf.constant([[[0., 0., 0., 0., 0., 0., np.pi]]], dtype=tf.float32)
       rotated_gt_bboxes = gt_bboxes + rot
       rotated_gt_corners = geometry.BBoxCorners(rotated_gt_bboxes)
-      rotated_corner_dist = tf.norm(
-          predicted_corners - rotated_gt_corners, axis=-1)
       rotated_huber_loss = self.ScaledHuberLoss(
-          labels=tf.zeros_like(rotated_corner_dist),
-          predictions=rotated_corner_dist)
-      rotated_huber_loss = tf.reduce_sum(rotated_huber_loss, axis=-1)
+          labels=rotated_gt_corners, predictions=predicted_corners)
+      rotated_huber_loss = tf.reduce_sum(rotated_huber_loss, axis=[-2, -1])
       huber_loss = tf.minimum(huber_loss, rotated_huber_loss)
 
     huber_loss = tf.reshape(huber_loss, bbox_shape[:-1])

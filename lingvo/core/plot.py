@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,10 +15,6 @@
 # ==============================================================================
 """Utilities for generating image summaries using matplotlib."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import collections
 import functools
 import traceback
@@ -30,12 +26,10 @@ import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import numpy as np
 import six
-from six.moves import range
-from six.moves import zip
 
 
 def ToUnicode(text):
-  if not isinstance(text, six.text_type):
+  if not isinstance(text, str):
     text = six.ensure_text(text, 'utf-8')
   return text
 
@@ -142,7 +136,7 @@ _SubplotMetadata = collections.namedtuple('_SubplotMetadata',
                                           ['tensor_list', 'plot_func'])
 
 
-class MatplotlibFigureSummary(object):
+class MatplotlibFigureSummary:
   """Helper to minimize boilerplate in creating a summary with several subplots.
 
   Typical usage::
@@ -224,8 +218,8 @@ class MatplotlibFigureSummary(object):
     plot_func = functools.partial(plot_func, **merged_kwargs)
     self._subplots.append(_SubplotMetadata(tensor_list, plot_func))
 
-  def Finalize(self):
-    """Finishes creation of the overall figure, returning the image summary."""
+  def FinalizeImage(self):
+    """Finishes creation of the overall figure, returning the image tensor."""
     subplot_grid_shape = self._subplot_grid_shape
     if subplot_grid_shape is None:
       subplot_grid_shape = (len(self._subplots), 1)
@@ -256,8 +250,12 @@ class MatplotlibFigureSummary(object):
         tf.assert_equal(
             batch_sizes, [batch_sizes[0]] * num_tensors, summarize=num_tensors)
     ]):
-      rendered = tf.py_func(
+      return tf.py_func(
           func, flattened_tensors, tf.uint8, name='RenderMatplotlibFigures')
+
+  def Finalize(self):
+    """Finishes creation of the overall figure, returning the image summary."""
+    rendered = self.FinalizeImage()
     return tf.summary.image(self._name, rendered, max_outputs=self._max_outputs)
 
 

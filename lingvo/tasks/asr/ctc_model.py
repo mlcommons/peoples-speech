@@ -134,9 +134,12 @@ class CTCModel(base_model.BaseTask):
 
   def ComputePredictions(self, theta, input_batch):
     output_batch = self._FProp(theta, input_batch)
-    return tf.nn.ctc_greedy_decoder(output_batch.encoder_outputs,
-                                    py_utils.LengthsFromBitMask(
-                                      tf.squeeze(output_batch.encoder_outputs_padding, 2), 0))
+    return py_utils.RunOnTpuHost(
+      tf.nn.ctc_greedy_decoder,
+      output_batch.encoder_outputs,
+      py_utils.LengthsFromBitMask(
+        tf.squeeze(output_batch.encoder_outputs_padding, 2), 0)
+    )
 
   def ComputeLoss(self, theta, predictions, input_batch):
     output_batch = self._FProp(theta, input_batch)

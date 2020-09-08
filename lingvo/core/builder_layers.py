@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,9 +15,6 @@
 # ==============================================================================
 """Abstractions for composing layers."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 import re
 from lingvo import compat as tf
 from lingvo.core import base_layer
@@ -27,8 +24,6 @@ from lingvo.core import recurrent
 from lingvo.core import summary_utils
 from lingvo.core import symbolic
 from lingvo.core import tshape
-from six.moves import range
-from six.moves import zip
 
 
 class FirstNLayer(base_layer.BaseLayer):
@@ -36,12 +31,12 @@ class FirstNLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(FirstNLayer, cls).Params()
+    p = super().Params()
     p.Define('n', 0, 'The number of args to return.')
     return p
 
   def __init__(self, params):
-    super(FirstNLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.name
     assert p.n > 0
@@ -67,12 +62,12 @@ class ArgIndexLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(ArgIndexLayer, cls).Params()
+    p = super().Params()
     p.Define('idx', [], 'The indices of args to return.')
     return p
 
   def __init__(self, params):
-    super(ArgIndexLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.name
     assert p.idx
@@ -107,20 +102,24 @@ class RepeatLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(RepeatLayer, cls).Params()
+    p = super().Params()
     p.Define('body', None, 'The param for the main network layer.')
     p.Define('repeat', 1,
              'Repeat layers specified in \'body\' this many times.')
     return p
 
   def __init__(self, params):
-    super(RepeatLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.name
     assert p.repeat > 0
-    with tf.variable_scope(p.name):
-      with py_utils.VariableShapePrefixContext(p.repeat):
-        self.CreateChild('body', p.body)
+    self.CreateChild('body', p.body)
+
+  def _CreateChildrenVariables(self):
+    with tf.variable_scope(self.params.name):
+      with py_utils.VariableShapePrefixContext(self.params.repeat):
+        self.body.InstantiateVariables()
+    super()._CreateChildrenVariables()
 
   def FProp(self, theta, *args):
     p = self.params
@@ -207,7 +206,7 @@ class SoftCondLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(SoftCondLayer, cls).Params()
+    p = super().Params()
     p.Define('num_tasks', None, 'The Params for the main network layer.')
     p.Define('body', None, 'The Params for the main network layer.')
     p.Define('num_experts', None, 'Number of experts.')
@@ -220,26 +219,35 @@ class SoftCondLayer(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(SoftCondLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.name
     assert p.num_experts
     assert p.cond_dim
-    with tf.variable_scope(p.name):
-      # Create Variables for task weight mapping.
-      collections = [
-          self.__class__.__name__ + '_vars',
-      ]
-      w_p = py_utils.WeightParams(
-          shape=[p.cond_dim, p.num_experts],
-          init=p.params_init,  # TODO(huangyp): try zero init instead.
-          dtype=p.dtype,
-          collections=collections)
-      self.CreateVariable('w', w_p)
+
+    self.CreateChild('body', p.body)
+
+  def _CreateChildrenVariables(self):
+    with tf.variable_scope(self.params.name):
       # Prepends p.num_experts to the tensor shape of every variable created
       # by p.body.
-      with py_utils.VariableShapePrefixContext(p.num_experts):
-        self.CreateChild('body', p.body)
+      with py_utils.VariableShapePrefixContext(self.params.num_experts):
+        self.body.InstantiateVariables()
+    super()._CreateChildrenVariables()
+
+  def _CreateLayerVariables(self):
+    super()._CreateLayerVariables()
+    p = self.params
+    # Create Variables for task weight mapping.
+    collections = [
+        self.__class__.__name__ + '_vars',
+    ]
+    w_p = py_utils.WeightParams(
+        shape=[p.cond_dim, p.num_experts],
+        init=p.params_init,  # TODO(huangyp): try zero init instead.
+        dtype=p.dtype,
+        collections=collections)
+    self.CreateVariable('w', w_p)
 
   def _GetExpertDist(self, theta, inputs, *args):
     """Get the task id from inputs tensors."""
@@ -379,30 +387,29 @@ class SequentialLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(SequentialLayer, cls).Params()
+    p = super().Params()
     p.Define('sub', [], 'A list of layers\' params.')
     p.Define('repeat', 1, 'Repeat layers specified in \'sub\' '
              'this many times.')
     return p
 
   def __init__(self, params):
-    super(SequentialLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.name
-    with tf.variable_scope(p.name):
-      if p.repeat <= 1:
-        self._seq = []
-        for sub in p.sub:
-          self.CreateChild(sub.name, sub)
-          self._seq.append((sub.name, self.children[sub.name]))
-      else:
-        # We create 'repeat' number of sub layers. Each sub layer is a
-        # sequential layer specified by 'sub'.  This allows us to name each
-        # repetition with a unique name.
-        children = []
-        for i in range(p.repeat):
-          children.append(p.Copy().Set(name='%03d' % i, repeat=1))
-        self.CreateChildren('rep', children)
+    if p.repeat <= 1:
+      self._seq = []
+      for sub in p.sub:
+        self.CreateChild(sub.name, sub)
+        self._seq.append((sub.name, self.children[sub.name]))
+    else:
+      # We create 'repeat' number of sub layers. Each sub layer is a
+      # sequential layer specified by 'sub'.  This allows us to name each
+      # repetition with a unique name.
+      children = []
+      for i in range(p.repeat):
+        children.append(p.Copy().Set(name='%03d' % i, repeat=1))
+      self.CreateChildren('rep', children)
 
   def FProp(self, theta, *args):
     p = self.params
@@ -430,8 +437,8 @@ class SequentialLayer(base_layer.BaseLayer):
     total = 0
     for _ in range(p.repeat):
       for sub in p.sub:
-        tf.logging.vlog(1, '  seq abs fprop %s %s %d %s', sub.name,
-                             sub.cls, len(args), str(args))
+        tf.logging.vlog(1, '  seq abs fprop %s %s %d %s', sub.name, sub.cls,
+                        len(args), str(args))
         meta = sub.cls.FPropMeta(sub, *args)
         py_utils.CheckShapes(meta.out_shapes)
         total += meta.flops
@@ -449,19 +456,18 @@ class UnarySequentialLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(UnarySequentialLayer, cls).Params()
+    p = super().Params()
     p.Define('sub', [], 'A list of layers\' params.')
     return p
 
   def __init__(self, params):
-    super(UnarySequentialLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.name
-    with tf.variable_scope(p.name):
-      self._seq = []
-      for sub in p.sub:
-        self.CreateChild(sub.name, sub)
-        self._seq.append((sub.name, self.children[sub.name]))
+    self._seq = []
+    for sub in p.sub:
+      self.CreateChild(sub.name, sub)
+      self._seq.append((sub.name, self.children[sub.name]))
 
   def FProp(self, theta, x):
     tf.logging.vlog(1, 'layer %s', self.params.name)
@@ -483,7 +489,7 @@ class UnarySequentialLayer(base_layer.BaseLayer):
     return py_utils.NestedMap(flops=total, out_shapes=x)
 
 
-class GraphTensors(object):
+class GraphTensors:
   """A collection of named tensors (or NestedMaps of tensors)."""
 
   def __init__(self):
@@ -537,7 +543,7 @@ class GraphTensors(object):
     return named_tensors
 
 
-class GraphSignature(object):
+class GraphSignature:
   """Represents the input/output signature of a GraphLayer.
 
   A signature is of the form:
@@ -677,7 +683,7 @@ class GraphSignature(object):
     """
     assert symbol in self.symbols
     if self._i >= len(self._tokens):
-      raise ValueError('Ran out of tokens while looking for a %s' % (symbol))
+      raise ValueError('Ran out of tokens while looking for a %s' % symbol)
     if not self._MaybeConsumeSymbol(symbol):
       raise ValueError('Found a symbol %s while looking for %s' %
                        (self._tokens[self._i], symbol))
@@ -723,7 +729,7 @@ class GraphSignature(object):
     if self._i >= len(self._tokens):
       raise ValueError('Ran out of tokens while looking for a NestedMap.')
     if self._tokens[self._i] != '(':
-      raise ValueError('Expected ( at token position %d' % (self._i))
+      raise ValueError('Expected ( at token position %d' % self._i)
     self._i += 1
     if self._MaybeConsumeSymbol(')'):
       # Empty NestedMaps are allowed.
@@ -747,7 +753,7 @@ class GraphSignature(object):
     if self._i >= len(self._tokens):
       raise ValueError('Ran out of tokens while looking for a list.')
     if self._tokens[self._i] != '[':
-      raise ValueError('Expected [ at token position %d' % (self._i))
+      raise ValueError('Expected [ at token position %d' % self._i)
     self._i += 1
     if self._MaybeConsumeSymbol(']'):
       # Empty lists are allowed.
@@ -798,7 +804,7 @@ class GraphLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(GraphLayer, cls).Params()
+    p = super().Params()
     p.Define('input_endpoints', [], 'Names of the input tensors.')
     p.Define('output_endpoints', [], 'Names of the output tensors.')
     # TODO(yonghui): Define a NamedTuple for this pair.
@@ -806,22 +812,21 @@ class GraphLayer(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(GraphLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.name
     assert p.input_endpoints
-    with tf.variable_scope(p.name):
-      self._seq = []
-      for i, (signature, sub) in enumerate(p.sub):
-        assert signature
-        sig = GraphSignature(signature)
-        assert sig.outputs, '{}'.format(signature)
-        name = sub.name
-        if not name:
-          name = '%s_%02d' % (sig.outputs[0], i)
-          sub.name = name
-        self.CreateChild(name, sub)
-        self._seq.append((name, sig, self.children[name]))
+    self._seq = []
+    for i, (signature, sub) in enumerate(p.sub):
+      assert signature
+      sig = GraphSignature(signature)
+      assert sig.outputs, '{}'.format(signature)
+      name = sub.name
+      if not name:
+        name = '%s_%02d' % (sig.outputs[0], i)
+        sub.name = name
+      self.CreateChild(name, sub)
+      self._seq.append((name, sig, self.children[name]))
 
   def FProp(self, theta, *args):
     p = self.params
@@ -846,8 +851,8 @@ class GraphLayer(base_layer.BaseLayer):
         packed = template.Transform(graph_tensors.GetTensor)
         input_args = packed.inputs
         tf.logging.vlog(1, 'signature: %s', p.sub[i][0])
-        tf.logging.vlog(1, 'GraphLayer: call %s %s %d %s', ch.params.name,
-                             ch, len(input_args), str(input_args))
+        tf.logging.vlog(1, 'GraphLayer: call %s %s %d %s', ch.params.name, ch,
+                        len(input_args), str(input_args))
         ch_out = ch.FProp(th, *input_args)
         if len(sig.outputs) == 1:
           ch_out = (ch_out,)
@@ -894,7 +899,7 @@ class ParallelLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(ParallelLayer, cls).Params()
+    p = super().Params()
     p.Define(
         'sub', [], 'A list of layers\' params. Each layer\'s '
         'FProp must return one Tensor or a tuple of Tensors. '
@@ -910,14 +915,13 @@ class ParallelLayer(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(ParallelLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.name
     self._seq = []
-    with tf.variable_scope(p.name):
-      for sub in p.sub:
-        self.CreateChild(sub.name, sub)
-        self._seq.append((sub.name, self.children[sub.name]))
+    for sub in p.sub:
+      self.CreateChild(sub.name, sub)
+      self._seq.append((sub.name, self.children[sub.name]))
 
   def FProp(self, theta, *args):
     p = self.params
@@ -942,7 +946,7 @@ class ParallelLayer(base_layer.BaseLayer):
     outputs = []
     for sub in p.sub:
       tf.logging.vlog(1, '  par abs fprop %s %s %d %s', sub.name, sub.cls,
-                           len(args), str(args))
+                      len(args), str(args))
       meta = sub.cls.FPropMeta(sub, *args)
       py_utils.CheckShapes(meta.out_shapes)
       meta.VLog(
@@ -962,7 +966,7 @@ class MapLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(MapLayer, cls).Params()
+    p = super().Params()
     p.Define('fn', None, 'A callable tensor->tensor.')
     p.Define('fn_meta', None, 'A callable shape->(flops, shape).')
     p.Define('kwargs', {}, 'Keyword arguments to fn.')
@@ -995,22 +999,21 @@ class LinearLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(LinearLayer, cls).Params()
+    p = super().Params()
     p.Define('input_dims', 0, 'Depth of the input.')
     p.Define('output_dims', 0, 'Depth of the output.')
     return p
 
-  def __init__(self, params):
-    super(LinearLayer, self).__init__(params)
+  def _CreateLayerVariables(self):
+    super()._CreateLayerVariables()
     p = self.params
-    with tf.variable_scope(p.name):
-      self.CreateVariable(
-          'w',
-          py_utils.WeightParams(
-              shape=[p.input_dims, p.output_dims],
-              init=p.params_init,
-              dtype=p.dtype,
-              collections=[self.__class__.__name__ + '_vars']))
+    self.CreateVariable(
+        'w',
+        py_utils.WeightParams(
+            shape=[p.input_dims, p.output_dims],
+            init=p.params_init,
+            dtype=p.dtype,
+            collections=[self.__class__.__name__ + '_vars']))
 
   def FProp(self, theta, inputs):
     """Apply projection to inputs.
@@ -1048,21 +1051,20 @@ class BiasLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(BiasLayer, cls).Params()
+    p = super().Params()
     p.Define('dims', 0, 'Depth of the input.')
     return p
 
-  def __init__(self, params):
-    super(BiasLayer, self).__init__(params)
+  def _CreateLayerVariables(self):
+    super()._CreateLayerVariables()
     p = self.params
-    with tf.variable_scope(p.name):
-      self.CreateVariable(
-          'b',
-          py_utils.WeightParams(
-              shape=[p.dims],
-              init=py_utils.WeightInit.Constant(0.0),
-              dtype=p.dtype,
-              collections=[self.__class__.__name__ + '_vars']))
+    self.CreateVariable(
+        'b',
+        py_utils.WeightParams(
+            shape=[p.dims],
+            init=py_utils.WeightInit.Constant(0.0),
+            dtype=p.dtype,
+            collections=[self.__class__.__name__ + '_vars']))
 
   def FProp(self, theta, inputs):
     """Adds bias to inputs.
@@ -1090,7 +1092,7 @@ class BranchLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(BranchLayer, cls).Params()
+    p = super().Params()
     p.Define('body', None, 'The param for the main network layer.')
     p.Define(
         'fetches', [], 'Fetch points within the body layer. Each fetch '
@@ -1098,11 +1100,10 @@ class BranchLayer(base_layer.BaseLayer):
     return p
 
   def __init__(self, params):
-    super(BranchLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.name
-    with tf.variable_scope(p.name):
-      self.CreateChild('body', p.body)
+    self.CreateChild('body', p.body)
 
   def FProp(self, theta, *args):
     p = self.params
@@ -1118,16 +1119,15 @@ class BatchParallelLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(BatchParallelLayer, cls).Params()
+    p = super().Params()
     p.Define('sub', None, 'A layer param.')
     return p
 
   def __init__(self, params):
-    super(BatchParallelLayer, self).__init__(params)
+    super().__init__(params)
     p = self.params
     assert p.name
-    with tf.variable_scope(p.name):
-      self.CreateChild('sub', p.sub)
+    self.CreateChild('sub', p.sub)
 
   def FProp(self, theta, *args):
     """FProp through multiple devices in the split.
@@ -1171,7 +1171,7 @@ class FnLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(FnLayer, cls).Params()
+    p = super().Params()
     p.Define('fn', None, 'A lambda tuple(Tensor) -> tuple(Tensor) '
              'or a single Tensor.')
     p.Define(
@@ -1206,13 +1206,13 @@ class RematerializationLayer(base_layer.BaseLayer):
 
   @classmethod
   def Params(cls):
-    p = super(RematerializationLayer, cls).Params()
+    p = super().Params()
     p.Define('body', None,
              'The main layer whose FProp will be wrapped by RematerializeFn.')
     return p
 
   def __init__(self, params):
-    super(RematerializationLayer, self).__init__(params)
+    super().__init__(params)
     self.CreateChild('body', self.params.body)
 
   def FProp(self, theta, *xs):

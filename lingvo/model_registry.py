@@ -1,4 +1,4 @@
-# Lint as: python2, python3
+# Lint as: python3
 # Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,10 +18,6 @@
 Typical usage will be to define and register a subclass of ModelParams
 for each dataset.
 """
-
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import inspect
 from lingvo import model_imports
@@ -46,28 +42,9 @@ tf.flags.DEFINE_string(
 FLAGS = tf.flags.FLAGS
 
 
-def _MaybeUpdateParamsFromFlags(cfg):
-  """Updates Model() Params from flags if set."""
-  if FLAGS.model_params_override and FLAGS.model_params_file_override:
-    raise ValueError('Only one of --model_params_override and'
-                     ' --model_params_file_override may be specified.')
+class _ModelRegistryHelper:
+  """Helper class."""
 
-  if FLAGS.model_params_override:
-    params_override = FLAGS.model_params_override.replace(';', '\n')
-    tf.logging.info('Applying params overrides:\n%s\nTo:\n%s',
-                         params_override, cfg.ToText())
-    cfg.FromText(params_override)
-  if (FLAGS.model_params_file_override and
-      tf.io.gfile.exists(FLAGS.model_params_file_override)):
-    params_override = tf.io.gfile.GFile(FLAGS.model_params_file_override,
-                                        'r').read()
-    tf.logging.info('Applying params overrides from file %s:\n%s\nTo:\n%s',
-                         FLAGS.model_params_file_override, params_override,
-                         cfg.ToText())
-    cfg.FromText(params_override)
-
-
-class _ModelRegistryHelper(object):
   _MODEL_PARAMS_ALLOW_REDEF = False
 
   # Global dictionary mapping subclass name to registered ModelParam subclass.
@@ -152,13 +129,34 @@ class _ModelRegistryHelper(object):
       # Extend model to annotate source information.
       def Model(self):
         """Wraps BaseTask params into SingleTaskModel params."""
-        p = super(Registered, self).Model()
+        p = super().Model()
         p.model = self._registered_source_info
         return p
 
     # So things show up in messages well.
     Registered.__name__ = src_cls.__name__
     return Registered
+
+  @classmethod
+  def MaybeUpdateParamsFromFlags(cls, cfg):
+    """Updates Model() Params from flags if set."""
+    if FLAGS.model_params_override and FLAGS.model_params_file_override:
+      raise ValueError('Only one of --model_params_override and'
+                       ' --model_params_file_override may be specified.')
+
+    if FLAGS.model_params_override:
+      params_override = FLAGS.model_params_override.replace(';', '\n')
+      tf.logging.info('Applying params overrides:\n%s\nTo:\n%s',
+                      params_override, cfg.ToText())
+      cfg.FromText(params_override)
+    if (FLAGS.model_params_file_override and
+        tf.io.gfile.exists(FLAGS.model_params_file_override)):
+      params_override = tf.io.gfile.GFile(FLAGS.model_params_file_override,
+                                          'r').read()
+      tf.logging.info('Applying params overrides from file %s:\n%s\nTo:\n%s',
+                      FLAGS.model_params_file_override, params_override,
+                      cfg.ToText())
+      cfg.FromText(params_override)
 
   @classmethod
   def RegisterSingleTaskModel(cls, src_cls):
@@ -226,7 +224,7 @@ class _ModelRegistryHelper(object):
     cfg = model_params.Model()
     cfg.input = model_params.GetDatasetParams(dataset_name)
 
-    _MaybeUpdateParamsFromFlags(cfg)
+    cls.MaybeUpdateParamsFromFlags(cfg)
     return cfg
 
   @classmethod

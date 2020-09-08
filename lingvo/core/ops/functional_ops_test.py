@@ -15,12 +15,10 @@
 # ==============================================================================
 """Tests for functional ops."""
 
-
 from lingvo import compat as tf
 from lingvo.core import ops
 from lingvo.core import test_utils
 import numpy as np
-from six.moves import range
 
 
 class FunctionalOpsTest(test_utils.TestCase):
@@ -35,15 +33,16 @@ class FunctionalOpsTest(test_utils.TestCase):
     it = Gen()
 
     # Wraps gen() in a defun.
-    @tf.Defun()
+    @tf.function(autograph=False)
     def MyFn():
       return tf.py_func(lambda: next(it), [], [tf.float32, tf.float32])
 
     # A graph calls MyFn via CachedCall.
     g = tf.Graph()
     with g.as_default():
-      _ = MyFn.name
-      u, v = ops.cached_call(MyFn, [tf.float32, tf.float32])
+      fn = MyFn.get_concrete_function()
+      fn.add_to_graph()
+      u, v = ops.cached_call(fn, [tf.float32, tf.float32])
 
     with self.session(graph=g):
       for _ in range(10):

@@ -29,8 +29,6 @@ from lingvo.core import symbolic
 from lingvo.core import test_utils
 from lingvo.core import tshape
 import numpy as np
-from six.moves import range
-from six.moves import zip
 
 
 class ActivationsTest(test_utils.TestCase):
@@ -167,6 +165,35 @@ class BatchNormLayerTest(test_utils.TestCase, parameterized.TestCase):
       self.evaluate(tf.global_variables_initializer())
       self.assertAllClose(2.6593573, sig1.eval(), atol=1e-5)
       self.assertAllClose(15.464208, sig2.eval())
+
+  def testBatchNormLayerFPropWithUpdateUseGlobalStatsForTraining(self):
+    with self.session(use_gpu=True):
+      tf.random.set_seed(398847392)
+      np.random.seed(12345)
+      params = layers.BatchNormLayer.Params()
+      params.name = 'bn'
+      params.dim = 3
+      params.use_moving_avg_in_training = True
+      params.params_init = py_utils.WeightInit.Gaussian(0.1)
+
+      bn_layer = layers.BatchNormLayer(params)
+      in_padding1 = tf.zeros([2, 8, 1], dtype=tf.float32)
+      bn_in1 = tf.constant(
+          np.random.normal(0.1, 0.5, [2, 8, 3]), dtype=tf.float32)
+
+      bn_out = bn_layer.FPropDefaultTheta(bn_in1, in_padding1)
+      sig1 = tf.reduce_sum(bn_out)
+      sig2 = tf.reduce_sum(bn_out * bn_out)
+
+      # get updates which should be invoked during training step
+      # but we call them here, so that UpdateBatchNormVars is tested too
+      bn_update_dict = py_utils._get_batch_norm_updates_dict()
+      bn_update_list = list(bn_update_dict.keys())
+
+      self.evaluate(tf.global_variables_initializer())
+      self.evaluate(bn_update_list)
+      self.assertAllClose(2.6575434, sig1.eval(), atol=1e-5)
+      self.assertAllClose(15.473802, sig2.eval())
 
   def testBatchNormLayerMomentsForConv(self):
     with self.session(use_gpu=True):
@@ -346,7 +373,7 @@ class CategoricalBNTest(test_utils.TestCase, parameterized.TestCase):
       self.assertAllClose(95.6266, sig2_v)
 
 
-class GroupNormLayerTest(test_utils.TestCase):
+class GroupNormLayerTest(test_utils.TestCase, parameterized.TestCase):
 
   def testGroupNormLayerConstruction(self):
     with self.session(use_gpu=True):
@@ -417,18 +444,47 @@ class GroupNormLayerTest(test_utils.TestCase):
       self.assertAllClose(expected_out, gn_out.eval(), atol=1e-5)
       self.assertAllEqual(paddings.eval(), paddings_out.eval())
 
-  def testGroupNormLayerFPropCumulativeMode(self):
+  def testGroupNormLayerFPropWithPaddings3DInput(self):
+    with self.session(use_gpu=True):
+      params = bn_layers.GroupNormLayer.Params()
+      params.name = 'gn'
+      params.dim = 4
+      params.num_groups = 2
+      params.params_init = py_utils.WeightInit.Gaussian(0.1)
+      gn_in = np.reshape(np.arange(16, dtype=np.float32), [2, 2, 1, 4])
+      paddings = np.array([[0, 0], [0, 1]], dtype=np.float32)
+
+      gn_layer = bn_layers.GroupNormLayer(params)
+      gn_out, paddings_out = gn_layer.FPropDefaultTheta(
+          tf.convert_to_tensor(gn_in), tf.convert_to_tensor(paddings))
+
+      params_3d = params.Copy().Set(input_rank=3, name='gn_3d')
+      gn_layer_3d = bn_layers.GroupNormLayer(params_3d)
+      gn_out_3d, paddings_out_3d = gn_layer_3d.FPropDefaultTheta(
+          tf.convert_to_tensor(gn_in.reshape([2, 2, 4])),
+          tf.convert_to_tensor(paddings))
+
+      tf.global_variables_initializer().run()
+      print(gn_out.eval())
+      # Tests against reference.
+      self.assertAllClose(
+          gn_out_3d.eval(), gn_out.eval().reshape([2, 2, 4]), atol=1e-5)
+      self.assertAllEqual(paddings_out_3d.eval(), paddings_out.eval())
+
+  @parameterized.named_parameters(('4D',), ('3D', 3))
+  def testGroupNormLayerFPropCumulativeMode(self, input_rank=4):
     with self.session(use_gpu=True):
       params = bn_layers.GroupNormLayer.Params()
       params.name = 'gn'
       params.dim = 2
       params.num_groups = 2
       params.cumulative = True
+      params.input_rank = input_rank
       # gn_in[0]: [[0, 1], [2, 3], [4, 5], [6, 7]]
       # gn_in[1]: [[8, 9], [10, 11], [12, 13], [14, 15]]
-      gn_in = tf.reshape(np.arange(16, dtype=np.float32), [2, 4, 1, 2])
-      paddings = tf.convert_to_tensor([[0, 0], [0, 0], [0, 0], [0, 0]],
-                                      dtype=tf.float32)
+      input_shape = [2, 4, 1, 2] if input_rank == 4 else [2, 4, 2]
+      gn_in = tf.reshape(np.arange(16, dtype=np.float32), input_shape)
+      paddings = tf.zeros([2, 4], tf.float32)
       gn_layer = bn_layers.GroupNormLayer(params)
       gn_out, _ = gn_layer.FPropDefaultTheta(gn_in, paddings)
 
@@ -437,7 +493,7 @@ class GroupNormLayerTest(test_utils.TestCase):
                              [1.5487288, 1.5487288], [1.6033384, 1.6033384]])
 
       expected_out = np.stack([base_block, base_block],
-                              axis=0).reshape([2, 4, 1, 2])
+                              axis=0).reshape(input_shape)
       self.assertAllClose(expected_out, gn_out.eval(), atol=1e-5)
 
 
@@ -1782,7 +1838,8 @@ class ProjectionLayerTest(test_utils.TestCase, parameterized.TestCase):
                            layer_callback=None,
                            bn_decay=0.999,
                            bn_use_moving_avg_in_training=False,
-                           use_einsum=True):
+                           use_einsum=True,
+                           block_dim=0):
     self._ClearCachedSession()
     tf.reset_default_graph()
     with self.session(use_gpu=True):
@@ -1804,6 +1861,9 @@ class ProjectionLayerTest(test_utils.TestCase, parameterized.TestCase):
       params.bn_params.decay = bn_decay
       params.bn_params.use_moving_avg_in_training = bn_use_moving_avg_in_training
       params.use_einsum = use_einsum
+      params.block_dim = block_dim
+      params.use_blocked_matmul = True if block_dim > 0 else False
+
       if quantized:
         cc_schedule = quant_utils.FakeQuantizationSchedule.Params().Set(
             clip_end_step=1, quant_start_step=1)
@@ -1813,10 +1873,10 @@ class ProjectionLayerTest(test_utils.TestCase, parameterized.TestCase):
 
       in_padding = tf.zeros([2, 4, 1], dtype=tf.float32)
       inputs = tf.constant(
-          np.random.normal(0.1, 0.5, [2, 4, 3]), dtype=tf.float32)
+          np.random.normal(0.1, 0.5, [2, 4, input_dim]), dtype=tf.float32)
       if reshape_to_2d:
         in_padding = tf.reshape(in_padding, [-1, 1])
-        inputs = tf.reshape(inputs, [-1, 3])
+        inputs = tf.reshape(inputs, [-1, input_dim])
 
       proj_layer = layers.ProjectionLayer(params)
       if layer_callback:
@@ -2226,6 +2286,51 @@ class ProjectionLayerTest(test_utils.TestCase, parameterized.TestCase):
     output_without_einsum = self._evalProjectionLayer(use_einsum=False)
     self.assertAllClose(output_with_einsum, output_without_einsum)
 
+  def testProjectionLayerFPropBlockMatmul(self):
+    # pylint: disable=bad-whitespace
+    # pyformat: disable
+    expected_output = [[[0.,         0.,         0.,         0.],
+                        [0.,         0.03153732, 0.01891183, 0.02154643],
+                        [0.01373154, 0.09479743, 0.,         0.03639744],
+                        [0.05870617, 0.19162716, 0.05567084, 0.15362406]],
+
+                       [[0.06591958, 0.2321615,  0.,         0.14735883],
+                        [0.1003774,  0.33637568, 0.,         0.22276597],
+                        [0.02362791, 0.10728893, 0.01922233, 0.07299631],
+                        [0.,         0.,         0.,         0.        ]]]
+    # pyformat: enable
+    # pylint: enable=bad-whitespace
+    output_with_block_matmul = self._evalProjectionLayer(
+        input_dim=4,
+        output_dim=4,
+        batch_norm=False,
+        use_einsum=False,
+        block_dim=2)
+    tf.logging.info(output_with_block_matmul)
+    self.assertAllClose(output_with_block_matmul, expected_output)
+    # pylint: disable=bad-whitespace
+    # pyformat: disable
+    expected_output =  [[[0.,    0.,      0.,         0.,         0.],
+                         [0.,    0.,      0.06118044, 0.,         0.02968791],
+                         [0.,    0.,      0.09687695, 0.,         0.],
+                         [0.10228965, 0., 0.01826946, 0.0219113,  0.16076824]],
+
+                        [[0.03506518, 0.27432495, 0.25932777, 0.,         0.],
+                         [0.,         0.00882578, 0.06655132, 0.,         0.],
+                         [0.,         0.,         0.,         0.10196716, 0.],
+                         [0.,         0.,         0.08253407, 0.,         0.]]]
+    # pyformat: enable
+    # pylint: enable=bad-whitespace
+    # Test case for odd input and output dimensions.
+    output_with_block_matmul = self._evalProjectionLayer(
+        input_dim=5,
+        output_dim=5,
+        batch_norm=False,
+        use_einsum=False,
+        block_dim=2)
+    tf.logging.info(output_with_block_matmul)
+    self.assertAllClose(output_with_block_matmul, expected_output)
+
   @parameterized.named_parameters(
       {
           'testcase_name': 'RELU',
@@ -2456,14 +2561,14 @@ class SingleShardEmbeddingLayerTest(test_utils.TestCase):
       emb_layer = params.Instantiate()
 
       neg_ids = tf.constant([[-1]])
-      neg_embs = emb_layer.EmbLookupDefaultTheta(neg_ids)
       oov_ids = tf.constant([[params.vocab_size]])
-      oov_embs = emb_layer.EmbLookupDefaultTheta(oov_ids)
       self.evaluate(tf.global_variables_initializer())
 
       with self.assertRaises(tf.errors.InvalidArgumentError):
+        neg_embs = emb_layer.EmbLookupDefaultTheta(neg_ids)
         neg_embs.eval()
       with self.assertRaises(tf.errors.InvalidArgumentError):
+        oov_embs = emb_layer.EmbLookupDefaultTheta(oov_ids)
         oov_embs.eval()
 
   def testEmbeddingLayerScaling(self):
@@ -2545,14 +2650,14 @@ class EmbeddingLayerTest(test_utils.TestCase):
       emb_layer = layers.EmbeddingLayer(params)
 
       neg_ids = tf.constant([[-1]])
-      neg_embs = emb_layer.EmbLookupDefaultTheta(neg_ids)
       oov_ids = tf.constant([[params.vocab_size]])
-      oov_embs = emb_layer.EmbLookupDefaultTheta(oov_ids)
       self.evaluate(tf.global_variables_initializer())
 
       with self.assertRaises(tf.errors.InvalidArgumentError):
+        neg_embs = emb_layer.EmbLookupDefaultTheta(neg_ids)
         neg_embs.eval()
       with self.assertRaises(tf.errors.InvalidArgumentError):
+        oov_embs = emb_layer.EmbLookupDefaultTheta(oov_ids)
         oov_embs.eval()
 
   def testEmbeddingLayerScaling(self):
@@ -3015,7 +3120,8 @@ class SoftmaxLayerTest(test_utils.TestCase):
                             seed=None,
                             dtype=tf.float32,
                             fprop_dtype=None,
-                            apply_pruning=False):
+                            apply_pruning=False,
+                            use_bias=True):
     if fprop_dtype is None:
       fprop_dtype = dtype
     with self.session(use_gpu=True, graph=tf.Graph()):
@@ -3046,6 +3152,7 @@ class SoftmaxLayerTest(test_utils.TestCase):
       params.apply_pruning = apply_pruning
       params.params_init = py_utils.WeightInit.Gaussian(0.5, 123456)
       params.random_seed = 12345678
+      params.use_bias = use_bias
 
       if default_qdomain is not None:
         params.qdomain.default = default_qdomain
@@ -3069,7 +3176,8 @@ class SoftmaxLayerTest(test_utils.TestCase):
       expected_var_names = []
       for i in range(num_shards):
         expected_var_names.append(u'softmax/weight_%d/var:0' % i)
-        expected_var_names.append(u'softmax/bias_%d/var:0' % i)
+        if use_bias:
+          expected_var_names.append(u'softmax/bias_%d/var:0' % i)
 
       all_var_names = [v.name for v in all_vars]
       self.assertCountEqual(expected_var_names, all_var_names)
@@ -3181,6 +3289,14 @@ class SoftmaxLayerTest(test_utils.TestCase):
     log_perplexity = xent_loss.avg_xent
     self.assertNear(loss, 8.681571, 1e-5)
     self.assertNear(log_perplexity, 3.946169, 1e-5)
+
+  def testSimpleFullSoftmax_NoBias(self):
+    xent_loss = self._RunSimpleFullSoftmax(seed=12345, use_bias=False)
+    loss = xent_loss.total_xent
+    log_perplexity = xent_loss.avg_xent
+    err = 1e-5
+    self.assertNear(loss, 12.476410, err=err)
+    self.assertNear(log_perplexity, 5.671095, err=err)
 
   def testSimpleFullSoftmax_SampledAndSharded(self):
     xent_loss = self._RunSimpleFullSoftmax(
@@ -4198,6 +4314,33 @@ class LayerNormTest(test_utils.TestCase):
       npy_output = (npy_input - mean) / np.sqrt(variance + p.epsilon)
       self.assertAllClose(sym_output, npy_output)
 
+  def testLayerNormFPropDirectScale(self):
+    with self.session(use_gpu=True):
+      tf.random.set_seed(398847392)
+      np.random.seed(12345)
+      p = layers.LayerNorm.Params()
+      p.name = 'ln'
+      p.input_dim = 3
+      p.direct_scale = True
+      layer_norm = layers.LayerNorm(p)
+      npy_input = np.random.normal(1.0, 0.5,
+                                   [2, 4, 4, p.input_dim]).astype('float32')
+      inputs = tf.constant(npy_input, dtype=tf.float32)
+      output = layer_norm.FPropDefaultTheta(inputs)
+
+      self.evaluate(tf.global_variables_initializer())
+      sym_output = self.evaluate(output)
+
+      # Mean should be zero and variance should be close to one.
+      self.assertNear(0.0, sym_output.sum(), 1e-5)
+      self.assertNear(1.0, np.var(sym_output), 1e-4)
+
+      # Compare with numpy.
+      mean = npy_input.mean(-1, keepdims=True)
+      variance = np.mean(np.square(npy_input - mean), -1, keepdims=True)
+      npy_output = (npy_input - mean) / np.sqrt(variance + p.epsilon)
+      self.assertAllClose(sym_output, npy_output)
+
   def testLayerNormBProp(self):
     with self.session(use_gpu=True) as sess:
       tf.random.set_seed(398847392)
@@ -4218,6 +4361,86 @@ class LayerNormTest(test_utils.TestCase):
       grads = tf.gradients(loss, all_vars)
       self.evaluate(tf.global_variables_initializer())
       sym_grads = [sg.eval() for sg in grads]
+      num_grads = [
+          test_utils.ComputeNumericGradient(sess, loss, v) for v in all_vars
+      ]
+
+      for sg, ng in zip(sym_grads, num_grads):
+        self.assertAllClose(sg, ng, rtol=1e-02, atol=1e-02)
+
+
+class CategoricalLayerNormTest(test_utils.TestCase):
+
+  def testCategoricalLayerNormFProp(self):
+    with self.session(use_gpu=True):
+      tf.random.set_seed(398847392)
+      np.random.seed(12345)
+      p = layers.CategoricalLayerNorm.Params()
+      p.name = 'cat_ln'
+      p.input_dim = 3
+      p.num_classes = 2
+      layer_norm = layers.CategoricalLayerNorm(p)
+      npy_input = np.random.normal(1.0, 0.5,
+                                   [2, 4, 4, p.input_dim]).astype('float32')
+
+      inputs = tf.constant(npy_input, dtype=tf.float32)
+      output = layer_norm.FPropDefaultTheta(inputs)
+
+      self.evaluate(tf.global_variables_initializer())
+      # Set different bias and scale for different copy of ln params
+      self.evaluate(tf.assign(layer_norm.vars.scale_0, [0.0] * 3))
+      self.evaluate(tf.assign(layer_norm.vars.scale_1, [1.0] * 3))
+      self.evaluate(tf.assign(layer_norm.vars.bias_0, [0.0] * 3))
+      self.evaluate(tf.assign(layer_norm.vars.bias_1, [1.0] * 3))
+
+      output = layer_norm.FPropDefaultTheta(inputs)
+      sym_output_c1 = self.evaluate(output)
+
+      # Redefine output to use the value of new theta
+      theta = layer_norm.theta
+      theta.class_index = tf.constant(1, dtype=tf.int32)
+      output = layer_norm.FProp(theta, inputs)
+      sym_output_c2 = self.evaluate(output)
+
+      # Mean should be zero and variance should be close to one.
+      self.assertNotAllClose(sym_output_c1, sym_output_c2)
+      self.assertNear(0.0, sym_output_c1.mean(), 1e-5)
+      self.assertNear(1.0, np.var(sym_output_c1), 1e-4)
+      # Mean should be 1 and variance should be close to 2^2
+      self.assertNear(1.0, sym_output_c2.mean(), 1e-5)
+      self.assertNear(4.0, np.var(sym_output_c2), 1e-4)
+
+      # Compare with numpy.
+      mean = npy_input.mean(-1, keepdims=True)
+      variance = np.mean(np.square(npy_input - mean), -1, keepdims=True)
+      npy_output = (npy_input - mean) / np.sqrt(variance + p.epsilon)
+      self.assertAllClose(sym_output_c1, npy_output)
+
+      variance = np.mean(np.square(npy_input - mean), -1, keepdims=True)
+      npy_output = 2 * (npy_input - mean) / np.sqrt(variance + p.epsilon) + 1
+      self.assertAllClose(sym_output_c2, npy_output)
+
+  def testCategoricalLayerNormBProp(self):
+    with self.session(use_gpu=True) as sess:
+      tf.random.set_seed(398847392)
+      np.random.seed(12345)
+      p = layers.CategoricalLayerNorm.Params()
+      p.name = 'cat_ln'
+      p.input_dim = 3
+      p.num_classes = 2
+      layer_norm = layers.CategoricalLayerNorm(p)
+
+      inputs = tf.constant(
+          np.random.normal(0.1, 0.5, [2, 4, 4, p.input_dim]), dtype=tf.float32)
+      output = layer_norm.FPropDefaultTheta(inputs)
+      loss = tf.reduce_sum(output)
+
+      all_vars = tf.trainable_variables()
+      self.assertEqual(4, len(all_vars))
+      grads = tf.gradients(loss, all_vars)
+      self.evaluate(tf.global_variables_initializer())
+      print('grads = {}'.format(grads))
+      sym_grads = [self.evaluate(sg) for sg in grads]
       num_grads = [
           test_utils.ComputeNumericGradient(sess, loss, v) for v in all_vars
       ]
@@ -5093,6 +5316,22 @@ class CondScaleShiftFFNLayerTest(test_utils.TestCase):
       scale_out, shift_out = self.evaluate([scale_out, shift_out])
       self.assertEqual(scale_out.shape, (time_c, batch_c, out_dim_c))
       self.assertEqual(shift_out.shape, (time_c, batch_c, out_dim_c))
+
+
+class IdentityLayerTest(test_utils.TestCase):
+
+  def testIdentityLayerNestedMap(self):
+    with self.session(use_gpu=False):
+      p = layers.IdentityLayer.Params().Set(name='Nested')
+      layer = p.Instantiate()
+      a = tf.constant(1.0, shape=[20, 10])
+      b = tf.constant(-2.0, shape=[20, 10])
+      inputs = py_utils.NestedMap(a=a, b=b)
+      outputs = layer.FPropDefaultTheta(inputs)
+      self.assertAllEqual(inputs.a.eval(), outputs.a.eval())
+      self.assertAllEqual(inputs.b.eval(), outputs.b.eval())
+      a_copy = layer.FPropDefaultTheta(a)
+      self.assertAllEqual(a.eval(), a_copy.eval())
 
 
 if __name__ == '__main__':
