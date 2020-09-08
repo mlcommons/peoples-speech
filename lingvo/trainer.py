@@ -1439,6 +1439,7 @@ class RunnerManager:
     if not FLAGS.job:
       FLAGS.job = 'trainer_client'
 
+    # Is it possible that TPU just simply won't do inference?
     if FLAGS.job not in ('trainer_client', 'executor_tpu'):
       raise ValueError('Only trainer_client and executor_tpu jobs are '
                        'supported on TPU.')

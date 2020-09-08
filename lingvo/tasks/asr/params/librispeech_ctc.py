@@ -29,15 +29,15 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
     # Generated using scripts in lingvo/tasks/asr/tools.
     p.file_datasource = datasource.PrefixedDataSource.Params()
     p.file_datasource.file_type = 'tfrecord'
-    # p.file_datasource.file_pattern_prefix = 'gs://the-peoples-speech-west-europe/Librispeech'
+    p.file_datasource.file_pattern_prefix = 'gs://the-peoples-speech-west-europe/Librispeech'
     # TODO: Use an abseil flag for this.
-    p.file_datasource.file_pattern_prefix = '/export/b02/ws15dgalvez/kaldi-data/librispeech'
+    # p.file_datasource.file_pattern_prefix = '/export/b02/ws15dgalvez/kaldi-data/librispeech'
 
     p.frame_size = 80
     # Interesting. First I've heard of this.
     p.append_eos_frame = False
 
-    p.pad_to_max_seq_length = False
+    p.pad_to_max_seq_length = True
     p.file_random_seed = 0
     p.file_buffer_size = 10000
     # N1 standard 2 has only 2 vCPUs, so we may want a larger machine.
@@ -49,10 +49,11 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
       p.bucket_upper_bound = [639, 1062, 1275, 1377, 1449, 1506, 1563, 3600]
     else:
       # So it looks like
-      p.source_max_length = 3000
+      p.source_max_length = 1710
       p.bucket_upper_bound = [639, 1062, 1275, 1377, 1449, 1506, 1563, 1710]
 
-    p.bucket_batch_limit = [96, 48, 48, 48, 48, 48, 48, 48]
+    # p.bucket_batch_limit = [96, 48, 48, 48, 48, 48, 48, 48]
+    p.bucket_batch_limit = [2 * x for x in [48, 48, 48, 48, 48, 48, 48, 48]]
 
     # Assumes ascii_tokenizer.cc. Gross!
     p.tokenizer.vocab_size = 76
@@ -107,8 +108,8 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
     # re-interpret as individual 80 dimensional frames. See also,
     # LibrispeechCommonAsrInputParams.
     p.input_dim = 80
-    p.lstm_cell_size = 64
-    p.num_lstm_layers = 1  # 5
+    p.lstm_cell_size = 1024
+    p.num_lstm_layers = 5
     # p.layer_index_before_stacking = 2
     # May want left_context = 1 instead for pytorch compatibility.
     # p.stacking_layer_tpl.right_context = 1
@@ -133,6 +134,6 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
     return program.SimpleProgramScheduleForTask(
         train_dataset_name='Train',
         train_steps_per_loop=50,
-        eval_dataset_names=['Test'],
+        eval_dataset_names=['Dev'],
         eval_steps_per_loop=5,
         decode_steps_per_loop=0)

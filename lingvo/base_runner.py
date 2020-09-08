@@ -54,6 +54,10 @@ class BaseRunner:
     for line in self.params.ToText().split('\n'):
       tf.logging.info('%s', line)
     tf.logging.info('=' * 60)
+    tf.logging.info('FLAGS')
+    for attribute in dir(tf.flags.FLAGS):
+      tf.logging.info("%s=%s", attribute,  getattr(tf.flags.FLAGS, attribute))
+    tf.logging.info('=' * 60)
 
     self._logdir = logdir
     self._tf_master = tf_master
@@ -181,7 +185,7 @@ class BaseRunner:
       raise RuntimeError(msg)
     return path
 
-  @py_utils.Retry()
+  @py_utils.Retry(max_retries=0)
   def _RunLoop(self, job_name, loop_func, loop_args=()):
     """Runs `loop_func`, retrying on expected errors.
 
@@ -236,7 +240,13 @@ class BaseRunner:
         #   DataLossError: Race condition between evaler and trainer when saving
         #       or removing checkpoints.
         #   CancelledError: Node was closed (on TPU).
-        retry = True
+        if isinstance(e, tf.errors.FailedPreconditionError):
+          # GALV: This error frequently was due to global_step not
+          # being initialized, which as far as I can tell is a hard
+          # error, so I disabling retrying in this case.
+          retry = False
+        else:
+          retry = True
       else:
         retry = False
 
@@ -260,9 +270,11 @@ class BaseRunner:
         self._SetStatusMessage('%s exception: %s\n' % (job_name, e))
 
         # Prints the error message line by line to avoid message cropping.
-        msgv = traceback.format_exc().split('\n')
-        for msg in msgv:
-          tf.logging.error(msg)
+        # GALV: I don't know what "message cropping" means, but this causes
+        # the stack trace to be spit out twice, which I consider useless
+        # msgv = traceback.format_exc().split('\n')
+        # for msg in msgv:
+        #   tf.logging.error(msg)
 
         # Check if we are potentially running within an experiment. If so,
         # the worker should continue to the next trial instead of terminating
@@ -279,6 +291,9 @@ class BaseRunner:
         # Because tf.logging.error() may return before the flush is complete,
         # we need an extra sleep before exit.
         time.sleep(15)
+        # GALV: print() statements will not be flushed by os._exit, so
+        # I flush sys.stdouthere!
+        import sys; sys.stdout.flush()
         os._exit(1)  # pylint: disable=protected-access
 
   def _DequeueThreadComplete(self):
