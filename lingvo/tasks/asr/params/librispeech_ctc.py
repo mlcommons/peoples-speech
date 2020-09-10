@@ -104,10 +104,14 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
     p = ctc_model.CTCModel.Params()
     p.name = 'librispeech'
 
-    # Data consists 240 dimensional frames (80 x 3 frames), which we
-    # re-interpret as individual 80 dimensional frames. See also,
-    # LibrispeechCommonAsrInputParams.
-    p.input_dim = 80
+    p.input_stacking_layer_tpl.left_context = 1
+    p.input_stacking_layer_tpl.right_context = 1
+    p.input_stacking_layer_tpl.stride = (
+      p.input_stacking_layer_tpl.left_context +
+      1 +
+      p.input_stacking_layer_tpl.right_context)
+
+    p.input_dim = 80 * p.input_stacking_layer_tpl.stride
     p.lstm_cell_size = 1024
     p.num_lstm_layers = 5
     # p.layer_index_before_stacking = 2
