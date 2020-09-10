@@ -149,7 +149,7 @@ class CTCModel(base_model.BaseTask):
                               py_utils.LengthsFromBitMask(tf.squeeze(output_batch.encoder_outputs_padding, 2), 0),
                               logits_time_major=True,
                               blank_index=73)
-    total_loss = tf.reduce_sum(ctc_loss)
+    total_loss = tf.reduce_mean(ctc_loss)
     metrics = {"loss": (total_loss, 1.0)}
     per_sequence_loss = {"loss": ctc_loss}
     return metrics, per_sequence_loss
