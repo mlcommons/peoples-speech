@@ -51,6 +51,8 @@ class CTCModel(base_model.BaseTask):
              'Include projection layer after each encoder LSTM layer.')
     p.Define('proj_tpl', layers.ProjectionLayer.Params(),
              'Configs template for the projection layer.')
+    p.Define('input_stacking_layer_tpl', layers.StackingOverTime.Params(),
+             'Configs template for the stacking layer over time of the input features')
     p.Define('stacking_layer_tpl', layers.StackingOverTime.Params(),
              'Configs template for the stacking layer over time.')
     p.Define('unidi_rnn_type', 'func', 'func is only valid option apparently')
@@ -91,6 +93,8 @@ class CTCModel(base_model.BaseTask):
 
     if p.frontend:
       self.CreateChild('frontend', p.frontend)
+
+    self.CreateChild('input_stacking', p.input_stacking_layer_tpl.Copy())
 
     with tf.variable_scope(name):
       params_rnn_layers = []
@@ -149,18 +153,27 @@ class CTCModel(base_model.BaseTask):
                               py_utils.LengthsFromBitMask(tf.squeeze(output_batch.encoder_outputs_padding, 2), 0),
                               logits_time_major=True,
                               blank_index=73)
-    total_loss = tf.reduce_sum(ctc_loss)
+    total_loss = tf.reduce_mean(ctc_loss)
     metrics = {"loss": (total_loss, 1.0)}
     per_sequence_loss = {"loss": ctc_loss}
     return metrics, per_sequence_loss
 
   def _FProp(self, theta, input_batch, state0=None):
     p = self.params
+    # This is BxTxFx1. We need TxBxF for the LSTM
     inputs = input_batch.src.src_inputs
-    # This is BxTxFx1. We need TxBxF
-    inputs = tf.transpose(tf.squeeze(inputs, [-1]), [1, 0, 2])
-    rnn_padding = tf.expand_dims(
-      tf.transpose(input_batch.src.paddings, [1, 0]), 2)
+    inputs = tf.squeeze(inputs, [-1])
+    # This is BxT. We need TxBx1 for the LSTM
+    rnn_padding = tf.expand_dims(input_batch.src.paddings, 2)
+
+    # inputs: BxTxF
+    # rnn_padding: BxTx1
+    inputs, rnn_padding = self.input_stacking.FProp(inputs, rnn_padding)
+    inputs = tf.transpose(inputs, [1, 0, 2])
+    rnn_padding = tf.transpose(rnn_padding, [1, 0, 2])
+    # inputs: TxBxF
+    # rnn_padding: TxBx1
+
     rnn_out = inputs
     outputs = py_utils.NestedMap()
     with tf.name_scope(p.name):
