@@ -129,6 +129,14 @@ class AsrInput(base_input_generator.BaseSequenceInputGenerator):
         src_paddings_shape = None
         tgt_shape = None
 
+      src_frames = py_utils.PadBatchDimension(src_frames, self.InfeedBatchSize(), 0)
+      src_paddings = py_utils.PadBatchDimension(src_paddings, self.InfeedBatchSize(),
+                                                1)
+      tgt_ids = py_utils.PadBatchDimension(tgt_ids, self.InfeedBatchSize(), 0)
+      tgt_labels = py_utils.PadBatchDimension(tgt_labels, self.InfeedBatchSize(), 0)
+      tgt_paddings = py_utils.PadBatchDimension(tgt_paddings, self.InfeedBatchSize(),
+                                                1)
+
       src_frames = py_utils.PadSequenceDimension(
           src_frames, p.source_max_length, 0, shape=src_frames_shape)
       src_paddings = py_utils.PadSequenceDimension(
