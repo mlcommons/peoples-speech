@@ -138,12 +138,16 @@ class CTCModel(base_model.BaseTask):
 
   def ComputePredictions(self, theta, input_batch):
     output_batch = self._FProp(theta, input_batch)
-    return py_utils.RunOnTpuHost(
+    # ctc_greedy_decoder = merge_repeated = True (def)
+    hypotheses = py_utils.RunOnTpuHost(
       tf.nn.ctc_greedy_decoder,
       output_batch.encoder_outputs,
       py_utils.LengthsFromBitMask(
-        tf.squeeze(output_batch.encoder_outputs_padding, 2), 0)
+        tf.squeeze(output_batch.encoder_outputs_padding, 2), 0),
+      
     )
+    tf.print("*******ComputePredictions********:" , hypotheses)
+    return hypotheses
 
   def ComputeLoss(self, theta, predictions, input_batch):
     output_batch = self._FProp(theta, input_batch)
@@ -154,6 +158,7 @@ class CTCModel(base_model.BaseTask):
                               logits_time_major=True,
                               blank_index=73)
     total_loss = tf.reduce_mean(ctc_loss)
+    tf.print("*******ComputeLoss********:" , total_loss)
     metrics = {"loss": (total_loss, 1.0)}
     per_sequence_loss = {"loss": ctc_loss}
     return metrics, per_sequence_loss
@@ -199,6 +204,7 @@ class CTCModel(base_model.BaseTask):
       return outputs
 
   def Inference(self):
+    raise NotImplementedError("No Inference available.")
     subgraphs = {}
     with tf.name_scope('inference'):
       subgraphs['default'] = self._InferenceSubgraph_Default()
@@ -229,6 +235,8 @@ class CTCModel(base_model.BaseTask):
       encoder_outputs = self.FPropDefaultTheta() # _FProp()
       decoder_outputs = self.decoder.BeamSearchDecode(encoder_outputs)
       topk = self._GetTopK(decoder_outputs)
+
+      tf.print("*******_InferenceSubgraph_Default********:" , topk.decoded)
 
       feeds = {'wav': wav_bytes}
       fetches = {

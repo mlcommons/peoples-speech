@@ -27,13 +27,13 @@ from lingvo.tasks.asr import input_generator
 from lingvo.tasks.asr import ctc_model
 from lingvo.tasks.asr import model_test_input_generator as tig
 import numpy as np
-
+import sys
 
 
 class AsrCtcModelTest(test_utils.TestCase):
 
   def _testParams(self):
-    input_shape = [2, 16, 8, 3]
+    input_shape = [2, 16, 80, 1]
     p = ctc_model.CTCModel.Params()
     #p.decoder.target_seq_len = 5
     #p.encoder.input_shape = input_shape
@@ -51,7 +51,11 @@ class AsrCtcModelTest(test_utils.TestCase):
       mdl = p.Instantiate()
       mdl.FPropDefaultTheta()
       self.evaluate(tf.global_variables_initializer())
-      test_utils.CompareToGoldenSingleFloat(self, 4.472597, mdl.loss.eval())
+      print("Anjali")
+      print(mdl, p)
+      # tf.print("Anjali")
+      # tf.print("************ mdl, test_params: ********" , mdl, p , output_stream=sys.stdout)
+      test_utils.CompareToGoldenSingleFloat(self, 50.238464, mdl.loss.eval())
 
 
 if __name__ == '__main__':
