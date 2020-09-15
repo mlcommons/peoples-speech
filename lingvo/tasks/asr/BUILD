@@ -255,6 +255,30 @@ py_test(
     ],
 )
 
+py_test(
+    name = "ctc_model_test",
+    srcs = ["ctc_model_test.py"],
+    data = ["//lingvo/tools/testdata:audio_data"],
+    python_version = "PY3",
+    shard_count = 15,
+    srcs_version = "PY3",
+    deps = [
+        ":decoder",
+        ":input_generator",
+        ":ctc_model",
+        ":model_test_input_generator",
+        "//lingvo:compat",
+        "//lingvo/core:base_layer",
+        "//lingvo/core:cluster_factory",
+        "//lingvo/core:py_utils",
+        "//lingvo/core:schedule",
+        "//lingvo/core:summary_utils",
+        "//lingvo/core:test_helper",
+        "//lingvo/core:test_utils",
+        # Implicit numpy dependency.
+    ],
+)
+
 filegroup(
     name = "wpm_files",
     srcs = ["wpm_16k_librispeech.vocab"],
