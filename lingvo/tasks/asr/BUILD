@@ -260,7 +260,7 @@ py_test(
     srcs = ["ctc_model_test.py"],
     data = ["//lingvo/tools/testdata:audio_data"],
     python_version = "PY3",
-    shard_count = 15,
+    shard_count = 1,
     srcs_version = "PY3",
     deps = [
         ":decoder",

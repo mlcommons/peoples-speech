@@ -52,11 +52,11 @@ class AsrCtcModelTest(test_utils.TestCase):
       mdl.FPropDefaultTheta()
       self.evaluate(tf.global_variables_initializer())
       print("Anjali")
-      print(mdl, p)
+      # print(mdl, p)
       # tf.print("Anjali")
       # tf.print("************ mdl, test_params: ********" , mdl, p , output_stream=sys.stdout)
       test_utils.CompareToGoldenSingleFloat(self, 50.238464, mdl.loss.eval())
-
+      # test_utils.CompareToGoldenSingleFloat(self, 50.238464, mdl.wer.eval())
 
 if __name__ == '__main__':
   tf.test.main()

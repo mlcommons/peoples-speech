@@ -25,6 +25,8 @@ from lingvo.core import schedule
 from lingvo.tasks.asr import encoder
 from lingvo.tasks.asr import frontend as asr_frontend
 from lingvo.tools import audio_lib
+from lingvo.tasks.asr import decoder_utils
+# from lingvo.tasks.asr import input_generator
 
 class CTCModel(base_model.BaseTask):
   """
@@ -144,10 +146,10 @@ class CTCModel(base_model.BaseTask):
       output_batch.encoder_outputs,
       py_utils.LengthsFromBitMask(
         tf.squeeze(output_batch.encoder_outputs_padding, 2), 0),
-      
     )
-    tf.print("*******ComputePredictions********:" , hypotheses)
     return hypotheses
+    # return tf.Print(hypotheses, [hypotheses], "*******ComputePredictions********:")
+    
 
   def ComputeLoss(self, theta, predictions, input_batch):
     output_batch = self._FProp(theta, input_batch)
@@ -157,9 +159,32 @@ class CTCModel(base_model.BaseTask):
                               py_utils.LengthsFromBitMask(tf.squeeze(output_batch.encoder_outputs_padding, 2), 0),
                               logits_time_major=True,
                               blank_index=73)
+
+    # ctc_loss.shape = (B)
     total_loss = tf.reduce_mean(ctc_loss)
-    tf.print("*******ComputeLoss********:" , total_loss)
-    metrics = {"loss": (total_loss, 1.0)}
+    
+    (decoded,), neg_sum_logits = py_utils.RunOnTpuHost(
+      tf.nn.ctc_greedy_decoder,
+      output_batch.encoder_outputs,
+      py_utils.LengthsFromBitMask(
+        tf.squeeze(output_batch.encoder_outputs_padding, 2), 0),
+    )
+
+    dec = tf.sparse_to_dense(decoded.indices, decoded.dense_shape, decoded.values, default_value=73)
+    
+    hyp_str = self.input_generator.IdsToStrings(tf.cast(dec, tf.int32), tf.shape(dec))
+    transcripts = self.input_generator.IdsToStrings(
+        input_batch.tgt.labels,
+        tf.cast(tf.round(tf.reduce_sum(1.0 - input_batch.tgt.paddings, 1) - 1.0), tf.int32))
+    
+    word_dist = decoder_utils.ComputeWer(hyp_str, transcripts)
+    num_wrong_words = tf.reduce_sum(word_dist[:, 0])
+    num_ref_words = tf.reduce_sum(word_dist[:, 1])
+    wer = num_wrong_words / num_ref_words
+    wer = tf.Print(wer, [hyp_str, tf.shape(hyp_str), transcripts, 
+                        tf.shape(transcripts), num_wrong_words, num_ref_words, wer], "****HYP STR****")
+    
+    metrics = {"loss": (total_loss, 1.0), "wer": (wer, 1.0)}
     per_sequence_loss = {"loss": ctc_loss}
     return metrics, per_sequence_loss
 
@@ -204,7 +229,6 @@ class CTCModel(base_model.BaseTask):
       return outputs
 
   def Inference(self):
-    raise NotImplementedError("No Inference available.")
     subgraphs = {}
     with tf.name_scope('inference'):
       subgraphs['default'] = self._InferenceSubgraph_Default()
@@ -236,7 +260,7 @@ class CTCModel(base_model.BaseTask):
       decoder_outputs = self.decoder.BeamSearchDecode(encoder_outputs)
       topk = self._GetTopK(decoder_outputs)
 
-      tf.print("*******_InferenceSubgraph_Default********:" , topk.decoded)
+      tf.Print(topK, [topK], "*******_InferenceSubgraph_Default********:")
 
       feeds = {'wav': wav_bytes}
       fetches = {
