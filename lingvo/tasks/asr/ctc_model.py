@@ -150,108 +150,108 @@ class CTCModel(base_model.BaseTask):
     return hypotheses
         # return tf.Print(hypotheses, [hypotheses], "*******ComputePredictions********:")
 
-    def _CalculateWER(self, input_batch, output_batch):
-        (decoded,), neg_sum_logits = tf.nn.ctc_greedy_decoder(
-            output_batch.encoder_outputs,
-            py_utils.LengthsFromBitMask(
-                tf.squeeze(output_batch.encoder_outputs_padding, 2), 0
-            ),
-        )
+  def _CalculateWER(self, input_batch, output_batch):
+      (decoded,), neg_sum_logits = tf.nn.ctc_greedy_decoder(
+          output_batch.encoder_outputs,
+          py_utils.LengthsFromBitMask(
+              tf.squeeze(output_batch.encoder_outputs_padding, 2), 0
+          ),
+      )
 
-        dec = tf.sparse_to_dense(
-            decoded.indices, decoded.dense_shape, decoded.values, default_value=73
-        )
+      dec = tf.sparse_to_dense(
+          decoded.indices, decoded.dense_shape, decoded.values, default_value=73
+      )
 
-        hyp_str = self.input_generator.IdsToStrings(
-            tf.cast(dec, tf.int32), tf.shape(dec)
-        )
-        transcripts = self.input_generator.IdsToStrings(
-            input_batch.tgt.labels,
-            tf.cast(
-                tf.round(tf.reduce_sum(1.0 - input_batch.tgt.paddings, 1) - 1.0),
-                tf.int32,
-            ),
-        )
+      hyp_str = self.input_generator.IdsToStrings(
+          tf.cast(dec, tf.int32), tf.shape(dec)
+      )
+      transcripts = self.input_generator.IdsToStrings(
+          input_batch.tgt.labels,
+          tf.cast(
+              tf.round(tf.reduce_sum(1.0 - input_batch.tgt.paddings, 1) - 1.0),
+              tf.int32,
+          ),
+      )
 
-        word_dist = decoder_utils.ComputeWer(hyp_str, transcripts)
-        num_wrong_words = tf.reduce_sum(word_dist[:, 0])
-        num_ref_words = tf.reduce_sum(word_dist[:, 1])
-        wer = num_wrong_words / num_ref_words
-        wer = tf.Print(
-            wer,
-            [
-                hyp_str,
-                tf.shape(hyp_str),
-                transcripts,
-                tf.shape(transcripts),
-                num_wrong_words,
-                num_ref_words,
-                wer,
-            ],
-            "****HYP STR****",
-        )
-        return wer
+      word_dist = decoder_utils.ComputeWer(hyp_str, transcripts)
+      num_wrong_words = tf.reduce_sum(word_dist[:, 0])
+      num_ref_words = tf.reduce_sum(word_dist[:, 1])
+      wer = num_wrong_words / num_ref_words
+      wer = tf.Print(
+          wer,
+          [
+              hyp_str,
+              tf.shape(hyp_str),
+              transcripts,
+              tf.shape(transcripts),
+              num_wrong_words,
+              num_ref_words,
+              wer,
+          ],
+          "****HYP STR****",
+      )
+      return wer
 
-    def ComputeLoss(self, theta, predictions, input_batch):
-        output_batch = self._FProp(theta, input_batch)
-        # See ascii_tokenizer.cc for 73
-        ctc_loss = tf.nn.ctc_loss(
-            input_batch.tgt.labels,
-            output_batch.encoder_outputs,
-            py_utils.LengthsFromBitMask(input_batch.tgt.paddings, 1),
-            py_utils.LengthsFromBitMask(
-                tf.squeeze(output_batch.encoder_outputs_padding, 2), 0
-            ),
-            logits_time_major=True,
-            blank_index=73,
-        )
+  def ComputeLoss(self, theta, predictions, input_batch):
+      output_batch = self._FProp(theta, input_batch)
+      # See ascii_tokenizer.cc for 73
+      ctc_loss = tf.nn.ctc_loss(
+          input_batch.tgt.labels,
+          output_batch.encoder_outputs,
+          py_utils.LengthsFromBitMask(input_batch.tgt.paddings, 1),
+          py_utils.LengthsFromBitMask(
+              tf.squeeze(output_batch.encoder_outputs_padding, 2), 0
+          ),
+          logits_time_major=True,
+          blank_index=73,
+      )
 
-        # ctc_loss.shape = (B)
-        total_loss = tf.reduce_mean(ctc_loss)
-        if py_utils.use_tpu():
-          wer = py_utils.RunOnTpuHost(self._CalculateWER, input_batch, output_batch)
-        else:
-          wer = self._CalculateWER(input_batch, output_batch)
-        metrics = {"loss": (total_loss, 1.0), "wer": (wer, 1.0)}
-        per_sequence_loss = {"loss": ctc_loss}
-        return metrics, per_sequence_loss
+      # ctc_loss.shape = (B)
+      total_loss = tf.reduce_mean(ctc_loss)
+      if py_utils.use_tpu():
+        wer = py_utils.RunOnTpuHost(self._CalculateWER, input_batch, output_batch)
+      else:
+        wer = self._CalculateWER(input_batch, output_batch)
+      metrics = {"loss": (total_loss, 1.0), "wer": (wer, 1.0)}
+      per_sequence_loss = {"loss": ctc_loss}
+      return metrics, per_sequence_loss
 
-    def _FProp(self, theta, input_batch, state0=None):
-        p = self.params
-        # This is BxTxFx1. We need TxBxF for the LSTM
-        inputs = input_batch.src.src_inputs
-        inputs = tf.squeeze(inputs, [-1])
-        # This is BxT. We need TxBx1 for the LSTM
-        rnn_padding = tf.expand_dims(input_batch.src.paddings, 2)
+  def _FProp(self, theta, input_batch, state0=None):
+      p = self.params
+      # This is BxTxFx1. We need TxBxF for the LSTM
+      inputs = input_batch.src.src_inputs
+      inputs = tf.squeeze(inputs, [-1])
+      # This is BxT. We need TxBx1 for the LSTM
+      rnn_padding = tf.expand_dims(input_batch.src.paddings, 2)
 
-        # inputs: BxTxF
-        # rnn_padding: BxTx1
-        inputs, rnn_padding = self.input_stacking.FProp(inputs, rnn_padding)
-        inputs = tf.transpose(inputs, [1, 0, 2])
-        rnn_padding = tf.transpose(rnn_padding, [1, 0, 2])
-        # inputs: TxBxF
-        # rnn_padding: TxBx1
+      # inputs: BxTxF
+      # rnn_padding: BxTx1
+      inputs, rnn_padding = self.input_stacking.FProp(inputs, rnn_padding)
+      inputs = tf.transpose(inputs, [1, 0, 2])
+      rnn_padding = tf.transpose(rnn_padding, [1, 0, 2])
+      # inputs: TxBxF
+      # rnn_padding: TxBx1
 
-        rnn_out = inputs
-        outputs = py_utils.NestedMap()
-        with tf.name_scope(p.name):
-            for i in range(p.num_lstm_layers):
-                rnn_out, _ = self.rnn[i].FProp(theta.rnn[i], rnn_out, rnn_padding)
-                # if p.project_lstm_output and (i < p.num_lstm_layers - 1):
-                #   # Projection layers.
-                #   rnn_out = self.proj[i].FProp(theta.proj[i], rnn_out, rnn_padding)
-                # if p.layer_index_before_stacking == i:
-                #   # Stacking layer expects input tensor shape as [batch, time, feature].
-                #   # So transpose the tensors before and after the layer.
-                #   # Ugh, I hate transposes like this!
-                #   rnn_out, rnn_padding = self.stacking.FProp(
-                #       tf.transpose(rnn_out, [1, 0, 2]),
-                #       tf.transpose(rnn_padding, [1, 0, 2]))
-                #   rnn_out = tf.transpose(rnn_out, [1, 0, 2])
-                #   rnn_padding = tf.transpose(rnn_padding, [1, 0, 2])
+      rnn_out = inputs
+      outputs = py_utils.NestedMap()
+      with tf.name_scope(p.name):
+          for i in range(p.num_lstm_layers):
+              rnn_out, _ = self.rnn[i].FProp(theta.rnn[i], rnn_out, rnn_padding)
+              # if p.project_lstm_output and (i < p.num_lstm_layers - 1):
+              #   # Projection layers.
+              #   rnn_out = self.proj[i].FProp(theta.proj[i], rnn_out, rnn_padding)
+              # if p.layer_index_before_stacking == i:
+              #   # Stacking layer expects input tensor shape as [batch, time, feature].
+              #   # So transpose the tensors before and after the layer.
+              #   # Ugh, I hate transposes like this!
+              #   rnn_out, rnn_padding = self.stacking.FProp(
+              #       tf.transpose(rnn_out, [1, 0, 2]),
+              #       tf.transpose(rnn_padding, [1, 0, 2]))
+              #   rnn_out = tf.transpose(rnn_out, [1, 0, 2])
+              #   rnn_padding = tf.transpose(rnn_padding, [1, 0, 2])
 
-            rnn_out = self.project_to_vocab_size(rnn_out)
-            rnn_out *= (1.0 - rnn_padding)
+          rnn_out = self.project_to_vocab_size(rnn_out)
+          rnn_out *= (1.0 - rnn_padding)
       outputs['encoder_outputs'] = rnn_out
       outputs['encoder_outputs_padding'] = rnn_padding
       return outputs
