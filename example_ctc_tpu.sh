@@ -6,7 +6,8 @@ bazel-bin/lingvo/trainer --logdir=$1 \
                          --mode=sync \
                          --model=asr.librispeech_ctc.Librispeech960Base \
                          --logtostderr \
-                         --tpu=grpc://10.240.1.2:8470
+                         --tpu=grpc://10.240.1.2:8470 \
+                         --job=executor_tpu
 
 # asr.librispeech_ctc.Librispeech960Base -> lingvo.tasks.asr.params.librispeech_ctc.Librispeech960Base
 # 10.240.1.2

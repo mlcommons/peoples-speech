@@ -119,9 +119,9 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
     # p.stacking_layer_tpl.right_context = 1
 
     tp = p.train
-    tp.learning_rate = 2.5e-4
+    tp.learning_rate = 1e-4
     tp.lr_schedule = schedule.ContinuousSchedule.Params().Set(
-        start_step=50000, half_life_steps=100000, min=0.01)
+        start_step=50_000, half_life_steps=100_000, min=0.01)
     tp.scale_gradients = False
     tp.l2_regularizer_weight = None
 
@@ -130,7 +130,7 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
     # each of these sets is less than 5000), while train summaries will be
     # computed on 5000 examples.
     p.eval.samples_per_summary = 5000
-    p.eval.decoder_samples_per_summary = 0
+    p.eval.decoder_samples_per_summary = 5000
 
     return p
 

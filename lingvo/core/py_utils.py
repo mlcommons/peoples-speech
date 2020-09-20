@@ -3689,6 +3689,17 @@ def PiecewiseConstant(x_in, boundaries, values, vdtype):
   return Matmul(tf.reshape(vs, (1, -1)), tf.transpose(one_hot_vec))[0][0]
 
 
+def PadBatchDimension(x, batch_size, pad_val):
+  rank = tf.rank(x)
+  with tf.control_dependencies([assert_greater_equal(rank, 1)]):
+    current_batch_size = tf.shape(x)[0]
+  with tf.control_dependencies([assert_less_equal(current_batch_size, batch_size)]):
+    fake_samples_in_batch = batch_size - current_batch_size
+    pad = tf.scatter_nd([[0, 1]], [fake_samples_in_batch], [rank, 2])
+  x = tf.pad(x, pad, constant_values=pad_val)
+  return x
+
+
 def PadSequenceDimension(x, length, pad_val, shape=None):
   """Pads x to `length` using `pad_val` along the second dim.
 
