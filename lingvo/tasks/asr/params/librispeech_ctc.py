@@ -29,7 +29,9 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
     # Generated using scripts in lingvo/tasks/asr/tools.
     p.file_datasource = datasource.PrefixedDataSource.Params()
     p.file_datasource.file_type = 'tfrecord'
-    p.file_datasource.file_pattern_prefix = 'gs://the-peoples-speech-west-europe/Librispeech'
+    # AG TODO: chang this local path to gs path for orig data (this is for testing only)
+    # p.file_datasource.file_pattern_prefix = 'gs://the-peoples-speech-west-europe/Librispeech'
+    p.file_datasource.file_pattern_prefix = '/home/anjali/data/Librispeech/data'
     # TODO: Use an abseil flag for this.
     # p.file_datasource.file_pattern_prefix = '/export/b02/ws15dgalvez/kaldi-data/librispeech'
 

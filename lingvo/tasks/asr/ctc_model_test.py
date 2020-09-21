@@ -31,16 +31,16 @@ import sys
 
 
 class AsrCtcModelTest(test_utils.TestCase):
-
+  # bazel test //lingvo/tasks/asr:ctc_model_test --test_output=all (prints on console)
   def _testParams(self):
-    input_shape = [2, 16, 80, 1]
+    input_shape = [12, 16, 80, 1]  # (B, T, F, 1)
     p = ctc_model.CTCModel.Params()
     #p.decoder.target_seq_len = 5
     #p.encoder.input_shape = input_shape
     p.input = tig.TestInputGenerator.Params()
     p.input.target_max_length = 5
     p.input.source_shape = input_shape
-    p.input.target_shape = [2, 5]
+    p.input.target_shape = [12, 5]
     p.name = 'test_ctc_mdl'
     return p
 
@@ -49,9 +49,11 @@ class AsrCtcModelTest(test_utils.TestCase):
       tf.random.set_seed(93820985)
       p = self._testParams()
       mdl = p.Instantiate()
-      mdl.FPropDefaultTheta()
+      # FPropDefaultTheta -> FPropTower -> { ComputePredictions ; ComputeLoss; }
+      metrics, per_item_metrics = mdl.FPropDefaultTheta()
       self.evaluate(tf.global_variables_initializer())
-      test_utils.CompareToGoldenSingleFloat(self, 50.238464, mdl.loss.eval())
+      wer, weight = metrics['wer']
+      test_utils.CompareToGoldenSingleFloat(self, 1.08333333, wer.eval())
       
 if __name__ == '__main__':
   tf.test.main()

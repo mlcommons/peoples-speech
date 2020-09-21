@@ -38,7 +38,9 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
     # Generated using scripts in lingvo/tasks/asr/tools.
     p.file_datasource = datasource.PrefixedDataSource.Params()
     p.file_datasource.file_type = 'tfrecord'
-    p.file_datasource.file_pattern_prefix = '/tmp/librispeech'
+    # AG TODO: chang this local path to gs path for orig data (this is for testing only)
+    #p.file_datasource.file_pattern_prefix = '/tmp/librispeech'
+    p.file_datasource.file_pattern_prefix = '/home/anjali/data/Librispeech/data'
 
     p.frame_size = 80
     p.append_eos_frame = True
@@ -53,9 +55,11 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
       p.bucket_upper_bound = [639, 1062, 1275, 1377, 1449, 1506, 1563, 3600]
     else:
       p.source_max_length = 3000
+      # handle varying input sizes
+      # clips with <=639 (?) time units (stesps) fall into bucket 1 and so on
       p.bucket_upper_bound = [639, 1062, 1275, 1377, 1449, 1506, 1563, 1710]
 
-    p.bucket_batch_limit = [96, 48, 48, 48, 48, 48, 48, 48]
+    p.bucket_batch_limit = [x//8 for x in [96, 48, 48, 48, 48, 48, 48, 48]]
 
     return p
 

@@ -134,7 +134,11 @@ class DecoderUtilsComputeWerTest(test_utils.TestCase):
       wer = decoder_utils.ComputeWer(
           hyps=["ONE two", "one two"], refs=["one two", "ONE two"])
       self.assertAllEqual(wer.shape, [2, 2])
-      self.assertAllEqual(wer.eval(), [[1, 2], [1, 2]])
+      self.assertAllEqual(wer.eval(), 
+      [
+        [1, 2], 
+        [1, 2]
+      ])
 
 
 class DecoderUtilsFilterTest(test_utils.TestCase):

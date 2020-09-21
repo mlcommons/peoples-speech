@@ -103,10 +103,8 @@ class AssertSameDim0Op : public OpKernel {
 REGISTER_KERNEL_BUILDER(Name("AssertSameDim0").Device(DEVICE_CPU),
                         AssertSameDim0Op);
 
-#if GOOGLE_CUDA
 REGISTER_KERNEL_BUILDER(Name("AssertSameDim0").Device(DEVICE_GPU),
                         AssertSameDim0Op);
-#endif
 
 }  // namespace
 }  // namespace lingvo

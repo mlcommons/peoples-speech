@@ -139,31 +139,32 @@ class CTCModel(base_model.BaseTask):
       self.CreateChild('project_to_vocab_size', projection_p)
 
   def ComputePredictions(self, theta, input_batch):
-    output_batch = self._FProp(theta, input_batch)
-    # ctc_greedy_decoder = merge_repeated = True (def)
-    hypotheses = py_utils.RunOnTpuHost(
-      tf.nn.ctc_greedy_decoder,
-      output_batch.encoder_outputs,
-      py_utils.LengthsFromBitMask(
-        tf.squeeze(output_batch.encoder_outputs_padding, 2), 0),
-    )
-    return hypotheses
-        # return tf.Print(hypotheses, [hypotheses], "*******ComputePredictions********:")
+    return self._FProp(theta, input_batch)
 
   def _CalculateWER(self, input_batch, output_batch):
+
       (decoded,), neg_sum_logits = tf.nn.ctc_greedy_decoder(
-          output_batch.encoder_outputs,
+          output_batch.encoder_outputs, 
           py_utils.LengthsFromBitMask(
-              tf.squeeze(output_batch.encoder_outputs_padding, 2), 0
-          ),
+            tf.squeeze(output_batch.encoder_outputs_padding, 2), 0
+          )
       )
 
       dec = tf.sparse_to_dense(
           decoded.indices, decoded.dense_shape, decoded.values, default_value=73
       )
 
+      INVALID = tf.constant(73, tf.int64)
+      bitMask = tf.cast(tf.math.equal(dec, INVALID), tf.float32)  # (B, T)
+      # bitMask = tf.Print(bitMask, [tf.shape(bitMask), bitMask], "BITMASK:", summarize=-1)
+      # return tf.reduce_sum(tf.cast(bitMask, tf.int32))
+
+      decoded_seq_lengths = py_utils.LengthsFromBitMask(tf.transpose(bitMask), 0)
+      # decoded_seq_lengths = tf.Print(decoded_seq_lengths, [decoded_seq_lengths], "SEQLEN:", summarize=-1)
+      # return tf.reduce_sum(tf.cast(decoded_seq_lengths, tf.int32))
+
       hyp_str = self.input_generator.IdsToStrings(
-          tf.cast(dec, tf.int32), tf.shape(dec)
+          tf.cast(dec, tf.int32), decoded_seq_lengths
       )
       transcripts = self.input_generator.IdsToStrings(
           input_batch.tgt.labels,
@@ -173,28 +174,28 @@ class CTCModel(base_model.BaseTask):
           ),
       )
 
-      word_dist = decoder_utils.ComputeWer(hyp_str, transcripts)
+      word_dist = decoder_utils.ComputeWer(hyp_str, transcripts)  # (B, 2)
       num_wrong_words = tf.reduce_sum(word_dist[:, 0])
       num_ref_words = tf.reduce_sum(word_dist[:, 1])
       wer = num_wrong_words / num_ref_words
       wer = tf.Print(
           wer,
           [
-              hyp_str,
-              tf.shape(hyp_str),
-              transcripts,
-              tf.shape(transcripts),
-              num_wrong_words,
-              num_ref_words,
-              wer,
+              hyp_str[1],  # prediction for sample 1
+              transcripts[1],  # ground truth for sample 1
+              word_dist[1, 0],  # num wrong words in sample 1 prediction
+              word_dist[1, 1],  # num words in sample 1 ground truth
+              wer,  
           ],
           "****HYP STR****",
+          summarize=-1
       )
       return wer
 
   def ComputeLoss(self, theta, predictions, input_batch):
-      output_batch = self._FProp(theta, input_batch)
+      # output_batch = self._FProp(theta, input_batch)
       # See ascii_tokenizer.cc for 73
+      output_batch = predictions
       ctc_loss = tf.nn.ctc_loss(
           input_batch.tgt.labels,
           output_batch.encoder_outputs,
@@ -287,8 +288,6 @@ class CTCModel(base_model.BaseTask):
       encoder_outputs = self.FPropDefaultTheta() # _FProp()
       decoder_outputs = self.decoder.BeamSearchDecode(encoder_outputs)
       topk = self._GetTopK(decoder_outputs)
-
-      tf.Print(topK, [topK], "*******_InferenceSubgraph_Default********:")
 
       feeds = {'wav': wav_bytes}
       fetches = {
