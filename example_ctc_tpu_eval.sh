@@ -1,21 +1,15 @@
-export CUDA_VISIBLE_DEVICES=""
+#making GPU_id 0 visible to TF, for TPU - unset/change to ""
+export CUDA_VISIBLE_DEVICES="0"
 export OPENBLAS_NUM_THREADS="1"
 export MKL_NUM_THREADS="1"
 
-# bazel-bin/lingvo/trainer --logdir=$1 \
-#                          --mode=sync \
-#                          --model=asr.librispeech_ctc.Librispeech960Base1e4 \
-#                          --logtostderr \
-#                          --tpu=grpc://10.191.194.74:8470 \
-#                          --job=executor_tpu 
-
-# bazel-bin/lingvo/trainer --logdir=gs://the-peoples-speech-west-europe/ag/ctc_librispeech/training_logs/lr1e4/tpu_ctc_1h_lr1e4/ \
-bazel-bin/lingvo/trainer --logdir=gs://the-peoples-speech-west-europe/ag/tmp \
-                         --mode=sync \
-                         --model=asr.librispeech_ctc.Librispeech960Base1e4 \
-                         --logtostderr \
-                         --run_locally=cpu \
-                         # --job=evaler_test
+LOGDIR="/home/anjali/data/librispeech_models/wer/train_1e4/"   
+bazel run //lingvo:trainer -- --logdir=${LOGDIR} \
+                                --mode=sync \
+                                --model=asr.librispeech_ctc.Librispeech960Base \
+                                --logtostderr \
+                                --job=evaler_dev \
+                                --run_locally=gpu 2>&1 | tee -a log #-a appends to log file clled log
                          
 
 # asr.librispeech_ctc.Librispeech960Base -> lingvo.tasks.asr.params.librispeech_ctc.Librispeech960Base

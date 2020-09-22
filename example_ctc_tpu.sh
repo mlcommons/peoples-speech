@@ -4,7 +4,8 @@ export OPENBLAS_NUM_THREADS="1"
 export MKL_NUM_THREADS="1"
 
 # run the cmd below in the shell and get the curr date(o/p)
-DATE=$(date '+%m%d')
+#DATE=$(date '+%m%d')
+DATE=$(date '+log_%Y_%m_%d_%H_%M_%S')
 # AG TODO: add min and hr to the folder name
 LOGDIR="/home/anjali/data/librispeech_models/wer/${DATE}"
 
