@@ -30,8 +30,8 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
     p.file_datasource = datasource.PrefixedDataSource.Params()
     p.file_datasource.file_type = 'tfrecord'
     # AG TODO: chang this local path to gs path for orig data (this is for testing only)
-    # p.file_datasource.file_pattern_prefix = 'gs://the-peoples-speech-west-europe/Librispeech'
-    p.file_datasource.file_pattern_prefix = '/home/anjali/data/Librispeech/data'
+    p.file_datasource.file_pattern_prefix = 'gs://the-peoples-speech-west-europe/Librispeech'
+    # p.file_datasource.file_pattern_prefix = '/home/anjali/data/Librispeech/data'
     # TODO: Use an abseil flag for this.
     # p.file_datasource.file_pattern_prefix = '/export/b02/ws15dgalvez/kaldi-data/librispeech'
 
@@ -54,8 +54,9 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
       p.source_max_length = 1710
       p.bucket_upper_bound = [639, 1062, 1275, 1377, 1449, 1506, 1563, 1710]
 
-    # p.bucket_batch_limit = [96, 48, 48, 48, 48, 48, 48, 48]
-    p.bucket_batch_limit = [12] * 8
+    p.bucket_batch_limit = [96, 48, 48, 48, 48, 48, 48, 48]
+    # AG TODO: For GPU
+    # p.bucket_batch_limit = [12] * 8
 
     # Assumes ascii_tokenizer.cc. Gross!
     p.tokenizer.vocab_size = 76
@@ -146,182 +147,15 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
 
 
 @model_registry.RegisterSingleTaskModel
-class Librispeech960Base1e4(Librispeech960Base):
+class Librispeech960BaseLstm10(Librispeech960Base):
   def Task(self):
-    p = ctc_model.CTCModel.Params()
-    p.name = 'librispeech'
-
-    p.input_stacking_layer_tpl.left_context = 1
-    p.input_stacking_layer_tpl.right_context = 1
-    p.input_stacking_layer_tpl.stride = (
-      p.input_stacking_layer_tpl.left_context +
-      1 +
-      p.input_stacking_layer_tpl.right_context)
-
-    p.input_dim = 80 * p.input_stacking_layer_tpl.stride
-    p.lstm_cell_size = 1024
-    p.num_lstm_layers = 5
-    # p.layer_index_before_stacking = 2
-    # May want left_context = 1 instead for pytorch compatibility.
-    # p.stacking_layer_tpl.right_context = 1
-
-    tp = p.train
-    tp.learning_rate = 1e-4
-    tp.lr_schedule = schedule.ContinuousSchedule.Params().Set(
-        start_step=50000, half_life_steps=100000, min=0.01)
-    tp.scale_gradients = False
-    tp.l2_regularizer_weight = None
-
-    # Setting p.eval.samples_per_summary to a large value ensures that dev,
-    # devother, test, testother are evaluated completely (since num_samples for
-    # each of these sets is less than 5000), while train summaries will be
-    # computed on 5000 examples.
-    p.eval.samples_per_summary = 5000
-    p.eval.decoder_samples_per_summary = 0
-
+    p = super().Task()
+    p.num_lstm_layers = 10
     return p
 
 @model_registry.RegisterSingleTaskModel
-class Librispeech960Base3e4(Librispeech960Base):
+class Librispeech960BaseLstm7(Librispeech960Base):
   def Task(self):
-    p = ctc_model.CTCModel.Params()
-    p.name = 'librispeech'
-
-    p.input_stacking_layer_tpl.left_context = 1
-    p.input_stacking_layer_tpl.right_context = 1
-    p.input_stacking_layer_tpl.stride = (
-      p.input_stacking_layer_tpl.left_context +
-      1 +
-      p.input_stacking_layer_tpl.right_context)
-
-    p.input_dim = 80 * p.input_stacking_layer_tpl.stride
-    p.lstm_cell_size = 1024
-    p.num_lstm_layers = 5
-    # p.layer_index_before_stacking = 2
-    # May want left_context = 1 instead for pytorch compatibility.
-    # p.stacking_layer_tpl.right_context = 1
-
-    tp = p.train
-    tp.learning_rate = 3e-4
-    tp.lr_schedule = schedule.ContinuousSchedule.Params().Set(
-        start_step=50000, half_life_steps=100000, min=0.01)
-    tp.scale_gradients = False
-    tp.l2_regularizer_weight = None
-
-    # Setting p.eval.samples_per_summary to a large value ensures that dev,
-    # devother, test, testother are evaluated completely (since num_samples for
-    # each of these sets is less than 5000), while train summaries will be
-    # computed on 5000 examples.
-    p.eval.samples_per_summary = 5000
-    p.eval.decoder_samples_per_summary = 0
-
-    return p
-
-@model_registry.RegisterSingleTaskModel
-class Librispeech960Base5e4(Librispeech960Base):
-  def Task(self):
-    p = ctc_model.CTCModel.Params()
-    p.name = 'librispeech'
-
-    p.input_stacking_layer_tpl.left_context = 1
-    p.input_stacking_layer_tpl.right_context = 1
-    p.input_stacking_layer_tpl.stride = (
-      p.input_stacking_layer_tpl.left_context +
-      1 +
-      p.input_stacking_layer_tpl.right_context)
-
-    p.input_dim = 80 * p.input_stacking_layer_tpl.stride
-    p.lstm_cell_size = 1024
-    p.num_lstm_layers = 5
-    # p.layer_index_before_stacking = 2
-    # May want left_context = 1 instead for pytorch compatibility.
-    # p.stacking_layer_tpl.right_context = 1
-
-    tp = p.train
-    tp.learning_rate = 5e-4
-    tp.lr_schedule = schedule.ContinuousSchedule.Params().Set(
-        start_step=50000, half_life_steps=100000, min=0.01)
-    tp.scale_gradients = False
-    tp.l2_regularizer_weight = None
-
-    # Setting p.eval.samples_per_summary to a large value ensures that dev,
-    # devother, test, testother are evaluated completely (since num_samples for
-    # each of these sets is less than 5000), while train summaries will be
-    # computed on 5000 examples.
-    p.eval.samples_per_summary = 5000
-    p.eval.decoder_samples_per_summary = 0
-
-    return p
-
-
-@model_registry.RegisterSingleTaskModel
-class Librispeech960Base1e5(Librispeech960Base):
-  def Task(self):
-    p = ctc_model.CTCModel.Params()
-    p.name = 'librispeech'
-
-    p.input_stacking_layer_tpl.left_context = 1
-    p.input_stacking_layer_tpl.right_context = 1
-    p.input_stacking_layer_tpl.stride = (
-      p.input_stacking_layer_tpl.left_context +
-      1 +
-      p.input_stacking_layer_tpl.right_context)
-
-    p.input_dim = 80 * p.input_stacking_layer_tpl.stride
-    p.lstm_cell_size = 1024
-    p.num_lstm_layers = 5
-    # p.layer_index_before_stacking = 2
-    # May want left_context = 1 instead for pytorch compatibility.
-    # p.stacking_layer_tpl.right_context = 1
-
-    tp = p.train
-    tp.learning_rate = 1e-5
-    tp.lr_schedule = schedule.ContinuousSchedule.Params().Set(
-        start_step=50000, half_life_steps=100000, min=0.01)
-    tp.scale_gradients = False
-    tp.l2_regularizer_weight = None
-
-    # Setting p.eval.samples_per_summary to a large value ensures that dev,
-    # devother, test, testother are evaluated completely (since num_samples for
-    # each of these sets is less than 5000), while train summaries will be
-    # computed on 5000 examples.
-    p.eval.samples_per_summary = 5000
-    p.eval.decoder_samples_per_summary = 0
-
-    return p
-
-@model_registry.RegisterSingleTaskModel
-class Librispeech960Base1e6(Librispeech960Base):
-  def Task(self):
-    p = ctc_model.CTCModel.Params()
-    p.name = 'librispeech'
-
-    p.input_stacking_layer_tpl.left_context = 1
-    p.input_stacking_layer_tpl.right_context = 1
-    p.input_stacking_layer_tpl.stride = (
-      p.input_stacking_layer_tpl.left_context +
-      1 +
-      p.input_stacking_layer_tpl.right_context)
-
-    p.input_dim = 80 * p.input_stacking_layer_tpl.stride
-    p.lstm_cell_size = 1024
-    p.num_lstm_layers = 5
-    # p.layer_index_before_stacking = 2
-    # May want left_context = 1 instead for pytorch compatibility.
-    # p.stacking_layer_tpl.right_context = 1
-
-    tp = p.train
-    tp.learning_rate = 1e-6
-    tp.lr_schedule = schedule.ContinuousSchedule.Params().Set(
-        start_step=50000, half_life_steps=100000, min=0.01)
-    tp.scale_gradients = False
-    tp.l2_regularizer_weight = None
-
-    # Setting p.eval.samples_per_summary to a large value ensures that dev,
-    # devother, test, testother are evaluated completely (since num_samples for
-    # each of these sets is less than 5000), while train summaries will be
-    # computed on 5000 examples.
-    p.eval.samples_per_summary = 5000
-    p.eval.decoder_samples_per_summary = 0
-
+    p = super().Task()
+    p.num_lstm_layers = 7
     return p

@@ -39,8 +39,8 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
     p.file_datasource = datasource.PrefixedDataSource.Params()
     p.file_datasource.file_type = 'tfrecord'
     # AG TODO: chang this local path to gs path for orig data (this is for testing only)
-    #p.file_datasource.file_pattern_prefix = '/tmp/librispeech'
-    p.file_datasource.file_pattern_prefix = '/home/anjali/data/Librispeech/data'
+    p.file_datasource.file_pattern_prefix = '/tmp/librispeech'
+    # p.file_datasource.file_pattern_prefix = '/home/anjali/data/Librispeech/data'
 
     p.frame_size = 80
     p.append_eos_frame = True
