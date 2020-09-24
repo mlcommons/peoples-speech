@@ -160,3 +160,44 @@ class Librispeech960BaseLstm7(Librispeech960Base):
     p = super().Task()
     p.num_lstm_layers = 7
     return p
+
+
+@model_registry.RegisterSingleTaskModel
+class Librispeech960BaseLstm2048(Librispeech960Base):
+  def Task(self):
+    p = super().Task()
+    p.lstm_cell_size = 2048
+    return p
+
+@model_registry.RegisterSingleTaskModel
+class Librispeech960BaseLstm1536(Librispeech960Base):
+  def Task(self):
+    p = super().Task()
+    p.lstm_cell_size =1536
+    return p
+
+@model_registry.RegisterSingleTaskModel
+class Librispeech960BaseLstm7Lr1e6(Librispeech960Base):
+  def Task(self):
+    p = super().Task()
+    p.num_lstm_layers = 7
+    tp = p.train
+    tp.learning_rate = 1e-6
+    return p
+
+@model_registry.RegisterSingleTaskModel
+class Librispeech960BaseLstm10Lr1e5(Librispeech960Base):
+  def Task(self):
+    p = super().Task()
+    p.num_lstm_layers = 10
+    tp = p.train
+    tp.learning_rate = 1e-5
+    return p
+
+@model_registry.RegisterSingleTaskModel
+class Librispeech960BaseLstm7Neu2048(Librispeech960Base):
+  def Task(self):
+    p = super().Task()
+    p.num_lstm_layers = 7
+    p.lstm_cell_size = 2048
+    return p
