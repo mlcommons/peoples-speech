@@ -108,19 +108,21 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
     p = ctc_model.CTCModel.Params()
     p.name = 'librispeech'
 
-    p.input_stacking_layer_tpl.left_context = 1
-    p.input_stacking_layer_tpl.right_context = 1
-    p.input_stacking_layer_tpl.stride = (
-      p.input_stacking_layer_tpl.left_context +
-      1 +
-      p.input_stacking_layer_tpl.right_context)
-
-    p.input_dim = 80 * p.input_stacking_layer_tpl.stride
-    p.lstm_cell_size = 1024
-    p.num_lstm_layers = 5
-    # p.layer_index_before_stacking = 2
-    # May want left_context = 1 instead for pytorch compatibility.
-    # p.stacking_layer_tpl.right_context = 1
+    # Initialize encoder params.
+    ep = p.encoder
+    ep.use_specaugment = True
+    ep.input_shape = [None, None, 80, 1]
+    ep.pad_steps = 0
+    ep.lstm_cell_size = 1024
+    ep.num_lstm_layers = 5
+    ep.lstm_type = 'fwd'
+    ep.cnn_tpl.params_init = py_utils.WeightInit.Gaussian(0.001)
+    # Disable conv & conv LSTM layers.
+    ep.project_lstm_output = False
+    ep.num_cnn_layers = 0
+    ep.conv_filter_shapes = []
+    ep.conv_filter_strides = []
+    ep.num_conv_lstm_layers = 0
 
     tp = p.train
     tp.learning_rate = 1e-4
@@ -194,10 +196,49 @@ class Librispeech960BaseLstm10Lr1e5(Librispeech960Base):
     tp.learning_rate = 1e-5
     return p
 
+# AG TODO: change everything above this to p.encoder.num_layers etc. to reflect the new encoder changes
 @model_registry.RegisterSingleTaskModel
 class Librispeech960BaseLstm7Neu2048(Librispeech960Base):
   def Task(self):
     p = super().Task()
+    #p.encoder.num_lstm_layers=7
     p.num_lstm_layers = 7
     p.lstm_cell_size = 2048
+    return p
+
+# No Input stacking (with the new encoder chages)
+@model_registry.RegisterSingleTaskModel
+class Librispeech960BaseBaselineNoInpStacking(Librispeech960Base):
+  def Task(self):
+    p = super().Task()
+    p.encoder.use_specaugment = False
+    return p
+
+@model_registry.RegisterSingleTaskModel
+class Librispeech960BaseBidiLstm(Librispeech960Base):
+  def Task(self):
+    p = super().Task()
+    p.encoder.use_specaugment = False
+    p.encoder.lstm_type = 'bidi'
+    # 1024 (def) size exceeds HBM me by 2G, available: Avail 16G: 15.48G hbm for pgm, rest RSVD
+    # reduce cell size by half
+    p.encoder.lstm_cell_size = 512
+    return p
+
+@model_registry.RegisterSingleTaskModel
+class Librispeech960BaseCnn(Librispeech960Base):
+  def Task(self):
+    p = super().Task()
+    p.encoder.use_specaugment = False
+    p.encoder.conv_filter_shapes = [(3, 3, 1, 32), (3, 3, 32, 32)]
+    p.encoder.conv_filter_strides = [(2, 2), (2, 2)]
+    # Disable conv LSTM layers.
+    p.encoder.num_cnn_layers = 2
+    return p
+
+@model_registry.RegisterSingleTaskModel
+class Librispeech960BaseSpecAugment(Librispeech960Base):
+  def Task(self):
+    p = super().Task()
+    p.encoder.use_specaugment = True
     return p
