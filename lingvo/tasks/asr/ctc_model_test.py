@@ -35,6 +35,25 @@ class AsrCtcModelTest(test_utils.TestCase):
   def _testParams(self):
     input_shape = [12, 16, 80, 1]  # (B, T, F, 1)
     p = ctc_model.CTCModel.Params()
+
+    # Initialize encoder params.
+    ep = p.encoder
+    ep.use_specaugment = True
+    # Data consists 240 dimensional frames (80 x 3 frames), which we
+    # re-interpret as individual 80 dimensional frames. See also,
+    # LibrispeechCommonAsrInputParams.
+    ep.input_shape = [None, None, 80, 1]
+    ep.lstm_cell_size = 128
+    ep.num_lstm_layers = 5
+    ep.lstm_type = 'fwd'
+    ep.cnn_tpl.params_init = py_utils.WeightInit.Gaussian(0.001)
+    # Disable conv & conv LSTM layers.
+    ep.project_lstm_output = False
+    ep.num_cnn_layers = 0
+    ep.conv_filter_shapes = []
+    ep.conv_filter_strides = []
+    ep.num_conv_lstm_layers = 0
+
     #p.decoder.target_seq_len = 5
     #p.encoder.input_shape = input_shape
     p.input = tig.TestInputGenerator.Params()
@@ -49,11 +68,13 @@ class AsrCtcModelTest(test_utils.TestCase):
       tf.random.set_seed(93820985)
       p = self._testParams()
       mdl = p.Instantiate()
+      
       # FPropDefaultTheta -> FPropTower -> { ComputePredictions ; ComputeLoss; }
       metrics, per_item_metrics = mdl.FPropDefaultTheta()
       self.evaluate(tf.global_variables_initializer())
       wer, weight = metrics['wer']
-      test_utils.CompareToGoldenSingleFloat(self, 1.08333333, wer.eval())
+      # test_utils.CompareToGoldenSingleFloat(self, 1.08333333, wer.eval())
+      test_utils.CompareToGoldenSingleFloat(self, 1., wer.eval())
       
 if __name__ == '__main__':
   tf.test.main()

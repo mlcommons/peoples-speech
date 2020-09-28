@@ -36,6 +36,7 @@ class CTCModel(base_model.BaseTask):
   @classmethod
   def Params(cls):
     p = super().Params()
+    p.encoder = encoder.AsrEncoder.Params()
     p.Define(
         'frontend', None,
         'ASR frontend to extract features from input. Defaults to no frontend '
@@ -44,25 +45,6 @@ class CTCModel(base_model.BaseTask):
     p.Define('include_auxiliary_metrics', True,
              'In addition to simple WER, also computes oracle WER, SACC, TER, etc. '
              'Turning off this option will speed up the decoder job.')
-    p.Define('lstm_tpl', rnn_cell.LSTMCellSimple.Params(),
-             'Configs template for the RNN layer.')
-    p.Define('num_lstm_layers', 5, '')
-    p.Define('lstm_cell_size', 256, 'LSTM cell size for the RNN layer.')
-    # TODO: Change this back to True and figure out what the problem is.
-    p.Define('project_lstm_output', False,
-             'Include projection layer after each encoder LSTM layer.')
-    p.Define('proj_tpl', layers.ProjectionLayer.Params(),
-             'Configs template for the projection layer.')
-    p.Define('input_stacking_layer_tpl', layers.StackingOverTime.Params(),
-             'Configs template for the stacking layer over time of the input features')
-    p.Define('stacking_layer_tpl', layers.StackingOverTime.Params(),
-             'Configs template for the stacking layer over time.')
-    p.Define('unidi_rnn_type', 'func', 'func is only valid option apparently')
-    p.Define(
-        'layer_index_before_stacking', -1,
-        'The (0-based) index of the lstm layer after which the stacking layer '
-        'will be inserted. Negative value means no stacking layer will be '
-        'used.')
 
     # Based on ascii_tokenizer.cc
     p.Define('vocab_size', 76, 'Vocabulary size, not including the blank symbol.')
@@ -83,69 +65,47 @@ class CTCModel(base_model.BaseTask):
     # What does this mean?
     tp.tpu_steps_per_loop = 20
 
-    p.proj_tpl.batch_norm = False
-    p.proj_tpl.activation = 'RELU'
-
     return p
 
   def __init__(self, params):
     super().__init__(params)
     p = self.params
-    name = p.name
+
+    if p.encoder:
+      if not p.encoder.name:
+        p.encoder.name = 'enc'
+      self.CreateChild('encoder', p.encoder)
 
     if p.frontend:
       self.CreateChild('frontend', p.frontend)
 
-    self.CreateChild('input_stacking', p.input_stacking_layer_tpl.Copy())
-
-    with tf.variable_scope(name):
-      params_rnn_layers = []
-      params_proj_layers = []
-      output_dim = p.input_dim
-      for i in range(p.num_lstm_layers):
-        input_dim = output_dim
-        forward_p = p.lstm_tpl.Copy()
-        forward_p.name = 'fwd_rnn_cell_L%d' % (i)
-        forward_p.num_input_nodes = input_dim
-        forward_p.num_output_nodes = p.lstm_cell_size
-        rnn_p = model_helper.CreateUnidirectionalRNNParams(p, forward_p)
-        rnn_p.name = 'fwd_rnn_layer_L%d' % (i)
-        params_rnn_layers.append(rnn_p)
-        output_dim = p.lstm_cell_size
-
-        # if p.project_lstm_output and (i < p.num_lstm_layers - 1):
-        #   proj_p = p.proj_tpl.Copy()
-        #   proj_p.input_dim = p.lstm_cell_size
-        #   proj_p.output_dim = p.lstm_cell_size
-        #   proj_p.name = 'proj_L%d' % (i)
-        #   params_proj_layers.append(proj_p)
-
-        # Adds the stacking layer.
-        # if p.layer_index_before_stacking == i:
-        #   stacking_layer = p.stacking_layer_tpl.Copy()
-        #   stacking_layer.name = 'stacking_%d' % (i)
-        #   self.CreateChild('stacking', stacking_layer)
-        #   stacking_window_len = (
-        #       p.stacking_layer_tpl.left_context + 1 +
-        #       p.stacking_layer_tpl.right_context)
-        #   output_dim *= stacking_window_len
-
-      self.CreateChildren('rnn', params_rnn_layers)
-      self.CreateChildren('proj', params_proj_layers)
-      projection_p = layers.FCLayer.Params()
-      projection_p.activation = 'NONE'
-      projection_p.output_dim = p.vocab_size
-      projection_p.input_dim = output_dim
-      self.CreateChild('project_to_vocab_size', projection_p)
+    projection_p = layers.FCLayer.Params()
+    projection_p.activation = 'NONE'
+    projection_p.output_dim = p.vocab_size
+    projection_p.input_dim = p.encoder.lstm_cell_size
+    if p.encoder.lstm_type == 'bidi':
+      projection_p.input_dim *= 2
+    self.CreateChild('project_to_vocab_size', projection_p)
 
   def ComputePredictions(self, theta, input_batch):
-    return self._FProp(theta, input_batch)
+    input_batch_src = input_batch.src
+    p = self.params
+    if p.frontend:
+      input_batch_src = self.frontend.FProp(theta.frontend, input_batch_src)
+    rnn_out = self.encoder.FProp(theta.encoder, input_batch_src)
+
+    encoded = self.project_to_vocab_size(rnn_out.encoded)
+
+    outputs = py_utils.NestedMap()
+    outputs['encoded'] = encoded
+    outputs['padding'] = rnn_out.padding
+    return outputs
 
   def _CalculateWER(self, input_batch, output_batch):
 
     # swap row 0 and row 73 because decoder assumes blank is at 0,
     # however we set blank = 73
-    tok_logits = output_batch.encoder_outputs  # (T, B, F)
+    tok_logits = output_batch.encoded  # (T, B, F)
     idxs = list(range(tok_logits.shape[-1]))
     idxs[0] = 73
     idxs[73] = 0
@@ -154,9 +114,7 @@ class CTCModel(base_model.BaseTask):
 
     (decoded,), neg_sum_logits = tf.nn.ctc_greedy_decoder(
       tok_logits,
-      py_utils.LengthsFromBitMask(
-        tf.squeeze(output_batch.encoder_outputs_padding, 2), 0
-      )
+      py_utils.LengthsFromBitMask(output_batch.padding, 0)
     )
 
     dec = tf.sparse_to_dense(
@@ -217,67 +175,23 @@ class CTCModel(base_model.BaseTask):
     output_batch = predictions
     ctc_loss = tf.nn.ctc_loss(
         input_batch.tgt.labels,
-        output_batch.encoder_outputs,
+        output_batch.encoded,
         py_utils.LengthsFromBitMask(input_batch.tgt.paddings, 1),
-        py_utils.LengthsFromBitMask(
-            tf.squeeze(output_batch.encoder_outputs_padding, 2), 0
-        ),
+        py_utils.LengthsFromBitMask(output_batch.padding, 0),
         logits_time_major=True,
         blank_index=73,
     )
 
     # ctc_loss.shape = (B)
     total_loss = tf.reduce_mean(ctc_loss)
-    # if py_utils.use_tpu():
-    #   wer = py_utils.RunOnTpuHost(self._CalculateWER, input_batch, output_batch)
-    # else:
-    #   wer = self._CalculateWER(input_batch, output_batch)
-    # metrics = {"loss": (total_loss, 1.0), "wer": (wer, 1.0)}
-    metrics = {"loss": (total_loss, 1.0)}
+    if py_utils.use_tpu():
+      wer = py_utils.RunOnTpuHost(self._CalculateWER, input_batch, output_batch)
+    else:
+      wer = self._CalculateWER(input_batch, output_batch)
+    metrics = {"loss": (total_loss, 1.0), "wer": (wer, 1.0)}
+    # metrics = {"loss": (total_loss, 1.0)}
     per_sequence_loss = {"loss": ctc_loss}
     return metrics, per_sequence_loss
-
-  def _FProp(self, theta, input_batch, state0=None):
-    p = self.params
-    # This is BxTxFx1. We need TxBxF for the LSTM
-    inputs = input_batch.src.src_inputs
-    inputs = tf.squeeze(inputs, [-1])
-    # This is BxT. We need TxBx1 for the LSTM
-    rnn_padding = tf.expand_dims(input_batch.src.paddings, 2)
-
-    # inputs: BxTxF
-    # rnn_padding: BxTx1
-    inputs, rnn_padding = self.input_stacking.FProp(inputs, rnn_padding)
-    inputs = tf.transpose(inputs, [1, 0, 2])
-    # print_padding = tf.reduce_sum(tf.reduce_sum(rnn_padding, -1), -1)
-    rnn_padding = tf.transpose(rnn_padding, [1, 0, 2])
-    # inputs: TxBxF
-    # rnn_padding: TxBx1
-
-    rnn_out = inputs
-    outputs = py_utils.NestedMap()
-    with tf.name_scope(p.name):
-        for i in range(p.num_lstm_layers):
-            rnn_out, _ = self.rnn[i].FProp(theta.rnn[i], rnn_out, rnn_padding)
-            # rnn_out = tf.Print(rnn_out, [tf.shape(rnn_out), print_padding], f"RNN_{i}: ", summarize=-1)
-            # if p.project_lstm_output and (i < p.num_lstm_layers - 1):
-            #   # Projection layers.
-            #   rnn_out = self.proj[i].FProp(theta.proj[i], rnn_out, rnn_padding)
-            # if p.layer_index_before_stacking == i:
-            #   # Stacking layer expects input tensor shape as [batch, time, feature].
-            #   # So transpose the tensors before and after the layer.
-            #   # Ugh, I hate transposes like this!
-            #   rnn_out, rnn_padding = self.stacking.FProp(
-            #       tf.transpose(rnn_out, [1, 0, 2]),
-            #       tf.transpose(rnn_padding, [1, 0, 2]))
-            #   rnn_out = tf.transpose(rnn_out, [1, 0, 2])
-            #   rnn_padding = tf.transpose(rnn_padding, [1, 0, 2])
-
-        rnn_out = self.project_to_vocab_size(rnn_out)
-        rnn_out *= (1.0 - rnn_padding)
-    outputs['encoder_outputs'] = rnn_out
-    outputs['encoder_outputs_padding'] = rnn_padding
-    return outputs
 
   def Inference(self):
     subgraphs = {}
