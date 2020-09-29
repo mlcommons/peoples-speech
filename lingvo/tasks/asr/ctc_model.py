@@ -184,12 +184,14 @@ class CTCModel(base_model.BaseTask):
 
     # ctc_loss.shape = (B)
     total_loss = tf.reduce_mean(ctc_loss)
+    # AG TODO: uncomment lines below for GPU/WER calc
     if py_utils.use_tpu():
       wer = py_utils.RunOnTpuHost(self._CalculateWER, input_batch, output_batch)
     else:
       wer = self._CalculateWER(input_batch, output_batch)
-    metrics = {"loss": (total_loss, 1.0), "wer": (wer, 1.0)}
-    # metrics = {"loss": (total_loss, 1.0)}
+    # metrics = {"loss": (total_loss, 1.0), "wer": (wer, 1.0)}
+    # AG TODO: uncomment line below and comment line below that for GPU/WER calc
+    metrics = {"loss": (total_loss, 1.0)}
     per_sequence_loss = {"loss": ctc_loss}
     return metrics, per_sequence_loss
 

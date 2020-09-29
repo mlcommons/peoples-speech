@@ -25,7 +25,8 @@ fi
 if [ $2 == "train_evald" ]
 then
     # OPERATION="executor_tpu,evaler_dev"
-    OPERATION="tpu_evaluator"
+    # OPERATION="tpu_evaluator"
+    OPERATION=trainer_client,evaler_dev
 else
     OPERATION="executor_tpu"
 fi
@@ -58,6 +59,6 @@ bazel run //lingvo:trainer -- --logdir=${LOGDIR} \
                          --logtostderr \
                          --tpu=grpc://${TPUIP}:8470 \
                          --job-type=$OPERATION 2>&1 | tee ${TEST}_${DATE}.log
-
+                        #  --job-type=$OPERATION 2>&1 | tee ${TEST}_${DATE}.log
 
 
