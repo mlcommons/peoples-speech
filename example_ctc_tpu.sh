@@ -2,7 +2,7 @@ export CUDA_VISIBLE_DEVICES=""
 export OPENBLAS_NUM_THREADS="1"
 export MKL_NUM_THREADS="1"
 
-bazel-bin/lingvo/trainer --logdir=$1 \
+bazel run //lingvo:trainer -- --logdir=$1 \
                          --mode=sync \
                          --model=asr.librispeech_ctc.Librispeech960Base \
                          --logtostderr \
