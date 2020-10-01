@@ -101,7 +101,7 @@ class CTCModel(base_model.BaseTask):
     outputs['padding'] = rnn_out.padding
     return outputs
 
-  def _CalculateWER(self, input_batch, output_batch):
+  def _CalculateErrorRates(self, input_batch, output_batch):
 
     # swap row 0 and row 73 because decoder assumes blank is at 0,
     # however we set blank = 73
@@ -116,6 +116,13 @@ class CTCModel(base_model.BaseTask):
       tok_logits,
       py_utils.LengthsFromBitMask(output_batch.padding, 0)
     )
+
+    sparse_labels = py_utils.SequenceToSparseTensor(input_batch.tgt.labels, input_batch.tgt.paddings)
+    char_dist = tf.edit_distance(decoded, tf.cast(sparse_labels, tf.int64), normalize=False)
+    ref_chars =  py_utils.LengthsFromBitMask(input_batch.tgt.paddings, 1)
+    num_wrong_chars = tf.reduce_sum(char_dist)
+    num_ref_chars = tf.cast(tf.reduce_sum(ref_chars), tf.float32)
+    cer = num_wrong_chars / num_ref_chars
 
     dec = tf.sparse_to_dense(
         decoded.indices, decoded.dense_shape, decoded.values, default_value=73
@@ -167,7 +174,8 @@ class CTCModel(base_model.BaseTask):
       "WER: ",
       summarize=-1
     )
-    return wer
+    return {"cer": (cer, 1.0)}
+    return {"wer": (wer, 1.0), "cer": (cer, 1.0)}
 
   def ComputeLoss(self, theta, predictions, input_batch):
     # output_batch = self._FProp(theta, input_batch)
@@ -186,12 +194,11 @@ class CTCModel(base_model.BaseTask):
     total_loss = tf.reduce_mean(ctc_loss)
     # AG TODO: uncomment lines below for GPU/WER calc
     if py_utils.use_tpu():
-      wer = py_utils.RunOnTpuHost(self._CalculateWER, input_batch, output_batch)
+      err = py_utils.RunOnTpuHost(self._CalculateErrorRates, input_batch, output_batch)
     else:
-      wer = self._CalculateWER(input_batch, output_batch)
-    # metrics = {"loss": (total_loss, 1.0), "wer": (wer, 1.0)}
-    # AG TODO: uncomment line below and comment line below that for GPU/WER calc
-    metrics = {"loss": (total_loss, 1.0)}
+      err = self._CalculateErrorRates(input_batch, output_batch)
+    metrics = dict(loss=(total_loss, 1.0), **err)
+    # metrics = {"loss": (total_loss, 1.0)}
     per_sequence_loss = {"loss": ctc_loss}
     return metrics, per_sequence_loss
 

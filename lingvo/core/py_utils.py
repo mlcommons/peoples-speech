@@ -5426,3 +5426,10 @@ def ShardedFilePatternToGlob(file_pattern):
   if shards == '*':
     return f'{path}-?????-of-*'
   return f'{path}-?????-of-{int(shards):05}'
+
+def SequenceToSparseTensor(dense_tensor, padding):
+  bitmask = 1 - padding
+  indices = tf.where(bitmask)
+  values = tf.gather_nd(dense_tensor, indices)
+  shape = tf.cast(tf.shape(dense_tensor), tf.int64)
+  return tf.SparseTensor(indices, values, shape)
