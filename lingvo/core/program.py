@@ -143,6 +143,7 @@ class BaseProgram:
     tf.logging.info('_InfeedLoop start')
     try:
       for i in range(self._steps_per_loop):
+        tf.logging.info(f'_InfeedLoop {i}')
         tf.logging.vlog(1, '_InfeedLoop %d', i)
         sess.run(self._task.input.tpu_infeed_op)
       tf.logging.info('_InfeedLoop done')

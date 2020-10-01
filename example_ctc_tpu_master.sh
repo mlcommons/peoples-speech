@@ -26,9 +26,10 @@ if [ $2 == "train_evald" ]
 then
     # OPERATION="executor_tpu,evaler_dev"
     # OPERATION="tpu_evaluator"
-    OPERATION=trainer_client,evaler_dev
-else
+    # OPERATION=trainer_client,evaler_dev
     OPERATION="executor_tpu"
+else
+    OPERATION="trainer_client"
 fi
 
 case $4 in 
@@ -40,6 +41,9 @@ case $4 in
     ;;
     "bidilstm")
     TEST=Librispeech960BaseBidiLstm
+    ;;
+    "cnn")
+    TEST=Librispeech960BaseCnn
     ;;
 esac
 
@@ -58,7 +62,7 @@ bazel run //lingvo:trainer -- --logdir=${LOGDIR} \
                          --model=asr.librispeech_ctc.${TEST} \
                          --logtostderr \
                          --tpu=grpc://${TPUIP}:8470 \
-                         --job-type=$OPERATION 2>&1 | tee ${TEST}_${DATE}.log
+                         --job=$OPERATION 2>&1 | tee ${TEST}_${DATE}.log
                         #  --job-type=$OPERATION 2>&1 | tee ${TEST}_${DATE}.log
 
 
