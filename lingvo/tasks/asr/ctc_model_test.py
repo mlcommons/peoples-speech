@@ -72,9 +72,11 @@ class AsrCtcModelTest(test_utils.TestCase):
       # FPropDefaultTheta -> FPropTower -> { ComputePredictions ; ComputeLoss; }
       metrics, per_item_metrics = mdl.FPropDefaultTheta()
       self.evaluate(tf.global_variables_initializer())
-      wer, weight = metrics['wer']
+      wer, _ = metrics['wer']
+      cer, _ = metrics['cer']
       # test_utils.CompareToGoldenSingleFloat(self, 1.08333333, wer.eval())
       test_utils.CompareToGoldenSingleFloat(self, 1., wer.eval())
+      test_utils.CompareToGoldenSingleFloat(self, 1.1538461446762085, cer.eval())
       
 if __name__ == '__main__':
   tf.test.main()
