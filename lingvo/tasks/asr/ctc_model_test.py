@@ -35,6 +35,8 @@ class AsrCtcModelTest(test_utils.TestCase):
   def _testParams(self):
     input_shape = [12, 16, 80, 1]  # (B, T, F, 1)
     p = ctc_model.CTCModel.Params()
+    p.vocab_size = 76
+    p.blank_index = 73
 
     # Initialize encoder params.
     ep = p.encoder

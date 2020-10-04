@@ -33,7 +33,6 @@ class CTCModel(base_model.BaseTask):
   """
   CTC model without a language model.
   """
-  BLANK_IDX = 73
 
   @classmethod
   def Params(cls):
@@ -48,9 +47,9 @@ class CTCModel(base_model.BaseTask):
              'In addition to simple WER, also computes oracle WER, SACC, TER, etc. '
              'Turning off this option will speed up the decoder job.')
 
-    # Based on ascii_tokenizer.cc
+    # Defaults based on graphemes / ascii_tokenizer.cc
     p.Define('vocab_size', 76, 'Vocabulary size, not including the blank symbol.')
-    p.Define('vocab_epsilon_index', 73, 'Index assigned to epsilon, aka blank for CTC. '
+    p.Define('blank_index', 73, 'Index assigned to epsilon, aka blank for CTC. '
              'This should never appear in the label sequence, though. Reconsider this.')
 
     tp = p.train
@@ -134,7 +133,7 @@ class CTCModel(base_model.BaseTask):
         py_utils.LengthsFromBitMask(input_batch.tgt.paddings, 1),
         py_utils.LengthsFromBitMask(output_batch.padding, 0),
         logits_time_major=True,
-        blank_index=self.BLANK_IDX
+        blank_index=self.params.blank_index
     )
 
     # ctc_loss.shape = (B)
@@ -185,8 +184,8 @@ class CTCModel(base_model.BaseTask):
     # however we set blank = 73
     tok_logits = output_batch.encoded  # (T, B, F)
     idxs = list(range(tok_logits.shape[-1]))
-    idxs[0] = self.BLANK_IDX
-    idxs[self.BLANK_IDX] = 0
+    idxs[0] = self.params.blank_index
+    idxs[self.params.blank_index] = 0
     tok_logits = tf.stack([tok_logits[:, :, idx] for idx in idxs], axis=-1)
 
     (decoded,), neg_sum_logits = tf.nn.ctc_greedy_decoder(
@@ -195,10 +194,10 @@ class CTCModel(base_model.BaseTask):
     )
 
     dense_dec = tf.sparse_to_dense(
-        decoded.indices, decoded.dense_shape, decoded.values, default_value=self.BLANK_IDX
+        decoded.indices, decoded.dense_shape, decoded.values, default_value=self.params.blank_index
     )
 
-    INVALID = tf.constant(self.BLANK_IDX, tf.int64)
+    INVALID = tf.constant(self.params.blank_index, tf.int64)
     bitMask = tf.cast(tf.math.equal(dense_dec, INVALID), tf.float32)  # (B, T)
 
     decoded_seq_lengths = py_utils.LengthsFromBitMask(tf.transpose(bitMask), 0)

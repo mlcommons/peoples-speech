@@ -54,12 +54,10 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
       p.source_max_length = 1710
       p.bucket_upper_bound = [639, 1062, 1275, 1377, 1449, 1506, 1563, 1710]
 
-    p.bucket_batch_limit = [48, 48, 48, 48, 48, 48, 48, 48]
+    # AG TODO: For TPU
+    p.bucket_batch_limit = [48] * 8
     # AG TODO: For GPU
     # p.bucket_batch_limit = [12] * 8
-
-    # Assumes ascii_tokenizer.cc. Gross!
-    p.tokenizer.vocab_size = 76
 
     return p
 
@@ -149,14 +147,114 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
 
 
 @model_registry.RegisterSingleTaskModel
-class Librispeech960BaseLstm10(Librispeech960Base):
+class Librispeech960Grapheme(Librispeech960Base):
+
+  GRAPHEME_TARGET_SEQUENCE_LENGTH = 620
+  GRAPHEME_VOCAB_SIZE = 76
+  BLANK_IDX = 73
+
+  def InitializeTokenizer(self, params):
+    """Initializes a grapheme tokenizer."""
+    params.tokenizer = tokenizers.AsciiTokenizer.Params()
+    tokp = params.tokenizer
+    tokp.vocab_size = self.GRAPHEME_VOCAB_SIZE
+    tokp.append_eos = False
+    tokp.target_unk_id = 0
+    tokp.target_sos_id = 1
+    tokp.target_eos_id = 2
+
+    params.target_max_length = self.GRAPHEME_TARGET_SEQUENCE_LENGTH
+    return params
+
+  def Train(self):
+    p = super().Train()
+    return self.InitializeTokenizer(params=p)
+
+  def Dev(self):
+    p = super().Dev()
+    return self.InitializeTokenizer(params=p)
+
+  def Devother(self):
+    p = super().Devother()
+    return self.InitializeTokenizer(params=p)
+
+  def Test(self):
+    p = super().Test()
+    return self.InitializeTokenizer(params=p)
+
+  def Testother(self):
+    p = super().Testother()
+    return self.InitializeTokenizer(params=p)
+
+  def Task(self):
+    p = super().Task()
+    p.vocab_size = self.GRAPHEME_VOCAB_SIZE
+    p.blank_index = self.BLANK_IDX
+    return p
+
+class Librispeech960Wpm(Librispeech960Base):
+
+  # Set this to a WPM vocabulary file before training. By default, we use the
+  # pre-generated 16K word piece vocabulary checked in under 'tasks/asr/'.
+  WPM_SYMBOL_TABLE_FILEPATH = (
+      'lingvo/tasks/asr/wpm_16k_librispeech.vocab')
+  WPM_TARGET_SEQUENCE_LENGTH = 140
+  WPM_VOCAB_SIZE = 16328
+  BLANK_IDX = 4
+
+  EMBEDDING_DIMENSION = 96
+  NUM_TRAINING_WORKERS = 8
+
+  def InitializeTokenizer(self, params):
+    """Initializes a Word Piece Tokenizer."""
+    params.tokenizer = tokenizers.WpmTokenizer.Params()
+    tokp = params.tokenizer
+    tokp.vocab_filepath = self.WPM_SYMBOL_TABLE_FILEPATH
+    tokp.vocab_size = self.WPM_VOCAB_SIZE
+    tokp.append_eos = False
+    tokp.target_unk_id = 0
+    tokp.target_sos_id = 1
+    tokp.target_eos_id = 2
+
+    params.target_max_length = self.WPM_TARGET_SEQUENCE_LENGTH
+    return params
+
+  def Train(self):
+    p = super().Train()
+    return self.InitializeTokenizer(params=p)
+
+  def Dev(self):
+    p = super().Dev()
+    return self.InitializeTokenizer(params=p)
+
+  def Devother(self):
+    p = super().Devother()
+    return self.InitializeTokenizer(params=p)
+
+  def Test(self):
+    p = super().Test()
+    return self.InitializeTokenizer(params=p)
+
+  def Testother(self):
+    p = super().Testother()
+    return self.InitializeTokenizer(params=p)
+
+  def Task(self):
+    p = super().Task()
+    p.vocab_size = self.WPM_VOCAB_SIZE
+    p.blank_index = self.BLANK_IDX
+    return p
+
+
+@model_registry.RegisterSingleTaskModel
+class Librispeech960BaseLstm10(Librispeech960Grapheme):
   def Task(self):
     p = super().Task()
     p.num_lstm_layers = 10
     return p
 
 @model_registry.RegisterSingleTaskModel
-class Librispeech960BaseLstm7(Librispeech960Base):
+class Librispeech960BaseLstm7(Librispeech960Grapheme):
   def Task(self):
     p = super().Task()
     p.num_lstm_layers = 7
@@ -164,21 +262,21 @@ class Librispeech960BaseLstm7(Librispeech960Base):
 
 
 @model_registry.RegisterSingleTaskModel
-class Librispeech960BaseLstm2048(Librispeech960Base):
+class Librispeech960BaseLstm2048(Librispeech960Grapheme):
   def Task(self):
     p = super().Task()
     p.lstm_cell_size = 2048
     return p
 
 @model_registry.RegisterSingleTaskModel
-class Librispeech960BaseLstm1536(Librispeech960Base):
+class Librispeech960BaseLstm1536(Librispeech960Grapheme):
   def Task(self):
     p = super().Task()
     p.lstm_cell_size =1536
     return p
 
 @model_registry.RegisterSingleTaskModel
-class Librispeech960BaseLstm7Lr1e6(Librispeech960Base):
+class Librispeech960BaseLstm7Lr1e6(Librispeech960Grapheme):
   def Task(self):
     p = super().Task()
     p.num_lstm_layers = 7
@@ -187,7 +285,7 @@ class Librispeech960BaseLstm7Lr1e6(Librispeech960Base):
     return p
 
 @model_registry.RegisterSingleTaskModel
-class Librispeech960BaseLstm10Lr1e5(Librispeech960Base):
+class Librispeech960BaseLstm10Lr1e5(Librispeech960Grapheme):
   def Task(self):
     p = super().Task()
     p.num_lstm_layers = 10
@@ -197,7 +295,7 @@ class Librispeech960BaseLstm10Lr1e5(Librispeech960Base):
 
 # AG TODO: change everything above this to p.encoder.num_layers etc. to reflect the new encoder changes
 @model_registry.RegisterSingleTaskModel
-class Librispeech960BaseLstm7Neu2048(Librispeech960Base):
+class Librispeech960BaseLstm7Neu2048(Librispeech960Grapheme):
   def Task(self):
     p = super().Task()
     #p.encoder.num_lstm_layers=7
@@ -207,14 +305,14 @@ class Librispeech960BaseLstm7Neu2048(Librispeech960Base):
 
 # No Input stacking (with the new encoder chages)
 # @model_registry.RegisterSingleTaskModel
-# class Librispeech960BaseBaselineNoInpStacking(Librispeech960Base):
+# class Librispeech960BaseBaselineNoInpStacking(Librispeech960Grapheme):
 #   def Task(self):
 #     p = super().Task()
 #     p.encoder.use_specaugment = False
 #     return p
 
 @model_registry.RegisterSingleTaskModel
-class Librispeech960BaseBidiLstm(Librispeech960Base):
+class Librispeech960BaseBidiLstm(Librispeech960Grapheme):
   def Task(self):
     p = super().Task()
     # p.encoder.use_specaugment = False
@@ -225,7 +323,7 @@ class Librispeech960BaseBidiLstm(Librispeech960Base):
     return p
 
 @model_registry.RegisterSingleTaskModel
-class Librispeech960BaseCnn(Librispeech960Base):
+class Librispeech960BaseCnn(Librispeech960Grapheme):
   def Task(self):
     p = super().Task()
     # p.encoder.use_specaugment = False
@@ -236,8 +334,29 @@ class Librispeech960BaseCnn(Librispeech960Base):
     return p
 
 @model_registry.RegisterSingleTaskModel
-class Librispeech960BaseSpecAugment(Librispeech960Base):
+class Librispeech_Grphm_SpecAug_InptStack(Librispeech960Grapheme):
   def Task(self):
     p = super().Task()
     p.encoder.use_specaugment = True
+    p.encoder.input_shape = [None, None, 240, 1]
+
+    sp = p.input_stacking_tpl
+    sp.left_context = 1
+    sp.right_context = 1
+    sp.stride = 3  # L + 1 + R
+
+    return p
+
+@model_registry.RegisterSingleTaskModel
+class Librispeech_Wpm_SpecAug_InptStack(Librispeech960Wpm):
+  def Task(self):
+    p = super().Task()
+    p.encoder.use_specaugment = True
+    p.encoder.input_shape = [None, None, 240, 1]
+
+    sp = p.input_stacking_tpl
+    sp.left_context = 1
+    sp.right_context = 1
+    sp.stride = 3  # L + 1 + R
+
     return p
