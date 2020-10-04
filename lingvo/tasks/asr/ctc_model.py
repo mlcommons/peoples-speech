@@ -38,12 +38,12 @@ class CTCModel(base_model.BaseTask):
   @classmethod
   def Params(cls):
     p = super().Params()
+    p.Define('frontend', None,
+             'ASR frontend to extract features from input. Defaults to no frontend '
+             'which means that features are taken directly from the input.')
+    p.Define('input_stacking_tpl', layers.StackingOverTime.Params(),
+             'Configs template for the stacking layer over time of the input features')
     p.encoder = encoder.AsrEncoder.Params()
-    p.Define(
-        'frontend', None,
-        'ASR frontend to extract features from input. Defaults to no frontend '
-        'which means that features are taken directly from the input.')
-
     p.Define('include_auxiliary_metrics', True,
              'In addition to simple WER, also computes oracle WER, SACC, TER, etc. '
              'Turning off this option will speed up the decoder job.')
@@ -52,7 +52,6 @@ class CTCModel(base_model.BaseTask):
     p.Define('vocab_size', 76, 'Vocabulary size, not including the blank symbol.')
     p.Define('vocab_epsilon_index', 73, 'Index assigned to epsilon, aka blank for CTC. '
              'This should never appear in the label sequence, though. Reconsider this.')
-    p.Define('input_dim', 80, '')
 
     tp = p.train
     tp.lr_schedule = (
@@ -71,6 +70,9 @@ class CTCModel(base_model.BaseTask):
   def __init__(self, params):
     super().__init__(params)
     p = self.params
+
+    if p.input_stacking_tpl:
+      self.CreateChild('input_stacking', p.input_stacking_tpl.Copy())
 
     if p.encoder:
       if not p.encoder.name:
@@ -160,8 +162,19 @@ class CTCModel(base_model.BaseTask):
 
   def _FrontendAndEncoderFProp(self, theta, input_batch_src):
     p = self.params
+
     if p.frontend:
       input_batch_src = self.frontend.FProp(theta.frontend, input_batch_src)
+
+    if p.input_stacking_tpl:
+      inputs = tf.squeeze(input_batch_src.src_inputs, [-1])
+      rnn_padding = tf.expand_dims(input_batch_src.paddings, -1)
+      inputs, rnn_padding = self.input_stacking.FProp(inputs, rnn_padding)
+      input_batch_src = py_utils.NestedMap(
+        src_inputs=tf.expand_dims(inputs, -1),
+        paddings=tf.squeeze(rnn_padding, [-1])
+      )
+
     rnn_out = self.encoder.FProp(theta.encoder, input_batch_src)
     encoded = self.project_to_vocab_size(rnn_out.encoded)
     outputs = py_utils.NestedMap(encoded=encoded, padding=rnn_out.padding)

@@ -42,7 +42,7 @@ class AsrCtcModelTest(test_utils.TestCase):
     # Data consists 240 dimensional frames (80 x 3 frames), which we
     # re-interpret as individual 80 dimensional frames. See also,
     # LibrispeechCommonAsrInputParams.
-    ep.input_shape = [None, None, 80, 1]
+    ep.input_shape = [None, None, 240, 1]
     ep.lstm_cell_size = 128
     ep.num_lstm_layers = 5
     ep.lstm_type = 'fwd'
@@ -53,6 +53,11 @@ class AsrCtcModelTest(test_utils.TestCase):
     ep.conv_filter_shapes = []
     ep.conv_filter_strides = []
     ep.num_conv_lstm_layers = 0
+
+    sp = p.input_stacking_tpl
+    sp.left_context = 1
+    sp.right_context = 1
+    sp.stride = 3  # L + 1 + R
 
     #p.decoder.target_seq_len = 5
     #p.encoder.input_shape = input_shape
@@ -72,11 +77,10 @@ class AsrCtcModelTest(test_utils.TestCase):
       # FPropDefaultTheta -> FPropTower -> { ComputePredictions ; ComputeLoss; }
       metrics, per_item_metrics = mdl.FPropDefaultTheta()
       self.evaluate(tf.global_variables_initializer())
-      wer, _ = metrics['wer']
-      cer, _ = metrics['cer']
-      # test_utils.CompareToGoldenSingleFloat(self, 1.08333333, wer.eval())
-      test_utils.CompareToGoldenSingleFloat(self, 1., wer.eval())
-      test_utils.CompareToGoldenSingleFloat(self, 1.1538461446762085, cer.eval())
+
+      ctc, _ = metrics['loss']
+      test_utils.CompareToGoldenSingleFloat(self, 21.025766, ctc.eval())
+      # test_utils.CompareToGoldenSingleFloat(self, 53.69948, ctc.eval())
       
 if __name__ == '__main__':
   tf.test.main()

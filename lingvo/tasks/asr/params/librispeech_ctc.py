@@ -54,7 +54,7 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
       p.source_max_length = 1710
       p.bucket_upper_bound = [639, 1062, 1275, 1377, 1449, 1506, 1563, 1710]
 
-    p.bucket_batch_limit = [96, 48, 48, 48, 48, 48, 48, 48]
+    p.bucket_batch_limit = [48, 48, 48, 48, 48, 48, 48, 48]
     # AG TODO: For GPU
     # p.bucket_batch_limit = [12] * 8
 
