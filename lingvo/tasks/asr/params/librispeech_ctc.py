@@ -31,7 +31,7 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
     p.file_datasource.file_type = 'tfrecord'
     # AG TODO: chang this local path to gs path for orig data (this is for testing only)
     p.file_datasource.file_pattern_prefix = 'gs://the-peoples-speech-west-europe/Librispeech'
-    # p.file_datasource.file_pattern_prefix = '/home/anjali/data/Librispeech/data'
+    # p.file_datasource.file_pattern_prefix = '/home/anjali/data/mlcommons/librispeech/data'
     # TODO: Use an abseil flag for this.
     # p.file_datasource.file_pattern_prefix = '/export/b02/ws15dgalvez/kaldi-data/librispeech'
 
@@ -54,8 +54,7 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
       p.source_max_length = 1710
       p.bucket_upper_bound = [639, 1062, 1275, 1377, 1449, 1506, 1563, 1710]
 
-    # p.bucket_batch_limit = [96, 48, 48, 48, 48, 48, 48, 48]
-    p.bucket_batch_limit = [2 * x for x in [48, 48, 48, 48, 48, 48, 48, 48]]
+    p.bucket_batch_limit = [96, 48, 48, 48, 48, 48, 48, 48]
     # AG TODO: For GPU
     # p.bucket_batch_limit = [12] * 8
 
@@ -127,7 +126,7 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
     tp = p.train
     tp.learning_rate = 1e-4
     tp.lr_schedule = schedule.ContinuousSchedule.Params().Set(
-        start_step=50_000, half_life_steps=100_000, min=0.01)
+        start_step=25_000, half_life_steps=5_000, min=1e-6)
     tp.scale_gradients = False
     tp.l2_regularizer_weight = None
 

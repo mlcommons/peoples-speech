@@ -17,6 +17,7 @@
 import lingvo.compat as tf
 from lingvo.core import base_layer
 from lingvo.core import base_model
+from lingvo.core import metrics
 from lingvo.core import layers
 from lingvo.core import model_helper
 from lingvo.core import py_utils
@@ -32,6 +33,7 @@ class CTCModel(base_model.BaseTask):
   """
   CTC model without a language model.
   """
+  BLANK_IDX = 73
 
   @classmethod
   def Params(cls):
@@ -55,15 +57,14 @@ class CTCModel(base_model.BaseTask):
     tp = p.train
     tp.lr_schedule = (
         schedule.PiecewiseConstantSchedule.Params().Set(
-            boundaries=[350_000, 500_000, 600_000],
+            boundaries=[350000, 450000, 600000],
             values=[1.0, 0.1, 0.01, 0.001]))
     tp.vn_start_step = 20_000
     tp.vn_std = 0.075
     tp.l2_regularizer_weight = 1e-6
     tp.clip_gradient_norm_to_value = 1.0
     tp.grad_norm_to_clip_to_zero = 100.0
-    # What does this mean?
-    tp.tpu_steps_per_loop = 20
+    tp.tpu_steps_per_loop = 500
 
     return p
 
@@ -88,94 +89,38 @@ class CTCModel(base_model.BaseTask):
     self.CreateChild('project_to_vocab_size', projection_p)
 
   def ComputePredictions(self, theta, input_batch):
-    input_batch_src = input_batch.src
+    return self._FrontendAndEncoderFProp(theta, input_batch.src)
+
+  def DecodeWithTheta(self, theta, input_batch):
+    """Constructs the inference graph."""
     p = self.params
-    if p.frontend:
-      input_batch_src = self.frontend.FProp(theta.frontend, input_batch_src)
-    rnn_out = self.encoder.FProp(theta.encoder, input_batch_src)
+    with tf.name_scope('decode'), tf.name_scope(p.name):
+      with tf.name_scope('encoder'):
+        encoder_outputs = self._FrontendAndEncoderFProp(theta, input_batch.src)
+      with tf.name_scope('decoder'):
+        decoder_outs = self._GreedyDecode(encoder_outputs)
 
-    encoded = self.project_to_vocab_size(rnn_out.encoded)
+      decoder_metrics = self._CalculateErrorRates(decoder_outs, input_batch)
+      return decoder_metrics
 
-    outputs = py_utils.NestedMap()
-    outputs['encoded'] = encoded
-    outputs['padding'] = rnn_out.padding
-    return outputs
+  def PostProcessDecodeOut(self, decode_out_dict, dec_metrics_dict):
+    gt_transcripts = decode_out_dict['target_transcripts']
+    hyp_transcripts = decode_out_dict['decoded_transcripts']
+    utt_id = decode_out_dict['utt_id']
 
-  def _CalculateErrorRates(self, input_batch, output_batch):
+    for i in range(len(gt_transcripts)):
+      tf.logging.info('utt_id : %s', utt_id[i][0])
+      tf.logging.info('ref_str: %s', gt_transcripts[i])
+      tf.logging.info('hyp_str: %s', hyp_transcripts[i])
 
-    # swap row 0 and row 73 because decoder assumes blank is at 0,
-    # however we set blank = 73
-    tok_logits = output_batch.encoded  # (T, B, F)
-    idxs = list(range(tok_logits.shape[-1]))
-    idxs[0] = 73
-    idxs[73] = 0
-    tok_logits = tf.stack([tok_logits[:, :, idx] for idx in idxs], axis=-1)
-    # tok_logits = tf.Print(tok_logits, [tf.shape(tok_logits), enc_seq_lengths], "TOK_LOGITS:", summarize=-1)
+    total_word_err =  decode_out_dict['num_wrong_words']
+    total_ref_words = decode_out_dict['num_ref_words']
+    total_char_err = decode_out_dict['num_wrong_chars']
+    total_ref_chars = decode_out_dict['num_ref_chars']
 
-    (decoded,), neg_sum_logits = tf.nn.ctc_greedy_decoder(
-      tok_logits,
-      py_utils.LengthsFromBitMask(output_batch.padding, 0)
-    )
-
-    sparse_labels = py_utils.SequenceToSparseTensor(input_batch.tgt.labels, input_batch.tgt.paddings)
-    char_dist = tf.edit_distance(decoded, tf.cast(sparse_labels, tf.int64), normalize=False)
-    ref_chars =  py_utils.LengthsFromBitMask(input_batch.tgt.paddings, 1)
-    num_wrong_chars = tf.reduce_sum(char_dist)
-    num_ref_chars = tf.cast(tf.reduce_sum(ref_chars), tf.float32)
-    cer = num_wrong_chars / num_ref_chars
-
-    dec = tf.sparse_to_dense(
-        decoded.indices, decoded.dense_shape, decoded.values, default_value=73
-    )
-
-    INVALID = tf.constant(73, tf.int64)
-    bitMask = tf.cast(tf.math.equal(dec, INVALID), tf.float32)  # (B, T)
-    # bitMask = tf.Print(bitMask, [tf.shape(bitMask), bitMask], "BITMASK:", summarize=-1)
-    # return tf.reduce_sum(tf.cast(bitMask, tf.int32))
-
-    decoded_seq_lengths = py_utils.LengthsFromBitMask(tf.transpose(bitMask), 0)
-    # decoded_seq_lengths = tf.Print(decoded_seq_lengths, [decoded_seq_lengths], "SEQLEN:", summarize=-1)
-    # return tf.reduce_sum(tf.cast(decoded_seq_lengths, tf.int32))
-
-    hyp_str = self.input_generator.IdsToStrings(
-        tf.cast(dec, tf.int32), decoded_seq_lengths
-    )
-
-    # Some predictions have start and stop tokens predicted, we dont want to include
-    # those in WER calculation
-    hyp_str = tf.strings.regex_replace(hyp_str, '(<unk>)+', '')
-    hyp_str = tf.strings.regex_replace(hyp_str, '(<s>)+', '')
-    hyp_str = tf.strings.regex_replace(hyp_str, '(</s>)+', '')
-
-    transcripts = self.input_generator.IdsToStrings(
-        input_batch.tgt.labels,
-        tf.cast(
-            tf.round(tf.reduce_sum(1.0 - input_batch.tgt.paddings, 1) - 1.0),
-            tf.int32,
-        ),
-    )
-
-    word_dist = decoder_utils.ComputeWer(hyp_str, transcripts)  # (B, 2)
-    num_wrong_words = tf.reduce_sum(word_dist[:, 0])
-    num_ref_words = tf.reduce_sum(word_dist[:, 1])
-    wer = num_wrong_words / num_ref_words
-    wer = tf.Print(
-      wer,
-      [
-        wer,  
-        # decoded.indices,
-        # dec[1],
-        # tf.shape(dec),
-        hyp_str[1],  # prediction for sample 1
-        transcripts[1],  # ground truth for sample 1
-        # word_dist[1, 0],  # num wrong words in sample 1 prediction
-        # word_dist[1, 1],  # num words in sample 1 ground truth
-      ],
-      "WER: ",
-      summarize=-1
-    )
-    return {"cer": (cer, 1.0)}
-    return {"wer": (wer, 1.0), "cer": (cer, 1.0)}
+    dec_metrics_dict['num_samples_in_batch'].Update(len(gt_transcripts))
+    dec_metrics_dict['wer'].Update(total_word_err / max(1., total_ref_words), total_ref_words)
+    dec_metrics_dict['cer'].Update(total_char_err / max(1., total_ref_chars), total_ref_chars)
 
   def ComputeLoss(self, theta, predictions, input_batch):
     # output_batch = self._FProp(theta, input_batch)
@@ -187,63 +132,125 @@ class CTCModel(base_model.BaseTask):
         py_utils.LengthsFromBitMask(input_batch.tgt.paddings, 1),
         py_utils.LengthsFromBitMask(output_batch.padding, 0),
         logits_time_major=True,
-        blank_index=73,
+        blank_index=self.BLANK_IDX
     )
 
     # ctc_loss.shape = (B)
     total_loss = tf.reduce_mean(ctc_loss)
     # AG TODO: uncomment lines below for GPU/WER calc
-    if py_utils.use_tpu():
-      err = py_utils.RunOnTpuHost(self._CalculateErrorRates, input_batch, output_batch)
-    else:
-      err = self._CalculateErrorRates(input_batch, output_batch)
-    metrics = dict(loss=(total_loss, 1.0), **err)
-    # metrics = {"loss": (total_loss, 1.0)}
+    # if py_utils.use_tpu():
+    #   err = py_utils.RunOnTpuHost(self._CalculateErrorRates, input_batch, output_batch)
+    # else:
+    #   err = self._CalculateErrorRates(input_batch, output_batch)
+    metrics = dict(loss=(total_loss, 1.0))
     per_sequence_loss = {"loss": ctc_loss}
     return metrics, per_sequence_loss
 
-  def Inference(self):
-    subgraphs = {}
-    with tf.name_scope('inference'):
-      subgraphs['default'] = self._InferenceSubgraph_Default()
-    return subgraphs
-
-  def _InferenceSubgraph_Default(self):
-    p = self.params
-    with tf.name_scope('default'):
-      wav_bytes = tf.placeholder(dtype=tf.string, name='wav')
-      frontend = self.frontend if p.frontend else None
-      if not frontend:
-        # No custom frontend. Instantiate the default.
-        frontend_p = asr_frontend.MelAsrFrontend.Params()
-        frontend = frontend_p.Instantiate()
-
-      # Decode the wave bytes and use the explicit frontend.
-      unused_sample_rate, audio = audio_lib.DecodeWav(wav_bytes)
-      # Doing this the "kaldi" way, not the pytorch audio way
-      audio *= 32768
-      # Remove channel dimension, since we have a single channel.
-      audio = tf.squeeze(audio, axis=1)
-      # Add batch.
-      audio = tf.expand_dims(audio, axis=0)
-      input_batch_src = py_utils.NestedMap(
-          src_inputs=audio, paddings=tf.zeros_like(audio))
-      input_batch_src = frontend.FPropDefaultTheta(input_batch_src)
-
-      encoder_outputs = self.FPropDefaultTheta() # _FProp()
-      decoder_outputs = self.decoder.BeamSearchDecode(encoder_outputs)
-      topk = self._GetTopK(decoder_outputs)
-
-      feeds = {'wav': wav_bytes}
-      fetches = {
-          'hypotheses': topk.decoded,
-          'scores': topk.scores,
-          'src_frames': input_batch_src.src_inputs,
-          'encoder_frames': encoder_outputs.encoded
-      }
-
-      return fetches, feeds
+  def CreateDecoderMetrics(self):
+    base_metrics = {
+        "wer": metrics.AverageMetric(),
+        "cer": metrics.AverageMetric(),
+        "num_samples_in_batch": metrics.AverageMetric()
+    }
+    return base_metrics
 
   @classmethod
   def FPropMeta(cls, params, *args, **kwargs):
     raise NotImplementedError("No FPropMeta available.")
+
+  def _FrontendAndEncoderFProp(self, theta, input_batch_src):
+    p = self.params
+    if p.frontend:
+      input_batch_src = self.frontend.FProp(theta.frontend, input_batch_src)
+    rnn_out = self.encoder.FProp(theta.encoder, input_batch_src)
+    encoded = self.project_to_vocab_size(rnn_out.encoded)
+    outputs = py_utils.NestedMap(encoded=encoded, padding=rnn_out.padding)
+    return outputs
+
+  def _GreedyDecode(self, output_batch):
+    # swap row 0 and row 73 because decoder assumes blank is at 0,
+    # however we set blank = 73
+    tok_logits = output_batch.encoded  # (T, B, F)
+    idxs = list(range(tok_logits.shape[-1]))
+    idxs[0] = self.BLANK_IDX
+    idxs[self.BLANK_IDX] = 0
+    tok_logits = tf.stack([tok_logits[:, :, idx] for idx in idxs], axis=-1)
+
+    (decoded,), neg_sum_logits = tf.nn.ctc_greedy_decoder(
+      tok_logits,
+      py_utils.LengthsFromBitMask(output_batch.padding, 0)
+    )
+
+    dense_dec = tf.sparse_to_dense(
+        decoded.indices, decoded.dense_shape, decoded.values, default_value=self.BLANK_IDX
+    )
+
+    INVALID = tf.constant(self.BLANK_IDX, tf.int64)
+    bitMask = tf.cast(tf.math.equal(dense_dec, INVALID), tf.float32)  # (B, T)
+
+    decoded_seq_lengths = py_utils.LengthsFromBitMask(tf.transpose(bitMask), 0)
+
+    hyp_str = self.input_generator.IdsToStrings(
+        tf.cast(dense_dec, tf.int32), decoded_seq_lengths
+    )
+
+    # Some predictions have start and stop tokens predicted, we dont want to include
+    # those in WER calculation
+    hyp_str = tf.strings.regex_replace(hyp_str, '(<unk>)+', '')
+    hyp_str = tf.strings.regex_replace(hyp_str, '(<s>)+', '')
+    hyp_str = tf.strings.regex_replace(hyp_str, '(</s>)+', '')
+    return py_utils.NestedMap(sparse_ids=decoded, transcripts=hyp_str)
+
+  def _CalculateErrorRates(self, dec_outs_dict, input_batch):
+    sparse_gt_ids = tf.cast(py_utils.SequenceToSparseTensor(
+        input_batch.tgt.labels, input_batch.tgt.paddings), tf.int64)
+
+    gt_transcripts = self.input_generator.IdsToStrings(
+        input_batch.tgt.labels,
+        tf.cast(
+            tf.round(tf.reduce_sum(1.0 - input_batch.tgt.paddings, 1) - 1.0),
+            tf.int32,
+        ),
+    )
+
+    # char error rate
+    char_dist = tf.edit_distance(dec_outs_dict.sparse_ids, sparse_gt_ids, normalize=False)
+    ref_chars =  py_utils.LengthsFromBitMask(input_batch.tgt.paddings, 1)
+    num_wrong_chars = tf.reduce_sum(char_dist)
+    num_ref_chars = tf.cast(tf.reduce_sum(ref_chars), tf.float32)
+    cer = num_wrong_chars / num_ref_chars
+
+    # word error rate
+    word_dist = decoder_utils.ComputeWer(dec_outs_dict.transcripts, gt_transcripts)  # (B, 2)
+    num_wrong_words = tf.reduce_sum(word_dist[:, 0])
+    num_ref_words = tf.reduce_sum(word_dist[:, 1])
+    wer = num_wrong_words / num_ref_words
+
+    ret_dict = {
+      'utt_id': input_batch.sample_ids,
+      'target_ids': input_batch.tgt.ids,
+      'target_labels': input_batch.tgt.labels,
+      'target_weights': input_batch.tgt.weights,
+      'target_paddings': input_batch.tgt.paddings,
+
+      'target_transcripts': gt_transcripts,
+      'decoded_transcripts': dec_outs_dict.transcripts,
+
+      'wer': wer, 
+      'cer': cer, 
+      'num_wrong_words': num_wrong_words, 
+      'num_ref_words': num_ref_words,
+      'num_wrong_chars': num_wrong_chars, 
+      'num_ref_chars': num_ref_chars
+    }
+
+    # if not py_utils.use_tpu():
+    #   ret_dict['utt_id'] = input_batch.sample_ids
+
+    # wer = tf.Print(wer, [wer, cer, 
+    #                      num_wrong_words, num_ref_words, 
+    #                      num_wrong_chars, num_ref_chars])
+
+    # wer = tf.Print(wer, [transcripts[i] for i in range(12)], "_GT_: ")
+    # wer = tf.Print(wer, [hyp_str[i] for i in range(12)], "PRED: ")
+    return ret_dict
