@@ -18,7 +18,7 @@ then
     LOGDIR="/home/anjali/data/mlcommons/librispeech/models/wer/${DATE}"
 else
     export CUDA_VISIBLE_DEVICES=""
-    LOGDIR=$3
+    LOGDIR="gs://the-peoples-speech-west-europe/ag/ctc_librispeech/training_logs/$3"
     TPUIP=$5
 fi
 
@@ -62,7 +62,7 @@ bazel run //lingvo:trainer -- --logdir=${LOGDIR} \
                          --model=asr.librispeech_ctc.${TEST} \
                          --logtostderr \
                          --tpu=grpc://${TPUIP}:8470 \
-                         --job=$OPERATION 2>&1 | tee ${TEST}_${DATE}.log
+                         --job=$OPERATION 2>&1 | tee logs/${TEST}_${DATE}.log
                         #  --job-type=$OPERATION 2>&1 | tee ${TEST}_${DATE}.log
 
 
