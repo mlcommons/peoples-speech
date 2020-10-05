@@ -212,15 +212,11 @@ class CTCModel(base_model.BaseTask):
     sparse_gt_ids = tf.cast(py_utils.SequenceToSparseTensor(
         input_batch.tgt.labels, input_batch.tgt.paddings), tf.int64)
 
-    gt_transcripts = self.input_generator.IdsToStrings(
-        input_batch.tgt.labels,
-        tf.cast(
-            tf.round(tf.reduce_sum(1.0 - input_batch.tgt.paddings, 1) - 1.0),
-            tf.int32,
-        ),
-    )
+    gt_seq_lens = py_utils.LengthsFromBitMask(input_batch.tgt.paddings, 1)
+    gt_transcripts = self.input_generator.IdsToStrings(input_batch.tgt.labels, gt_seq_lens)
 
     # char error rate
+    # AG TODO: This is counting num tokens, not num chars.
     char_dist = tf.edit_distance(dec_outs_dict.sparse_ids, sparse_gt_ids, normalize=False)
     ref_chars =  py_utils.LengthsFromBitMask(input_batch.tgt.paddings, 1)
     num_wrong_chars = tf.reduce_sum(char_dist)
@@ -250,14 +246,5 @@ class CTCModel(base_model.BaseTask):
       'num_wrong_chars': num_wrong_chars, 
       'num_ref_chars': num_ref_chars
     }
-
-    # if not py_utils.use_tpu():
-    #   ret_dict['utt_id'] = input_batch.sample_ids
-
-    # wer = tf.Print(wer, [wer, cer, 
-    #                      num_wrong_words, num_ref_words, 
-    #                      num_wrong_chars, num_ref_chars])
-
-    # wer = tf.Print(wer, [transcripts[i] for i in range(12)], "_GT_: ")
-    # wer = tf.Print(wer, [hyp_str[i] for i in range(12)], "PRED: ")
+    
     return ret_dict

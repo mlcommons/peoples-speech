@@ -198,7 +198,7 @@ class Librispeech960Wpm(Librispeech960Base):
   # pre-generated 16K word piece vocabulary checked in under 'tasks/asr/'.
   WPM_SYMBOL_TABLE_FILEPATH = (
       'lingvo/tasks/asr/wpm_16k_librispeech_ascii.vocab')
-  WPM_TARGET_SEQUENCE_LENGTH = 4000
+  WPM_TARGET_SEQUENCE_LENGTH = 400
   WPM_VOCAB_SIZE = 2555   # 16328
   BLANK_IDX = 4
 
