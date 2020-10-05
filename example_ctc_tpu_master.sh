@@ -22,12 +22,13 @@ else
     TPUIP=$5
 fi
 
-if [ $2 == "train_evald" ]
+if [ $2 == "decode" ]
 then
     # OPERATION="executor_tpu,evaler_dev"
     # OPERATION="tpu_evaluator"
     # OPERATION=trainer_client,evaler_dev
-    OPERATION="executor_tpu"
+    # OPERATION="executor_tpu"
+    OPERATION="decoder_dev"
 else
     OPERATION="trainer_client"
 fi
@@ -44,6 +45,12 @@ case $4 in
     ;;
     "cnn")
     TEST=Librispeech960BaseCnn
+    ;;
+    "bidi")
+    TEST=Librispeech960BaseBidiLstm
+    ;;
+    "wpm")
+    TEST=Librispeech960Wpm
     ;;
 esac
 
