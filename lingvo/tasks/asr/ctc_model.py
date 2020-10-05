@@ -62,7 +62,7 @@ class CTCModel(base_model.BaseTask):
     tp.l2_regularizer_weight = 1e-6
     tp.clip_gradient_norm_to_value = 1.0
     tp.grad_norm_to_clip_to_zero = 100.0
-    tp.tpu_steps_per_loop = 500
+    tp.tpu_steps_per_loop = 100
 
     return p
 
@@ -138,11 +138,6 @@ class CTCModel(base_model.BaseTask):
 
     # ctc_loss.shape = (B)
     total_loss = tf.reduce_mean(ctc_loss)
-    # AG TODO: uncomment lines below for GPU/WER calc
-    # if py_utils.use_tpu():
-    #   err = py_utils.RunOnTpuHost(self._CalculateErrorRates, input_batch, output_batch)
-    # else:
-    #   err = self._CalculateErrorRates(input_batch, output_batch)
     metrics = dict(loss=(total_loss, 1.0))
     per_sequence_loss = {"loss": ctc_loss}
     return metrics, per_sequence_loss

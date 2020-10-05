@@ -56,8 +56,8 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
 
     # AG TODO: For TPU
     p.bucket_batch_limit = [48] * 8
-    # AG TODO: For GPU
-    # p.bucket_batch_limit = [12] * 8
+    # AG TODO: For GPU and CPU, both training and evalution
+    p.bucket_batch_limit = [12] * 8
 
     return p
 
@@ -132,8 +132,8 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
     # devother, test, testother are evaluated completely (since num_samples for
     # each of these sets is less than 5000), while train summaries will be
     # computed on 5000 examples.
-    p.eval.samples_per_summary = 5000
-    p.eval.decoder_samples_per_summary = 5000
+    p.eval.samples_per_summary = 1032
+    p.eval.decoder_samples_per_summary = 1032
 
     return p
 
@@ -197,9 +197,9 @@ class Librispeech960Wpm(Librispeech960Base):
   # Set this to a WPM vocabulary file before training. By default, we use the
   # pre-generated 16K word piece vocabulary checked in under 'tasks/asr/'.
   WPM_SYMBOL_TABLE_FILEPATH = (
-      'lingvo/tasks/asr/wpm_16k_librispeech.vocab')
-  WPM_TARGET_SEQUENCE_LENGTH = 140
-  WPM_VOCAB_SIZE = 16328
+      'lingvo/tasks/asr/wpm_16k_librispeech_ascii.vocab')
+  WPM_TARGET_SEQUENCE_LENGTH = 4000
+  WPM_VOCAB_SIZE = 2555   # 16328
   BLANK_IDX = 4
 
   EMBEDDING_DIMENSION = 96

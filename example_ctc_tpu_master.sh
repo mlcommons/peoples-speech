@@ -34,13 +34,13 @@ fi
 
 case $4 in 
     "baseline")
-    TEST=Librispeech960Base
+    TEST=Librispeech960Grapheme
     ;;
-    "specaugment")
-    TEST=Librispeech960BaseSpecAugment
+    "wpm_spec")
+    TEST=Librispeech_Wpm_SpecAug_InptStack
     ;;
-    "bidilstm")
-    TEST=Librispeech960BaseBidiLstm
+    "graph_spec")
+    TEST=Librispeech_Grphm_SpecAug_InptStack
     ;;
     "cnn")
     TEST=Librispeech960BaseCnn
@@ -49,6 +49,11 @@ esac
 
 # ./example_ctc_tpu_lstmcell_2048.sh gs://the-peoples-speech-west-europe/ag/ctc_librispeech/training_logs/lstmcell_2048/
 #tpu_ctc_lstmcell_2048_1a 2>&1 | tee tpu_ctc_lstmcell_2048_1a.log
+
+
+
+# ./example_ctc_tpu_master.sh tpu trainer_client 1004/wpm_spec_ascii_space wpm_spec 10.240.1.2
+# bazel-bin/lingvo/trainer --logdir=gs://the-peoples-speech-west-europe/ag/ctc_librispeech/training_logs/1004/wpm_spec_ascii_space --mode=sync --model=asr.librispeech_ctc.Librispeech_Wpm_SpecAug_InptStack --logtostderr --run_locally=cpu --job=decoder_dev
 
 # echo bazel run //lingvo:trainer -- --logdir=${LOGDIR} \
 #                          --mode=sync \
@@ -66,3 +71,5 @@ bazel run //lingvo:trainer -- --logdir=${LOGDIR} \
                         #  --job-type=$OPERATION 2>&1 | tee ${TEST}_${DATE}.log
 
 
+# ctpu st --name=ag-test-tpu --details
+# ctpu up -name ag-test-tpu -tpu-only -tpu-size v3-8 -tf-version 2.2
