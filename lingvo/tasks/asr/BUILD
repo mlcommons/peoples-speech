@@ -281,5 +281,5 @@ py_test(
 
 filegroup(
     name = "wpm_files",
-    srcs = ["wpm_16k_librispeech.vocab"],
+    srcs = ["wpm_16k_librispeech.vocab", "wpm_16k_librispeech_ascii.vocab"],
 )
