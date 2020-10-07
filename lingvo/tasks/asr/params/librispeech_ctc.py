@@ -55,8 +55,8 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
       p.bucket_upper_bound = [639, 1062, 1275, 1377, 1449, 1506, 1563, 1710]
 
     # AG TODO: For TPU
-    p.bucket_batch_limit = [48] * 8
-    # AG TODO: For GPU and CPU, both training and evalution
+    # p.bucket_batch_limit = [48] * 8
+    # AG TODO: For GPU and CPU, both training and evaluation
     p.bucket_batch_limit = [12] * 8
 
     return p
@@ -190,6 +190,14 @@ class Librispeech960Grapheme(Librispeech960Base):
     p = super().Task()
     p.vocab_size = self.GRAPHEME_VOCAB_SIZE
     p.blank_index = self.BLANK_IDX
+
+    # input_stacking
+    p.encoder.input_shape = [None, None, 240, 1]
+    sp = p.input_stacking_tpl
+    sp.left_context = 1
+    sp.right_context = 1
+    sp.stride = 3  # L + 1 + R
+
     return p
 
 class Librispeech960Wpm(Librispeech960Base):
@@ -353,10 +361,55 @@ class Librispeech_Wpm_SpecAug_InptStack(Librispeech960Wpm):
     p = super().Task()
     p.encoder.use_specaugment = True
     p.encoder.input_shape = [None, None, 240, 1]
+    
+    # AG TODO: only for WPM 1e-5 experiment
+    tp = p.train
+    tp.learning_rate = 1e-5
 
     sp = p.input_stacking_tpl
     sp.left_context = 1
     sp.right_context = 1
     sp.stride = 3  # L + 1 + R
+
+    return p
+
+@model_registry.RegisterSingleTaskModel
+class Librispeech960Base_Cnn_Wpm_Spec(Librispeech960Wpm):
+  # Inherit from Librispeech960Wpm for WPM and Librispeech960Grapheme for non-WPM
+  def Task(self):
+    p = super().Task()
+    p.encoder.use_specaugment = True
+    p.encoder.conv_filter_shapes = [(3, 3, 1, 64), (3, 3, 64, 64)]
+    p.encoder.conv_filter_strides = [(2, 2), (2, 2)]
+    # Disable conv LSTM layers.
+    p.encoder.num_cnn_layers = 2
+
+    p.encoder.input_shape = [None, None, 80, 1]
+    # AG TODO: only for WPM 1e-5 experiment
+    tp = p.train
+    tp.learning_rate = 1e-5
+
+    # Disable input stacking
+    p.input_stacking_tpl = None
+
+    return p
+
+@model_registry.RegisterSingleTaskModel
+class Librispeech_Cnn_Wpm(Librispeech960Wpm):
+  def Task(self):
+    p = super().Task()
+    p.encoder.use_specaugment = False
+    p.encoder.conv_filter_shapes = [(3, 3, 1, 64), (3, 3, 64, 64)]
+    p.encoder.conv_filter_strides = [(2, 2), (2, 2)]
+    # Disable conv LSTM layers.
+    p.encoder.num_cnn_layers = 2
+
+    p.encoder.input_shape = [None, None, 80, 1]
+    # AG TODO: only for WPM 1e-5 experiment
+    tp = p.train
+    tp.learning_rate = 1e-5
+
+    # Disable input stacking
+    p.input_stacking_tpl = None
 
     return p
