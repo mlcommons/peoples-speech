@@ -55,9 +55,10 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
       p.bucket_upper_bound = [639, 1062, 1275, 1377, 1449, 1506, 1563, 1710]
 
     # AG TODO: For TPU
-    p.bucket_batch_limit = [48] * 8
+    # p.bucket_batch_limit = [48] * 8
     # AG TODO: For GPU and CPU, both training and evaluation
     # p.bucket_batch_limit = [96] * 8
+    p.bucket_batch_limit = [12] * 8
 
     return p
 
@@ -395,7 +396,7 @@ class Librispeech_Grphm_DO_SpecAug_InptStack_5x1536(Librispeech960Grapheme):
     return p
 
 @model_registry.RegisterSingleTaskModel
-class Librispeech_Grphm_DO_SpecAug_InptStack_6x0124(Librispeech960Grapheme):
+class Librispeech_Grphm_DO_SpecAug_InptStack_6x1024(Librispeech960Grapheme):
   def Task(self):
     p = super().Task()
     p.encoder.use_specaugment = True
@@ -403,6 +404,23 @@ class Librispeech_Grphm_DO_SpecAug_InptStack_6x0124(Librispeech960Grapheme):
     p.encoder.lstm_dropout.keep_prob = 0.8
     p.encoder.lstm_cell_size = 1024
     p.encoder.num_lstm_layers = 6
+
+    sp = p.input_stacking_tpl
+    sp.left_context = 1
+    sp.right_context = 1
+    sp.stride = 3  # L + 1 + R
+
+    return p
+
+
+@model_registry.RegisterSingleTaskModel
+class Librispeech_Grphm_1536_SpecAug_InptStack(Librispeech960Grapheme):
+  def Task(self):
+    p = super().Task()
+    p.encoder.use_specaugment = True
+    p.encoder.input_shape = [None, None, 240, 1]
+    p.encoder.lstm_cell_size = 1536
+    p.encoder.num_lstm_layers = 5
 
     sp = p.input_stacking_tpl
     sp.left_context = 1

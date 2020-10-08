@@ -30,7 +30,7 @@ then
     # OPERATION="executor_tpu"
     OPERATION="decoder_dev"
 else
-    OPERATION="trainer_client"
+    OPERATION="executor_tpu"
 fi
 
 case $4 in 
@@ -57,6 +57,18 @@ case $4 in
     ;;
     "cnn_wpm")
     TEST=Librispeech_Cnn_Wpm
+    ;;
+    "spec_1536")
+    TEST=Librispeech_Grphm_1536_SpecAug_InptStack
+    ;;
+    "do_spec_6x1024")
+    TEST=Librispeech_Grphm_DO_SpecAug_InptStack_6x1024
+    ;;
+    "do_spec_5x1536")
+    TEST=Librispeech_Grphm_DO_SpecAug_InptStack_5x1536
+    ;;
+    "do_spec")
+    TEST=Librispeech_Grphm_DO_SpecAug_InptStack
     ;;
 esac
 
