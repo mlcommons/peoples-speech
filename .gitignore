@@ -3,4 +3,5 @@ bazel-*
 *.log
 *.log.*
 settings.json
+# emacs backups
 *~
