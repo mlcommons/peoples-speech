@@ -140,9 +140,9 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
   def ProgramSchedule(self):
     return program.SimpleProgramScheduleForTask(
         train_dataset_name='Train',
-        train_steps_per_loop=50,
+        train_steps_per_loop=500,
         eval_dataset_names=['Dev', 'Train'],
-        eval_steps_per_loop=5,
+        eval_steps_per_loop=50,
         decode_steps_per_loop=0)
 
 
