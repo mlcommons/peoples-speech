@@ -143,7 +143,6 @@ class AsrEncoder(base_layer.BaseLayer):
     # See https://arxiv.org/pdf/1610.03022.pdf, section 2.2.
     p.proj_tpl.batch_norm = True
     p.proj_tpl.activation = 'RELU'
-    p.lstm_dropout = None
     return p
 
   def __init__(self, params):

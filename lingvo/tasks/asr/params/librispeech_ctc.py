@@ -55,10 +55,10 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
       p.bucket_upper_bound = [639, 1062, 1275, 1377, 1449, 1506, 1563, 1710]
 
     # AG TODO: For TPU
-    # p.bucket_batch_limit = [48] * 8
+    p.bucket_batch_limit = [48] * 8
     # AG TODO: For GPU and CPU, both training and evaluation
     # p.bucket_batch_limit = [96] * 8
-    p.bucket_batch_limit = [12] * 8
+    # p.bucket_batch_limit = [12] * 8
 
     return p
 
