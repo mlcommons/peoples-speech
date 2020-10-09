@@ -43,9 +43,6 @@ class CTCModel(base_model.BaseTask):
     p.Define('input_stacking_tpl', layers.StackingOverTime.Params(),
              'Configs template for the stacking layer over time of the input features')
     p.encoder = encoder.AsrEncoder.Params()
-    p.Define('include_auxiliary_metrics', True,
-             'In addition to simple WER, also computes oracle WER, SACC, TER, etc. '
-             'Turning off this option will speed up the decoder job.')
 
     # Defaults based on graphemes / ascii_tokenizer.cc
     p.Define('vocab_size', 76, 'Vocabulary size, not including the blank symbol.')
@@ -85,6 +82,7 @@ class CTCModel(base_model.BaseTask):
     projection_p.activation = 'NONE'
     projection_p.output_dim = p.vocab_size
     projection_p.input_dim = p.encoder.lstm_cell_size
+    projection_p.params_init = py_utils.WeightInit.Uniform(0.1)
     if p.encoder.lstm_type == 'bidi':
       projection_p.input_dim *= 2
     self.CreateChild('project_to_vocab_size', projection_p)
@@ -99,7 +97,7 @@ class CTCModel(base_model.BaseTask):
       with tf.name_scope('encoder'):
         encoder_outputs = self._FrontendAndEncoderFProp(theta, input_batch.src)
       with tf.name_scope('decoder'):
-        decoder_outs = self._GreedyDecode(encoder_outputs)
+        decoder_outs = self._DecodeCTC(encoder_outputs)
 
       decoder_metrics = self._CalculateErrorRates(decoder_outs, input_batch)
       return decoder_metrics
@@ -122,6 +120,8 @@ class CTCModel(base_model.BaseTask):
     dec_metrics_dict['num_samples_in_batch'].Update(len(gt_transcripts))
     dec_metrics_dict['wer'].Update(total_word_err / max(1., total_ref_words), total_ref_words)
     dec_metrics_dict['cer'].Update(total_char_err / max(1., total_ref_chars), total_ref_chars)
+    tf.logging.info(" ]]] CER: %.3f ]]] WER: %.3f", dec_metrics_dict['cer'].value, dec_metrics_dict['wer'].value)
+
 
   def ComputeLoss(self, theta, predictions, input_batch):
     # output_batch = self._FProp(theta, input_batch)
@@ -156,6 +156,7 @@ class CTCModel(base_model.BaseTask):
 
   def _FrontendAndEncoderFProp(self, theta, input_batch_src):
     p = self.params
+    in_shape = tf.shape(input_batch_src.src_inputs)
 
     if p.frontend:
       input_batch_src = self.frontend.FProp(theta.frontend, input_batch_src)
@@ -171,10 +172,13 @@ class CTCModel(base_model.BaseTask):
 
     rnn_out = self.encoder.FProp(theta.encoder, input_batch_src)
     encoded = self.project_to_vocab_size(rnn_out.encoded)
+    out_shape = tf.shape(encoded)
+    # encoded = tf.Print(encoded, [in_shape, out_shape], "SHAPES:", summarize=-1)
+
     outputs = py_utils.NestedMap(encoded=encoded, padding=rnn_out.padding)
     return outputs
 
-  def _GreedyDecode(self, output_batch):
+  def _DecodeCTC(self, output_batch):
     # swap row 0 and row 73 because decoder assumes blank is at 0,
     # however we set blank = 73
     tok_logits = output_batch.encoded  # (T, B, F)
@@ -183,9 +187,10 @@ class CTCModel(base_model.BaseTask):
     idxs[self.params.blank_index] = 0
     tok_logits = tf.stack([tok_logits[:, :, idx] for idx in idxs], axis=-1)
 
-    (decoded,), neg_sum_logits = tf.nn.ctc_greedy_decoder(
+    (decoded,), neg_sum_logits = tf.nn.ctc_beam_search_decoder(
       tok_logits,
-      py_utils.LengthsFromBitMask(output_batch.padding, 0)
+      py_utils.LengthsFromBitMask(output_batch.padding, 0),
+      beam_width=100
     )
 
     dense_dec = tf.sparse_to_dense(
@@ -217,8 +222,13 @@ class CTCModel(base_model.BaseTask):
 
     # char error rate
     # AG TODO: This is counting num tokens, not num chars.
-    char_dist = tf.edit_distance(dec_outs_dict.sparse_ids, sparse_gt_ids, normalize=False)
-    ref_chars =  py_utils.LengthsFromBitMask(input_batch.tgt.paddings, 1)
+    char_dist = tf.edit_distance(
+      tf.string_split(dec_outs_dict.transcripts, sep=''), 
+      tf.string_split(gt_transcripts, sep=''),
+      normalize=False)
+
+    ref_chars = tf.strings.length(gt_transcripts)
+    # py_utils.LengthsFromBitMask(input_batch.tgt.paddings, 1)
     num_wrong_chars = tf.reduce_sum(char_dist)
     num_ref_chars = tf.cast(tf.reduce_sum(ref_chars), tf.float32)
     cer = num_wrong_chars / num_ref_chars

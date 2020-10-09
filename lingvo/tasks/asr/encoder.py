@@ -68,6 +68,7 @@ class AsrEncoder(base_layer.BaseLayer):
     p.Define('num_cnn_layers', 2, 'Number of conv layers to create.')
     p.Define('num_conv_lstm_layers', 1, 'Number of conv lstm layers to create.')
     p.Define('num_lstm_layers', 3, 'Number of rnn layers to create')
+    p.Define('lstm_dropout', layers.DropoutLayer.Params(), 'Apply dropout between LSTM')
     p.Define('project_lstm_output', True,
              'Include projection layer after each encoder LSTM layer.')
     p.Define('pad_steps', 6,
@@ -142,6 +143,7 @@ class AsrEncoder(base_layer.BaseLayer):
     # See https://arxiv.org/pdf/1610.03022.pdf, section 2.2.
     p.proj_tpl.batch_norm = True
     p.proj_tpl.activation = 'RELU'
+    p.lstm_dropout = None
     return p
 
   def __init__(self, params):
@@ -253,9 +255,13 @@ class AsrEncoder(base_layer.BaseLayer):
             p.stacking_layer_tpl.right_context)
         output_dim *= stacking_window_len
 
+    if p.lstm_dropout:
+      self.CreateChildren('dropout', p.lstm_dropout)
+
     self.CreateChildren('rnn', params_rnn_layers)
     self.CreateChildren('proj', params_proj_layers)
     self.CreateChildren('highway_skip', params_highway_skip_layers)
+
 
   @property
   def _use_functional(self):
@@ -433,8 +439,13 @@ class AsrEncoder(base_layer.BaseLayer):
       num_skips = 0
       for i in range(p.num_lstm_layers):
         rnn_out = self.rnn[i].FProp(theta.rnn[i], rnn_in, rnn_padding)
+
         if p.lstm_type == 'fwd':
           rnn_out, _ = rnn_out
+
+        if p.lstm_dropout:
+          rnn_out = self.dropout.FProp(theta.dropout, rnn_out)
+
         residual_index = i - p.residual_start + 1
         if p.residual_start > 0 and residual_index >= 0:
           if residual_index % p.residual_stride == 0:

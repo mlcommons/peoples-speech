@@ -56,6 +56,9 @@ class AsrCtcModelTest(test_utils.TestCase):
     ep.conv_filter_strides = []
     ep.num_conv_lstm_layers = 0
 
+    epd = ep.lstm_dropout 
+    epd.keep_prob = 0.8
+
     sp = p.input_stacking_tpl
     sp.left_context = 1
     sp.right_context = 1
