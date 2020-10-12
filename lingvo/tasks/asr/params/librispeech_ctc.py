@@ -1,4 +1,5 @@
 from lingvo import model_registry
+import lingvo.compat as tf
 from lingvo.core import base_model_params
 from lingvo.core import datasource
 from lingvo.core import program
@@ -8,6 +9,8 @@ from lingvo.core import tokenizers
 from lingvo.tasks.asr import input_generator
 from lingvo.tasks.asr import ctc_model
 from lingvo.tasks.asr import frontend as asr_frontend
+
+VOCAB_FILEPATH = "gs://the-peoples-speech-west-europe/Librispeech/tokens.txt"
 
 @model_registry.RegisterSingleTaskModel
 class Librispeech960Base(base_model_params.SingleTaskModelParams):
@@ -27,7 +30,10 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
     # Interesting. First I've heard of this.
     p.append_eos_frame = False
 
-    p.pad_to_max_seq_length = True
+    if tf.flags.FLAGS.tpu:
+      p.pad_to_max_seq_length = True
+    else:
+      p.pad_to_max_seq_length = False
     p.file_random_seed = 0
     p.file_buffer_size = 10000
     p.file_parallelism = 16
@@ -41,6 +47,16 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
       p.bucket_upper_bound = [639, 1062, 1275, 1377, 1449, 1506, 1563, 1710]
 
     p.bucket_batch_limit = [48] * 8
+
+    p.tokenizer = tokenizers.VocabFileTokenizer.Params()
+
+    # TODO: Don't hard-code this path! How can I make it relative?
+    p.tokenizer.token_vocab_filepath = VOCAB_FILEPATH
+    p.tokenizer.tokens_delimiter = ""
+    p.tokenizer.load_token_ids_from_vocab = False
+    with tf.io.gfile.GFile(VOCAB_FILEPATH, mode='r') as fh:
+      p.tokenizer.vocab_size = len(fh.readlines())
+    assert p.tokenizer.vocab_size == 32
 
     return p
 
@@ -61,6 +77,10 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
     p.file_datasource.file_pattern = (
         'devtest/dev-clean.tfrecords-00000-of-00001')
     p.num_samples = 2703
+    p.target_max_length = 516
+    # p.source_max_length = 3600
+    # p.bucket_upper_bound = [3600]
+    # p.bucket_batch_limit = [1]
     return p
 
   def Devother(self):
@@ -88,6 +108,10 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
     p = ctc_model.CTCModel.Params()
     p.name = 'librispeech'
 
+    with tf.io.gfile.GFile(VOCAB_FILEPATH, mode='r') as fh:
+      p.vocab_size = len(fh.readlines())
+    assert p.vocab_size == 32
+
     ep = p.encoder_v2
     ep.use_stacking_subsampler = True
 
@@ -100,12 +124,10 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
     tp.scale_gradients = False
     tp.l2_regularizer_weight = None
 
-    # Setting p.eval.samples_per_summary to a large value ensures that dev,
-    # devother, test, testother are evaluated completely (since num_samples for
-    # each of these sets is less than 5000), while train summaries will be
-    # computed on 5000 examples.
-    p.eval.samples_per_summary = 2700
-    p.eval.decoder_samples_per_summary = 2700
+    # A value of 0 will force each eval and dev task to iterate over
+    # the entire dataset.
+    p.eval.samples_per_summary = 0
+    p.eval.decoder_samples_per_summary = 0
 
     return p
 
@@ -120,7 +142,6 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
         decode_steps_per_loop=0)
 
 
-# gs://the-peoples-speech-west-europe/forced-aligner/vad-segments-dump/Nov_6_2020/ALL_CAPTIONED_DATA_002/part-06162-96fe2b35-f15e-46af-9002-dce290861d5d-c000.tfrecord
 @model_registry.RegisterSingleTaskModel
 class TpuDecoderLibrispeech960Base(Librispeech960Base):
 
@@ -248,6 +269,33 @@ class Librispeech960Grapheme(Librispeech960Base):
 
     return p
 
+@model_registry.RegisterSingleTaskModel
+class Grphm_DO_SpecAug_StackingSubSampler(Librispeech960Grapheme):
+
+  def Task(self):
+    p = super().Task()
+
+    ep = p.encoder_v2
+    ep.use_specaugment = True
+    ep.use_conv_subsampler = False
+    ep.use_stacking_subsampler = True
+
+    ep.stacking_subsampler.stacking.left_context = 1
+    ep.stacking_subsampler.stacking.right_context = 1
+    ep.stacking_subsampler.stacking.stride = (
+      ep.stacking_subsampler.stacking.left_context +
+      1 +
+      ep.stacking_subsampler.stacking.right_context
+    )
+
+    elp = p.encoder_v2.lstm_block
+    elp.dropout.keep_prob = 0.8
+    elp.lstm_cell_size = 1024
+    elp.num_lstm_layers = 6
+    elp.lstm_type = 'fwd'
+
+    return p
+
 
 @model_registry.RegisterSingleTaskModel
 class Grphm_DO_SpecAug_ConvStk_6x512Bidi(Librispeech960Grapheme):
@@ -299,3 +347,75 @@ class Grphm_DO_SpecAug_ConvStk_6x512Bidi_40batchsize(Librispeech960Grapheme):
     ecp = ep.conv_subsampler
     ecp.input_shape = [None, None, 80, 1]
     return p
+
+@model_registry.RegisterSingleTaskModel
+class TpuDecoderGrphm_DO_SpecAug_StackingSubSampler(Grphm_DO_SpecAug_StackingSubSampler):
+
+  SAMPLES_PER_SECOND = 16_000
+
+  def _InferenceInputParams(self):
+    """
+    Reads in a raw waveform, where samples are float32 and in the range[-1,1]
+    """
+    p = input_generator.RawAsrInputIntegerUttIds.Params()
+
+    p.file_datasource = datasource.PrefixedDataSource.Params()
+    p.file_datasource.file_type = 'tfrecord'
+    p.file_datasource.file_pattern_prefix = 'REPLACE_ME'
+    p.file_datasource.file_pattern = '*.tfrecord'
+
+    p.frame_size = 1
+    p.append_eos_frame = False
+
+    p.pad_to_max_seq_length = True
+    p.file_random_seed = 0
+    p.file_buffer_size = 1
+    # Set this to whatever
+    p.file_parallelism = 1
+
+    # 15 seconds is our maximum utterance size
+    max_sample_length = 15 * type(self).SAMPLES_PER_SECOND
+    # TODOL: change to max_sample_length
+    p.source_max_length = max_sample_length
+    p.bucket_upper_bound = [p.source_max_length]
+
+    p.bucket_batch_limit = [1]
+
+    return p
+
+  def Dev(self):
+    return self._InferenceInputParams()
+
+  def Task(self):
+    p = super().Task()
+    # This is copied from audio_lib.py. Ideally these configurations
+    # would be split off into a function, but I want to minimize merge
+    # conflicts with lingvo for now. Of course, a merge conflict would
+    # indicate that parameters had changed, so my choice is clearly
+    # wrong, but oh well.
+    p.frontend = asr_frontend.MelAsrFrontend.Params()
+    pf = p.frontend
+    pf.sample_rate = float(type(self).SAMPLES_PER_SECOND)
+    pf.frame_size_ms = 25.
+    pf.frame_step_ms = 10.
+    pf.num_bins = 80
+    pf.lower_edge_hertz = 125.
+    pf.upper_edge_hertz = 7600.
+    pf.preemph = 0.97
+    pf.noise_scale = 0.
+    pf.pad_end = False
+
+    p.inference_compute_only_log_softmax = True
+    return p
+
+  def ProgramSchedule(self):
+    # TODO: Generalize this
+    number_of_inputs = 1633
+    batch_size = 8
+    import math
+    decode_steps_per_loop = math.ceil(number_of_inputs / batch_size)
+    return program.DecodeProgramSchedule(
+      eval_dataset_names=['Dev'],
+      decode_steps_per_loop=decode_steps_per_loop,  # 1,
+      # I may want to reevaluate this
+      experimental_decoder=True)

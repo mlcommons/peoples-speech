@@ -16,9 +16,10 @@
 """Helpers for the decoding phase of jobs."""
 
 import pickle
+import lingvo.compat as tf
 
 
 def WriteKeyValuePairs(filename, key_value_pairs):
   """Writes `key_value_pairs` to `filename`."""
-  with open(filename, 'wb') as f:
+  with tf.io.gfile.GFile(filename, mode='wb') as f:
     pickle.dump(key_value_pairs, f, protocol=pickle.HIGHEST_PROTOCOL)

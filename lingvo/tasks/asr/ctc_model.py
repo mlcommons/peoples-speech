@@ -15,7 +15,6 @@
 """CTC model."""
 
 from collections import defaultdict
-from typing import NamedTuple
 import os
 
 import lingvo.compat as tf
@@ -37,7 +36,6 @@ class keydefaultdict(defaultdict):
       ret = self[key] = self.default_factory(key) # pylint: disable=not-callable
       return ret
 
-
 class CTCModel(base_model.BaseTask):
   """
   CTC model without a language model.
@@ -56,7 +54,7 @@ class CTCModel(base_model.BaseTask):
 
     # Defaults based on graphemes / ascii_tokenizer.cc
     p.Define('vocab_size', 76,
-             'Vocabulary size, not including the blank symbol.')
+             'Vocabulary size, *including* the blank symbol.')
     p.Define(
         'blank_index', 73, 'Index assigned to epsilon, aka blank for CTC. '
         'This should never appear in the label sequence. Reconsider this.')

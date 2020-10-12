@@ -1,0 +1,5 @@
+export GALVASR2_ROOT="$(git rev-parse --show-toplevel)"
+export PATH="${GALVASR2_ROOT}/bazel-bin/external/openfst:$PATH"
+export PATH="${GALVASR2_ROOT}/bazel-bin/third_party/kaldi:$PATH"
+export PATH="${GALVASR2_ROOT}/bazel-bin/galvasr2:$PATH"
+export PATH="${GALVASR2_ROOT}/bazel-bin/lingvo:$PATH"
