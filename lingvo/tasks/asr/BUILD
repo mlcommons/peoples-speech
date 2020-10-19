@@ -61,12 +61,13 @@ py_test(
 
 py_library(
     name = "encoder",
-    srcs = ["encoder.py"],
+    srcs = ["encoder.py", "encoder_v2.py", "blocks.py"],
     srcs_version = "PY3",
     deps = [
         "//lingvo:compat",
         "//lingvo/core:base_layer",
         "//lingvo/core:layers",
+        # "//lingvo/core:conformer_layer",
         "//lingvo/core:model_helper",
         "//lingvo/core:plot",
         "//lingvo/core:py_utils",

@@ -32,7 +32,8 @@ import sys
 
 class AsrCtcModelTest(test_utils.TestCase):
   # bazel test //lingvo/tasks/asr:ctc_model_test --test_output=all (prints on console)
-  def _testParams(self):
+
+  def _testParams_v1(self):
     input_shape = [12, 16, 80, 1]  # (B, T, F, 1)
     p = ctc_model.CTCModel.Params()
     p.vocab_size = 76
@@ -56,7 +57,7 @@ class AsrCtcModelTest(test_utils.TestCase):
     ep.conv_filter_strides = []
     ep.num_conv_lstm_layers = 0
 
-    epd = ep.lstm_dropout 
+    epd = ep.lstm_dropout
     epd.keep_prob = 0.8
 
     sp = p.input_stacking_tpl
@@ -73,19 +74,149 @@ class AsrCtcModelTest(test_utils.TestCase):
     p.name = 'test_ctc_mdl'
     return p
 
-  def testFProp(self):
+  def _testParams_v2(self):
+    input_shape = [12, 16, 80, 1]  # (B, T, F, 1)
+    p = ctc_model.CTCModel.Params()
+    p.vocab_size = 76
+    p.blank_index = 73
+
+    # Initialize encoder params.
+    p.encoder = None
+    ep = p.encoder_v2
+    ep.use_specaugment = True
+
+    p.input_stacking_tpl = None
+    ep.conv_subsampler = None
+    # ep.stacking_subsampler = None
+    esp = ep.stacking_subsampler.stacking
+    esp.left_context = 1
+    esp.right_context = 1
+    esp.stride = 3  # L + 1 + R
+
+    elp = ep.lstm_block
+    elp.input_feats = 240
+    elp.lstm_cell_size = 128
+    elp.num_lstm_layers = 5
+    elp.lstm_type = 'fwd'
+    elp.dropout.keep_prob = 0.8
+
+    p.input = tig.TestInputGenerator.Params()
+    p.input.target_max_length = 5
+    p.input.source_shape = input_shape
+    p.input.target_shape = [12, 5]
+    p.name = 'test_ctc_mdl_v2'
+    return p
+
+  def _testParams_conv_sub(self):
+    input_shape = [12, 16, 80, 1]  # (B, T, F, 1)
+    p = ctc_model.CTCModel.Params()
+    p.vocab_size = 2560  # simulate wpm
+    p.blank_index = 73
+
+    # Initialize encoder params.
+    p.encoder = None
+    ep = p.encoder_v2
+    ep.use_specaugment = True
+
+    p.input_stacking_tpl = None
+    ep.stacking_subsampler = None
+    sub = ep.conv_subsampler
+    sub.input_shape = input_shape
+
+    elp = ep.lstm_block
+    elp.input_feats = None # leave as none to infer automatically
+    elp.lstm_cell_size = 128
+    elp.num_lstm_layers = 5
+    elp.lstm_type = 'fwd'
+    elp.dropout.keep_prob = 0.8
+
+    p.input = tig.TestInputGenerator.Params()
+    p.input.target_max_length = 5
+    p.input.source_shape = input_shape
+    p.input.target_shape = [12, 5]
+    p.name = 'test_ctc_mdl_conv_sub'
+    return p
+
+  # def _testParams_conv_conformer(self):
+  #   input_shape = [12, 16, 80, 1]  # (B, T, F, 1)
+  #   p = ctc_model.CTCModel.Params()
+  #   p.vocab_size = 76
+  #   p.blank_index = 73
+
+  #   # Initialize encoder params.
+  #   p.encoder = None
+  #   ep = p.encoder_v2
+  #   ep.use_specaugment = True
+
+  #   p.input_stacking_tpl = None
+  #   ep.stacking_subsampler = None
+  #   ep.conv_subsampler.input_shape = input_shape
+
+  #   ep.lstm_block = None
+  #   ecp = ep.conformer_block
+  #   ecp.num_conformer_blocks = 5
+  #   ecp.name = 'conformer_layer'
+
+  #   p.input = tig.TestInputGenerator.Params()
+  #   p.input.target_max_length = 5
+  #   p.input.source_shape = input_shape
+  #   p.input.target_shape = [12, 5]
+  #   p.name = 'test_ctc_mdl_conv_conformer'
+
+  #   return p
+
+  def testFProp_v1(self):
     with self.session(use_gpu=False):
       tf.random.set_seed(93820985)
-      p = self._testParams()
+      p = self._testParams_v1()
       mdl = p.Instantiate()
-      
+
       # FPropDefaultTheta -> FPropTower -> { ComputePredictions ; ComputeLoss; }
       metrics, per_item_metrics = mdl.FPropDefaultTheta()
       self.evaluate(tf.global_variables_initializer())
 
       ctc, _ = metrics['loss']
-      test_utils.CompareToGoldenSingleFloat(self, 21.025766, ctc.eval())
-      # test_utils.CompareToGoldenSingleFloat(self, 53.69948, ctc.eval())
-      
+      test_utils.CompareToGoldenSingleFloat(self, 21.02584, ctc.eval())
+
+  def testFProp_v2(self):
+    with self.session(use_gpu=False):
+      tf.random.set_seed(93820985)
+      p = self._testParams_v2()
+      mdl = p.Instantiate()
+
+      # FPropDefaultTheta -> FPropTower -> { ComputePredictions ; ComputeLoss; }
+      metrics, per_item_metrics = mdl.FPropDefaultTheta()
+      self.evaluate(tf.global_variables_initializer())
+
+      ctc, _ = metrics['loss']
+      test_utils.CompareToGoldenSingleFloat(self, 21.02584, ctc.eval())
+
+  def testFProp_conv_sub(self):
+    with self.session(use_gpu=False):
+      tf.random.set_seed(93820985)
+      p = self._testParams_conv_sub()
+      mdl = p.Instantiate()
+
+      # FPropDefaultTheta -> FPropTower -> { ComputePredictions ; ComputeLoss; }
+      metrics, per_item_metrics = mdl.FPropDefaultTheta()
+      self.evaluate(tf.global_variables_initializer())
+
+      ctc, _ = metrics['loss']
+      test_utils.CompareToGoldenSingleFloat(self, 92.83023, ctc.eval())
+
+  # def testFProp_conv_conformer(self):
+  #   with self.session(use_gpu=False):
+  #     tf.random.set_seed(93820985)
+  #     p = self._testParams_conv_conformer()
+  #     mdl = p.Instantiate()
+
+  #     # FPropDefaultTheta -> FPropTower -> { ComputePredictions ; ComputeLoss; }
+  #     metrics, per_item_metrics = mdl.FPropDefaultTheta()
+  #     self.evaluate(tf.global_variables_initializer())
+
+  #     ctc, _ = metrics['loss']
+  #     test_utils.CompareToGoldenSingleFloat(self, 81.75372, ctc.eval())
+
+
 if __name__ == '__main__':
   tf.test.main()

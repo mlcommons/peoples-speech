@@ -301,6 +301,12 @@ class AsrEncoder(base_layer.BaseLayer):
     return first_lstm_input_dim, first_lstm_input_dim_padding
 
   @property
+  def output_dim(self):
+    # This does not assume projection layers etc .,
+    multiplier = 2 if self.params.lstm_type == 'bidi' else 1
+    return self.params.lstm_cell_size * multiplier
+
+  @property
   def supports_streaming(self):
     return False
 
@@ -309,21 +315,17 @@ class AsrEncoder(base_layer.BaseLayer):
 
   def FProp(self, theta, batch, state0=None):
     """Encodes source as represented by 'inputs' and 'paddings'.
-
     Args:
       theta: A NestedMap object containing weights' values of this
         layer and its children layers.
       batch: A NestedMap with fields:
-
         - src_inputs - The inputs tensor. It is expected to be of shape [batch,
           time, feature_dim, channels].
         - paddings - The paddings tensor. It is expected to be of shape [batch,
           time].
       state0: Recurrent input state. Not supported/ignored by this encoder.
-
     Returns:
       A NestedMap containing
-
       - 'encoded': a feature tensor of shape [time, batch, depth]
       - 'padding': a 0/1 tensor of shape [time, batch]
       - 'state': the updated recurrent state
