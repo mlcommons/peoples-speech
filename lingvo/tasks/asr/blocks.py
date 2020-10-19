@@ -246,6 +246,7 @@ class JasperBlock(base_layer.BaseLayer):
     pass
 
 
+# Lingvo's conformer models work with TF2.3 but TPUs have issues with TF2.3
 # class ConformerBlock(base_layer.BaseLayer):
 
 #   @ classmethod
