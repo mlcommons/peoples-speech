@@ -9,7 +9,9 @@ HOME_BASE="/home/anjali/data/mlcommons/librispeech/models/wer"
 GS_BASE="gs://the-peoples-speech-west-europe/ag/ctc_librispeech/training_logs"
 
 DATE=$(date '+log_%Y_%m_%d_%H')
-FLDRDATE=$(date '+%m%d/%H%M')
+# FLDRDATE=$(date '+%m%d/%H%M')
+# FLDRDATE=$(date '+%m%d')
+FLDRDATE=$4
 CLS=$3
 
 # if tpu- in $1
@@ -21,7 +23,7 @@ if [[ "$1" == *"ag-tpu"* ]]; then
 
     if [ -z "$ip_addr" ]; then
         echo "Couldnt find TPU, creating a new one"
-        ../ctpu up -name ${name} -tpu-only -tpu-size v3-8 -tf-version 2.2 -preemptible
+        ../ctpu up -name ${name} -tpu-only -tpu-size v3-8 -tf-version 2.2
         ../ctpu st -name ${name} --details | grep "TPU IP" | grep -oP "10.*"
         ip_addr=$(../ctpu st -name ${name} --details | grep "TPU IP" | grep -oP "10.*")
     fi
@@ -55,3 +57,5 @@ bazel run //lingvo:trainer -- --logdir=${LOGDIR} \
     --job=$OPERATION 2>&1 | tee logs/${CLS}_${DATE}.log
 
     # ./example_ctc_tpu_master.sh ag-tpu1-1019 executor Grphm_DO_SpecAug_InptStack_6x1024
+    # ./example_ctc_tpu_master.sh ag-tpu3-1019 executor Grphm_DO_SpecAug_ConvStack_6x1024 1020
+    # ./example_ctc_tpu_master.sh ag-tpu2-1019 executor Grphm_DO_SpecAug_InptStack_6x512Bidi 1020
