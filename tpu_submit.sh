@@ -6,7 +6,8 @@ export MKL_NUM_THREADS="1"
 #$3 = class_name (def Librispeech960Base)
 
 HOME_BASE="/home/anjali/data/mlcommons/librispeech/models/wer"
-GS_BASE="gs://the-peoples-speech-west-europe/ag/ctc_librispeech/training_logs"
+# GS_BASE="gs://the-peoples-speech-west-europe/ag/ctc_librispeech/training_logs"
+GS_BASE="gs://the-peoples-speech-west-europe/"
 
 DATE=$(date '+log_%Y_%m_%d_%H')
 # FLDRDATE=$(date '+%m%d/%H%M')
@@ -15,7 +16,7 @@ FLDRDATE=$4
 CLS=$3
 
 # if tpu- in $1
-if [[ "$1" == *"ag-tpu"* ]]; then
+if [[ "$1" == *"-tpu"* ]]; then
     LOGDIR="${GS_BASE}/${FLDRDATE}/${CLS}"
 
     name=$1
@@ -32,7 +33,6 @@ if [[ "$1" == *"ag-tpu"* ]]; then
 
 elif [ $1 == "gpu" ]; then
     export CUDA_VISIBLE_DEVICES="0"
-    # AG TODO: add min and hr to the folder name
     # LOGDIR="/home/anjali/data/librispeech_models/wer/${DATE}"
     LOGDIR="${HOME_BASE}/${DATE}"
 else
@@ -56,6 +56,7 @@ bazel run //lingvo:trainer -- --logdir=${LOGDIR} \
     --tpu=grpc://${TPUIP}:8470 \
     --job=$OPERATION 2>&1 | tee logs/${CLS}_${DATE}.log
 
-    # ./example_ctc_tpu_master.sh ag-tpu1-1019 executor Grphm_DO_SpecAug_InptStack_6x1024
+    # ./submit.sh tpu_name executor class_model_name fldr_name
+    # ./submit.sh ag-tpu1-1019 executor Grphm_DO_SpecAug_InptStack_6x1024
     # ./example_ctc_tpu_master.sh ag-tpu3-1019 executor Grphm_DO_SpecAug_ConvStack_6x1024 1020
     # ./example_ctc_tpu_master.sh ag-tpu2-1019 executor Grphm_DO_SpecAug_InptStack_6x512Bidi 1020

@@ -419,3 +419,63 @@ class Grphm_DO_SpecAug_ConvStk_6x512Bidi_40batchsize(Librispeech960Grapheme):
     ecp = ep.conv_subsampler
     ecp.input_shape = [None, None, 80, 1]
     return p
+
+@model_registry.RegisterSingleTaskModel
+class Grphm_DO_SpecAug_ConvStk_6x768Bidi_30batchsize(Librispeech960Grapheme):
+  def Train(self):
+    p = super().Train()
+    # OOM with 48
+    p.bucket_batch_limit = [30] * 8
+    return p
+
+  def Task(self):
+    p = super().Task()
+
+    # disable old style
+    p.encoder = None
+    p.input_stacking_tpl = None
+
+    # new style encoder
+    ep = p.encoder_v2
+    ep.use_specaugment = True
+
+    elp = p.encoder_v2.lstm_block
+    elp.dropout.keep_prob = 0.8
+    elp.lstm_cell_size = 768
+    elp.num_lstm_layers = 6
+    elp.lstm_type = 'bidi'
+
+    ep.stacking_subsampler = None
+    ecp = ep.conv_subsampler
+    ecp.input_shape = [None, None, 80, 1]
+    return p
+
+@model_registry.RegisterSingleTaskModel
+class Grphm_DO_SpecAug_ConvStk_6x768Bidi_32batchsize(Librispeech960Grapheme):
+  def Train(self):
+    p = super().Train()
+    # OOM with 48
+    p.bucket_batch_limit = [32] * 8
+    return p
+
+  def Task(self):
+    p = super().Task()
+
+    # disable old style
+    p.encoder = None
+    p.input_stacking_tpl = None
+
+    # new style encoder
+    ep = p.encoder_v2
+    ep.use_specaugment = True
+
+    elp = p.encoder_v2.lstm_block
+    elp.dropout.keep_prob = 0.8
+    elp.lstm_cell_size = 768
+    elp.num_lstm_layers = 6
+    elp.lstm_type = 'bidi'
+
+    ep.stacking_subsampler = None
+    ecp = ep.conv_subsampler
+    ecp.input_shape = [None, None, 80, 1]
+    return p
