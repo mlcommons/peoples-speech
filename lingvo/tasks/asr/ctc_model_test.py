@@ -68,7 +68,7 @@ class AsrCtcModelTest(test_utils.TestCase):
       self.evaluate(tf.global_variables_initializer())
 
       ctc, _ = metrics['loss']
-      test_utils.CompareToGoldenSingleFloat(self, 76.710441, ctc.eval())
+      test_utils.CompareToGoldenSingleFloat(self, 76.710762, ctc.eval())
 
 
 if __name__ == '__main__':

@@ -55,6 +55,8 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
       p.source_max_length = 3000
       p.bucket_upper_bound = [639, 1062, 1275, 1377, 1449, 1506, 1563, 1710]
 
+    p.bucket_batch_limit = [96, 48, 48, 48, 48, 48, 48, 48]
+
     return p
 
   def SetBucketSizes(self, params, bucket_upper_bound, bucket_batch_limit):

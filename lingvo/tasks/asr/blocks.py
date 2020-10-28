@@ -14,28 +14,13 @@
 # limitations under the License.
 """Encoders for the speech model."""
 
-import collections
 import lingvo.compat as tf
 from lingvo.core import base_layer
 from lingvo.core import layers
 from lingvo.core import model_helper
 from lingvo.core import py_utils
 from lingvo.core import rnn_cell
-from lingvo.core import rnn_layers
-from lingvo.core import spectrum_augmenter
-from lingvo.core import summary_utils
 # from lingvo.core import conformer_layer
-
-from tensorflow.python.ops import inplace_ops
-
-""" 
-  All blocks receive
-    inputs: (B, T, F)
-    paddings: (B, T, F)
-  All blocks emit
-    encoded: (B, T, F)
-    padding: (B, T, F)
-"""
 
 
 class LSTMBlock(base_layer.BaseLayer):
@@ -66,7 +51,7 @@ class LSTMBlock(base_layer.BaseLayer):
     params_rnn_layers = []
     lstm_out_size = p.lstm_cell_size
 
-    assert p.lstm_type in {'bidi', 'fwd'}, "Only fwd, bidi allowed"
+    assert p.lstm_type in {'bidi', 'fwd'}, 'Only fwd, bidi allowed'
     if p.lstm_type == 'bidi':
       lstm_out_size *= 2
 
@@ -137,8 +122,9 @@ class LSTMBlock(base_layer.BaseLayer):
 
 
 class ConvolutionalDownsampler(base_layer.BaseLayer):
+  """ Use convolution with striding to achieve stacking effect """
 
-  @ classmethod
+  @classmethod
   def Params(cls):
     p = super().Params()
     p.Define('cnn_tpl', layers.ConvLayer.Params(),
@@ -180,16 +166,13 @@ class ConvolutionalDownsampler(base_layer.BaseLayer):
     assert len(conv_output_shape) == 4  # batch, height, width, channel.
     feat_dim = conv_output_shape[-1] * conv_output_shape[-2]
     self.conv_output_shape = (*conv_output_shape[:2], feat_dim, 1)
-    
+
   @property
   def output_dim(self):
     return self.conv_output_shape[2]
 
   def FProp(self, theta, inputs, paddings):
-    """ 
-    inputs: (B, T, F, C) 
-    paddings: (B, T)
-    """
+    # BTF1 -> BTF1
 
     conv_out = inputs
     out_padding = paddings
@@ -199,13 +182,13 @@ class ConvolutionalDownsampler(base_layer.BaseLayer):
                                                out_padding)
 
     b, t, f1, f2 = py_utils.GetShape(conv_out)
-    conv_out = tf.reshape(conv_out, [b, t, f1*f2, 1])
+    conv_out = tf.reshape(conv_out, [b, t, f1 * f2, 1])
     return conv_out, out_padding
 
 
 class InputStackingDownsampler(base_layer.BaseLayer):
 
-  @ classmethod
+  @classmethod
   def Params(cls):
     p = super().Params()
     p.Define('input_shape', [None, None, 80, 1],
@@ -224,26 +207,13 @@ class InputStackingDownsampler(base_layer.BaseLayer):
     return self.num_feats
 
   def FProp(self, theta, inputs, paddings):
+    # BTF1 -> BTF1
     inputs = tf.squeeze(inputs, axis=3)  # BTF1 -> BTF
     paddings = tf.expand_dims(paddings, axis=2)  # BT -> BT1
     encoded, padding = self.stacking.FProp(inputs, paddings)
-    # print(encoded, padding)
     encoded = tf.expand_dims(encoded, axis=3)  # BTF -> BTF1
     padding = tf.squeeze(padding, axis=2)  # BT1 -> BT
     return encoded, padding
-
-
-class JasperBlock(base_layer.BaseLayer):
-
-  @ classmethod
-  def Params(cls):
-    pass
-
-  def __init__(self, params):
-    pass
-
-  def FProp(self, theta, input, paddings):
-    pass
 
 
 # Lingvo's conformer models work with TF2.3 but TPUs have issues with TF2.3
@@ -308,7 +278,7 @@ class JasperBlock(base_layer.BaseLayer):
 
 class VocabProjectionBlock(base_layer.BaseLayer):
 
-  @ classmethod
+  @classmethod
   def Params(cls):
     p = super().Params()
     p.Define('input_dim', None, 'Required')
@@ -335,12 +305,11 @@ class VocabProjectionBlock(base_layer.BaseLayer):
       rp.params_init = py_utils.WeightInit.Uniform(0.01)
       self.CreateChild('lowpri_projection', rp.Copy())
 
-  def FProp(self, theta, input, paddings):
-    p = self.params
-    encoded = self.projection.FProp(theta.projection, input)
+  def FProp(self, theta, inputs, paddings):
+    encoded = self.projection.FProp(theta.projection, inputs)
 
     if hasattr(self, 'lowpri_projection'):
-      encoded2 = self.lowpri_projection.FProp(theta.lowpri_projection, input)
+      encoded2 = self.lowpri_projection.FProp(theta.lowpri_projection, inputs)
       encoded = tf.concat([encoded, encoded2], axis=2)
 
     return encoded, paddings

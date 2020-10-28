@@ -64,11 +64,9 @@ class AsrEncoder(base_layer.BaseLayer):
     p.Define('input_shape', [None, None, None, None],
              'Shape of the input. This should a TensorShape with rank 4.')
     p.Define('lstm_cell_size', 256, 'LSTM cell size for the RNN layer.')
-    p.Define('lstm_type', 'fwd', 'fwd or bidi')
     p.Define('num_cnn_layers', 2, 'Number of conv layers to create.')
     p.Define('num_conv_lstm_layers', 1, 'Number of conv lstm layers to create.')
     p.Define('num_lstm_layers', 3, 'Number of rnn layers to create')
-    p.Define('lstm_dropout', layers.DropoutLayer.Params(), 'Apply dropout between LSTM')
     p.Define('project_lstm_output', True,
              'Include projection layer after each encoder LSTM layer.')
     p.Define('pad_steps', 6,
@@ -80,8 +78,6 @@ class AsrEncoder(base_layer.BaseLayer):
              'Number of lstm layers to skip per residual connection.')
     p.Define('bidi_rnn_type', 'func', 'Options: func. '
              'func: BidirectionalFRNN. ')
-    p.Define('unidi_rnn_type', 'func', 'Options: func. '
-             'func: UnidirectionalFRNN. ')
     p.Define(
         'extra_per_layer_outputs', False,
         'Whether to output the encoding result from each encoder layer besides '
@@ -206,34 +202,23 @@ class AsrEncoder(base_layer.BaseLayer):
     params_proj_layers = []
     params_highway_skip_layers = []
     output_dim = self._first_lstm_input_dim
-    lstm_out_size = p.lstm_cell_size
-
-    assert p.lstm_type in {'bidi', 'fwd'}, "Only fwd, bidi allowed"
-    if p.lstm_type == 'bidi':
-      lstm_out_size *= 2
-
     for i in range(p.num_lstm_layers):
       input_dim = output_dim
       forward_p = p.lstm_tpl.Copy()
       forward_p.name = 'fwd_rnn_L%d' % i
       forward_p.num_input_nodes = input_dim
       forward_p.num_output_nodes = p.lstm_cell_size
-
-      if p.lstm_type == 'bidi':
-        backward_p = forward_p.Copy()
-        backward_p.name = 'bak_rnn_L%d' % i
-        rnn_p = self.CreateBidirectionalRNNParams(forward_p, backward_p)
-        rnn_p.name = 'brnn_L%d' % i
-      else:
-        rnn_p = self.CreateUnidirectionalRNNParams(forward_p)
-        rnn_p.name = 'rnn_L%d' % i
+      backward_p = forward_p.Copy()
+      backward_p.name = 'bak_rnn_L%d' % i
+      rnn_p = self.CreateBidirectionalRNNParams(forward_p, backward_p)
+      rnn_p.name = 'brnn_L%d' % i
       params_rnn_layers.append(rnn_p)
-      output_dim = lstm_out_size
+      output_dim = 2 * p.lstm_cell_size
 
       if p.project_lstm_output and (i < p.num_lstm_layers - 1):
         proj_p = p.proj_tpl.Copy()
-        proj_p.input_dim = lstm_out_size
-        proj_p.output_dim = lstm_out_size
+        proj_p.input_dim = 2 * p.lstm_cell_size
+        proj_p.output_dim = 2 * p.lstm_cell_size
         proj_p.name = 'proj_L%d' % i
         params_proj_layers.append(proj_p)
 
@@ -242,7 +227,7 @@ class AsrEncoder(base_layer.BaseLayer):
       if p.residual_start > 0 and residual_index >= 0 and p.highway_skip:
         highway_skip = p.highway_skip_tpl.Copy()
         highway_skip.name = 'enc_hwskip_%d' % len(params_highway_skip_layers)
-        highway_skip.input_dim = lstm_out_size
+        highway_skip.input_dim = 2 * p.lstm_cell_size
         params_highway_skip_layers.append(highway_skip)
       # Adds the stacking layer.
       if p.layer_index_before_stacking == i:
@@ -254,13 +239,9 @@ class AsrEncoder(base_layer.BaseLayer):
             p.stacking_layer_tpl.right_context)
         output_dim *= stacking_window_len
 
-    if p.lstm_dropout:
-      self.CreateChildren('dropout', p.lstm_dropout)
-
     self.CreateChildren('rnn', params_rnn_layers)
     self.CreateChildren('proj', params_proj_layers)
     self.CreateChildren('highway_skip', params_highway_skip_layers)
-
 
   @property
   def _use_functional(self):
@@ -273,9 +254,6 @@ class AsrEncoder(base_layer.BaseLayer):
   def CreateBidirectionalRNNParams(self, forward_p, backward_p):
     return model_helper.CreateBidirectionalRNNParams(self.params, forward_p,
                                                      backward_p)
-
-  def CreateUnidirectionalRNNParams(self, forward_p):
-    return model_helper.CreateUnidirectionalRNNParams(self.params, forward_p)
 
   def CreateConvLstmLayerParams(self):
     return rnn_layers.BidirectionalFRNN.Params()
@@ -301,12 +279,6 @@ class AsrEncoder(base_layer.BaseLayer):
     return first_lstm_input_dim, first_lstm_input_dim_padding
 
   @property
-  def output_dim(self):
-    # This does not assume projection layers etc .,
-    multiplier = 2 if self.params.lstm_type == 'bidi' else 1
-    return self.params.lstm_cell_size * multiplier
-
-  @property
   def supports_streaming(self):
     return False
 
@@ -315,17 +287,21 @@ class AsrEncoder(base_layer.BaseLayer):
 
   def FProp(self, theta, batch, state0=None):
     """Encodes source as represented by 'inputs' and 'paddings'.
+
     Args:
       theta: A NestedMap object containing weights' values of this
         layer and its children layers.
       batch: A NestedMap with fields:
+
         - src_inputs - The inputs tensor. It is expected to be of shape [batch,
           time, feature_dim, channels].
         - paddings - The paddings tensor. It is expected to be of shape [batch,
           time].
       state0: Recurrent input state. Not supported/ignored by this encoder.
+
     Returns:
       A NestedMap containing
+
       - 'encoded': a feature tensor of shape [time, batch, depth]
       - 'padding': a 0/1 tensor of shape [time, batch]
       - 'state': the updated recurrent state
@@ -440,13 +416,6 @@ class AsrEncoder(base_layer.BaseLayer):
       num_skips = 0
       for i in range(p.num_lstm_layers):
         rnn_out = self.rnn[i].FProp(theta.rnn[i], rnn_in, rnn_padding)
-
-        if p.lstm_type == 'fwd':
-          rnn_out, _ = rnn_out
-
-        if p.lstm_dropout:
-          rnn_out = self.dropout.FProp(theta.dropout, rnn_out)
-
         residual_index = i - p.residual_start + 1
         if p.residual_start > 0 and residual_index >= 0:
           if residual_index % p.residual_stride == 0:

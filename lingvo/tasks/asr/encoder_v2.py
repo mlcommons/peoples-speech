@@ -14,19 +14,11 @@
 # limitations under the License.
 """Encoders for the speech model."""
 
-import collections
 import lingvo.compat as tf
 from lingvo.core import base_layer
-from lingvo.core import layers
-from lingvo.core import model_helper
 from lingvo.core import py_utils
-from lingvo.core import rnn_cell
-from lingvo.core import rnn_layers
 from lingvo.core import spectrum_augmenter
-from lingvo.core import summary_utils
 from lingvo.tasks.asr import blocks
-
-from tensorflow.python.ops import inplace_ops
 
 
 class AsrEncoder(base_layer.BaseLayer):
@@ -64,23 +56,21 @@ class AsrEncoder(base_layer.BaseLayer):
       self.CreateChild('specaugment', p.specaugment_network.Copy())
 
     #####  handle sub-sampling ####
-    stack_out_feats = None
     has_conv_subsampler = p.conv_subsampler is not None
     has_stacking_subsampler = p.stacking_subsampler is not None
 
     assert has_conv_subsampler or has_stacking_subsampler, \
-        "Better have some sort of time subsampling"
+        'Better have some sort of time subsampling'
 
     assert not (has_conv_subsampler and has_stacking_subsampler), \
-        "Please use only one form of time subsampling"
+        'Please use only one form of time subsampling'
 
     if p.conv_subsampler:
-      self.CreateChild('conv_sub', p.conv_subsampler.Copy())
-      stack_out_feats = self.conv_sub.output_dim
-
-    if p.stacking_subsampler:
-      self.CreateChild('stack_sub', p.stacking_subsampler.Copy())
-      stack_out_feats = self.stack_sub.output_dim
+      self.CreateChild('sub', p.conv_subsampler.Copy())
+    else:
+      assert p.stacking_subsampler is not None, 'Need one stacking module'
+      self.CreateChild('sub', p.stacking_subsampler.Copy())
+    stack_out_feats = self.sub.output_dim
 
     ##### handle encoding #####
     if p.lstm_block is not None:
@@ -89,14 +79,6 @@ class AsrEncoder(base_layer.BaseLayer):
 
       assert p.lstm_block.input_feats == stack_out_feats
       self.CreateChildren('enc', p.lstm_block.Copy())
-
-    # else:
-    #   assert p.conformer_block is not None
-    #   if p.conformer_block.input_feats is None:
-    #     p.conformer_block.input_feats = stack_out_feats
-
-    #   assert p.conformer_block.input_feats == stack_out_feats
-    #   self.CreateChildren('enc', p.conformer_block.Copy())
 
   @property
   def output_dim(self):
@@ -139,13 +121,10 @@ class AsrEncoder(base_layer.BaseLayer):
         inputs, paddings = self.specaugment.FProp(theta.specaugment, inputs,
                                                   paddings)
 
-      if p.conv_subsampler is not None:
-        inputs, paddings = self.conv_sub.FProp(theta.conv_sub, inputs, paddings)
-
-      if p.stacking_subsampler is not None:
-        inputs, paddings = self.stack_sub.FProp(theta.stack_sub, inputs, paddings)
+      inputs, paddings = self.sub.FProp(theta.sub, inputs, paddings)
 
       encoded, padding = self.enc.FProp(theta.enc, inputs, paddings)
 
-    return py_utils.NestedMap(encoded=encoded, padding=padding,
+    return py_utils.NestedMap(encoded=encoded,
+                              padding=padding,
                               state=py_utils.NestedMap())
