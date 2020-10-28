@@ -61,12 +61,13 @@ py_test(
 
 py_library(
     name = "encoder",
-    srcs = ["encoder.py"],
+    srcs = ["encoder.py", "encoder_v2.py", "blocks.py"],
     srcs_version = "PY3",
     deps = [
         "//lingvo:compat",
         "//lingvo/core:base_layer",
         "//lingvo/core:layers",
+        # "//lingvo/core:conformer_layer",
         "//lingvo/core:model_helper",
         "//lingvo/core:plot",
         "//lingvo/core:py_utils",
@@ -242,6 +243,30 @@ py_test(
         ":decoder",
         ":input_generator",
         ":model",
+        ":model_test_input_generator",
+        "//lingvo:compat",
+        "//lingvo/core:base_layer",
+        "//lingvo/core:cluster_factory",
+        "//lingvo/core:py_utils",
+        "//lingvo/core:schedule",
+        "//lingvo/core:summary_utils",
+        "//lingvo/core:test_helper",
+        "//lingvo/core:test_utils",
+        # Implicit numpy dependency.
+    ],
+)
+
+py_test(
+    name = "ctc_model_test",
+    srcs = ["ctc_model_test.py"],
+    data = ["//lingvo/tools/testdata:audio_data"],
+    python_version = "PY3",
+    shard_count = 1,
+    srcs_version = "PY3",
+    deps = [
+        ":decoder",
+        ":input_generator",
+        ":ctc_model",
         ":model_test_input_generator",
         "//lingvo:compat",
         "//lingvo/core:base_layer",

@@ -4,7 +4,6 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - _libgcc_mutex=0.1=conda_forge
   - _openmp_mutex=4.5=0_gnu
   - alsa-lib=1.1.5=h516909a_1002
   - aria2=1.34.0=0
@@ -15,18 +14,12 @@ dependencies:
   - certifi=2020.4.5.1=py37hc8dfbb8_0
   - fontconfig=2.13.1=h1056068_1002
   - freetype=2.10.2=he06d7ca_0
-  - gcc_impl_linux-64=7.5.0=hd420e75_6
-  - gfortran_impl_linux-64=7.5.0=hdf63c60_6
   - giflib=5.2.1=h516909a_2
-  - gxx_impl_linux-64=7.5.0=hdf63c60_6
   - icu=67.1=he1b5a44_0
   - jpeg=9c=h14c3975_1001
   - lcms2=2.9=hbd6801e_1
   - ld_impl_linux-64=2.34=h53a641e_5
   - libffi=3.2.1=he1b5a44_1007
-  - libgcc=7.2.0=h69d50b8_2
-  - libgcc-ng=9.2.0=h24d8f2e_2
-  - libgfortran-ng=7.5.0=hdf63c60_6
   - libgomp=9.2.0=h24d8f2e_2
   - libiconv=1.15=h516909a_1006
   - libpng=1.6.37=hed695b0_1

@@ -433,9 +433,18 @@ REGISTER_OP("AsciiToTokenId")
     .Output("token_ids: int32")
     .Output("target_ids: int32")
     .Output("paddings: float")
-    .Attr("append_eos: bool = true")
-    .Attr("maxlen: int = 300")
-    .Attr("pad_to_maxlen: bool = true")
+     .Attr("append_eos: bool = true")                                                                                                                                                                       
+     .Attr("maxlen: int = 300")                                                                                                                                                                             
+     .Attr("pad_to_maxlen: bool = true")                                                                                                                                                                    
+    .SetShapeFn([](shape_inference::InferenceContext* c){                                                                                                                                                  
+      auto batch_size = c->Dim(c->input(0), 0);                                                                                                                                                            
+      int maxlen;                                                                                                                                                                                          
+      TF_RETURN_IF_ERROR(c->GetAttr("maxlen", &maxlen));                                                                                                                                                   
+      c->set_output(0, c->Matrix(batch_size, maxlen));                                                                                                                                                     
+      c->set_output(1, c->Matrix(batch_size, maxlen));                                                                                                                                                     
+      c->set_output(2, c->Matrix(batch_size, maxlen));                                                                                                                                                     
+      return Status::OK();                                                                                                                                                                                 
+    })   
     .Doc(R"doc(
 Converts ASCII label strings into token ids.
 
@@ -504,9 +513,13 @@ delimiter: The delimiter to split the labels to tokens by.
 )doc");
 
 REGISTER_OP("IdToAscii")
-    .Input("token_ids: int32")
-    .Input("seq_lengths: int32")
-    .Output("sequence: string")
+     .Input("token_ids: int32")                                                                                                                                                                             
+     .Input("seq_lengths: int32")                                                                                                                                                                           
+     .Output("sequence: string")                                                                                                                                                                            
+    .SetShapeFn([](shape_inference::InferenceContext* c) {                                                                                                                                                 
+      c->set_output(0, c->Vector(c->Dim(c->input(0), 0)));                                                                                                                                                 
+      return Status::OK();                                                                                                                                                                                 
+    }) 
     .Doc(R"doc(
 Converts sequences from token ids to actual ASCII tokens.
 
