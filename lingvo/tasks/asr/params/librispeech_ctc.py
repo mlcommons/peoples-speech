@@ -98,21 +98,7 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
     p = ctc_model.CTCModel.Params()
     p.name = 'librispeech'
 
-    # Initialize encoder params.
-    ep = p.encoder
-    ep.use_specaugment = False
-    ep.input_shape = [None, None, 80, 1]
-    ep.pad_steps = 0
-    ep.lstm_cell_size = 1024
-    ep.num_lstm_layers = 5
-    ep.lstm_type = 'fwd'
-    ep.cnn_tpl.params_init = py_utils.WeightInit.Gaussian(0.001)
-    # Disable conv & conv LSTM layers.
-    ep.project_lstm_output = False
-    ep.num_cnn_layers = 0
-    ep.conv_filter_shapes = []
-    ep.conv_filter_strides = []
-    ep.num_conv_lstm_layers = 0
+    # No default encoder params in this class.
 
     tp = p.train
     tp.learning_rate = 1e-4
@@ -183,13 +169,6 @@ class Librispeech960Grapheme(Librispeech960Base):
     p = super().Task()
     p.vocab_size = self.GRAPHEME_VOCAB_SIZE
     p.blank_index = self.BLANK_IDX
-
-    # input_stacking
-    p.encoder.input_shape = [None, None, 240, 1]
-    sp = p.input_stacking_tpl
-    sp.left_context = 1
-    sp.right_context = 1
-    sp.stride = 3  # L + 1 + R
 
     return p
 
