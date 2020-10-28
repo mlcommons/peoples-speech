@@ -20,13 +20,13 @@ if [[ "$1" == *"-tpu"* ]]; then
     LOGDIR="${GS_BASE}/${FLDRDATE}/${CLS}"
 
     name=$1
-    ip_addr=$(../ctpu st -name ${name} --details | grep "TPU IP" | grep -oP "10.*")
+    ip_addr=$(ctpu st -name ${name} --details | grep "TPU IP" | grep -oP "10.*")
 
     if [ -z "$ip_addr" ]; then
         echo "Couldnt find TPU, creating a new one"
-        ../ctpu up -name ${name} -tpu-only -tpu-size v3-8 -tf-version 2.2
-        ../ctpu st -name ${name} --details | grep "TPU IP" | grep -oP "10.*"
-        ip_addr=$(../ctpu st -name ${name} --details | grep "TPU IP" | grep -oP "10.*")
+        ctpu up -name ${name} -tpu-only -tpu-size v3-8 -tf-version 2.2
+        ctpu st -name ${name} --details | grep "TPU IP" | grep -oP "10.*"
+        ip_addr=$(ctpu st -name ${name} --details | grep "TPU IP" | grep -oP "10.*")
     fi
 
     TPUIP=$ip_addr
