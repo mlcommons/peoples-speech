@@ -1,3 +1,5 @@
 bazel-*
 *.pyc
 *.log
+*.log.*
+settings.json

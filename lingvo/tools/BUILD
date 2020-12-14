@@ -181,6 +181,18 @@ py_binary(
     ],
 )
 
+py_binary(
+    name = "create_peoples_speech_asr_features",
+    srcs = ["create_peoples_speech_asr_features.py"],
+    python_version = "PY3",
+    srcs_version = "PY3",
+    deps = [
+        ":audio_lib",
+        "//lingvo:compat",
+    ],
+)
+
+
 lingvo_cc_binary(
     name = "generate_proto_def",
     srcs = ["generate_proto_def.cc"],

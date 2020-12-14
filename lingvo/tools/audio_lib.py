@@ -15,7 +15,9 @@
 # ==============================================================================
 """Audio library."""
 
+import shlex
 import subprocess
+from tempfile import NamedTemporaryFile
 import lingvo.compat as tf
 from lingvo.core import py_utils
 from lingvo.tasks.asr import frontend as asr_frontend
@@ -29,6 +31,17 @@ from tensorflow.python.ops import gen_audio_ops as audio_ops  # pylint: disable=
 # While the latter could technically support FLAC, it does
 # not. It also adds an extra dependency on ffmpeg.
 
+def DecodeToWav(input_bytes, fmt):
+  with NamedTemporaryFile() as fh: 
+    cmd = f'sox -t {fmt} - -t wav --channels 1 --rate 16000 --encoding signed --bits 16 {fh.name}'
+    p = subprocess.Popen(shlex.split(cmd),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE)
+    _, err = p.communicate(input=input_bytes)
+    assert p.returncode == 0, err
+    out = fh.read()
+  return out
 
 def DecodeFlacToWav(input_bytes):
   """Decode a FLAC byte string to WAV."""
@@ -53,6 +66,29 @@ def DecodeWav(input_bytes):
   """
   result = tf.audio.decode_wav(input_bytes)
   return result.sample_rate, result.audio
+
+def read_wave_via_scipy(string_bytes):
+  from scipy.io.wavfile import read as wavread
+  import io
+  import numpy as np
+  b = string_bytes.numpy()
+  sample_rate, wav_file = wavread(io.BytesIO(b))
+  wav_file = wav_file[:, np.newaxis]
+  assert wav_file.dtype == np.int16
+  normalized = wav_file.astype(np.float32) * (1.0 / (1 << 15))
+  assert normalized.max() <= 1.0
+  assert normalized.min() >= -1.0
+  return sample_rate, normalized
+
+"""
+This should be bit-for-bit compatible with the output of DecodeWav. However, 
+there is no unit-test for that at the moment.
+"""
+def DecodeWavPyFunc(input_bytes):
+  sample_rate, audio = tf.py_function(read_wave_via_scipy, [input_bytes], [tf.int32, tf.float32])
+  sample_rate = tf.ensure_shape(sample_rate, [])
+  audio = tf.ensure_shape(audio, [None, 1])
+  return sample_rate, audio
 
 
 def AudioToMfcc(sample_rate, audio, window_size_ms, window_stride_ms,

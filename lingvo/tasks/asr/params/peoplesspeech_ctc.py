@@ -1,3 +1,5 @@
+import os
+
 from lingvo import model_registry
 from lingvo.core import base_model_params
 from lingvo.core import datasource
@@ -9,18 +11,18 @@ from lingvo.tasks.asr import input_generator
 from lingvo.tasks.asr import ctc_model
 
 @model_registry.RegisterSingleTaskModel
-class Librispeech960Base(base_model_params.SingleTaskModelParams):
-  """Base parameters for Librispeech 960 hour task."""
+class Peoplesspeech100Base(base_model_params.SingleTaskModelParams):
+  """Base parameters for Peoplesspeech 100k hour task."""
 
   def _CommonInputParams(self, is_eval):
-    """Input generator params for Librispeech."""
+    """Input generator params for Peoplesspeech."""
     p = input_generator.AsrInput.Params()
 
     # Insert path to the base directory where the data are stored here.
     # Generated using scripts in lingvo/tasks/asr/tools.
     p.file_datasource = datasource.PrefixedDataSource.Params()
     p.file_datasource.file_type = 'tfrecord'
-    p.file_datasource.file_pattern_prefix = 'gs://the-peoples-speech-west-europe/Librispeech'
+    p.file_datasource.file_pattern_prefix = 'gs://the-peoples-speech-west-europe/PeoplesSpeech/v0.7.1/'
 
     p.frame_size = 80
     # Interesting. First I've heard of this.
@@ -54,40 +56,26 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
   def Train(self):
     p = self._CommonInputParams(is_eval=False)
     p.file_datasource.file_pattern = 'train/train.tfrecords-*'
-    p.num_samples = 281241
+    p.num_samples = 2292260
     return p
 
   def Dev(self):
     p = self._CommonInputParams(is_eval=True)
     p.file_datasource.file_pattern = (
-        'devtest/dev-clean.tfrecords-00000-of-00001')
-    p.num_samples = 2703
-    return p
-
-  def Devother(self):
-    p = self._CommonInputParams(is_eval=True)
-    p.file_datasource.file_pattern = (
-        'devtest/dev-other.tfrecords-00000-of-00001')
-    p.num_samples = 2864
+        'devtest/dev.tfrecords-00000-of-00001')
+    p.num_samples = 3000
     return p
 
   def Test(self):
     p = self._CommonInputParams(is_eval=True)
     p.file_datasource.file_pattern = (
-        'devtest/test-clean.tfrecords-00000-of-00001')
-    p.num_samples = 2620
-    return p
-
-  def Testother(self):
-    p = self._CommonInputParams(is_eval=True)
-    p.file_datasource.file_pattern = (
-        'devtest/test-other.tfrecords-00000-of-00001')
-    p.num_samples = 2939
+        'devtest/test.tfrecords-00000-of-00001')
+    p.num_samples = 3000
     return p
 
   def Task(self):
     p = ctc_model.CTCModel.Params()
-    p.name = 'librispeech'
+    p.name = 'peoplesspeech'
 
     # No default encoder params in this class.
 
@@ -117,7 +105,7 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
 
 
 @model_registry.RegisterSingleTaskModel
-class Librispeech960Grapheme(Librispeech960Base):
+class Peoplesspeech100Grapheme(Peoplesspeech100Base):
 
   GRAPHEME_TARGET_SEQUENCE_LENGTH = 620
   GRAPHEME_VOCAB_SIZE = 76
@@ -144,16 +132,8 @@ class Librispeech960Grapheme(Librispeech960Base):
     p = super().Dev()
     return self.InitializeTokenizer(params=p)
 
-  def Devother(self):
-    p = super().Devother()
-    return self.InitializeTokenizer(params=p)
-
   def Test(self):
     p = super().Test()
-    return self.InitializeTokenizer(params=p)
-
-  def Testother(self):
-    p = super().Testother()
     return self.InitializeTokenizer(params=p)
 
   def Task(self):
@@ -165,7 +145,7 @@ class Librispeech960Grapheme(Librispeech960Base):
 
 
 @model_registry.RegisterSingleTaskModel
-class Grphm_DO_SpecAug_ConvStk_6x512Bidi(Librispeech960Grapheme):
+class Grphm_DO_SpecAug_ConvStk_6x512Bidi(Peoplesspeech100Grapheme):
 
   def Task(self):
     p = super().Task()
@@ -186,7 +166,7 @@ class Grphm_DO_SpecAug_ConvStk_6x512Bidi(Librispeech960Grapheme):
 
 
 @model_registry.RegisterSingleTaskModel
-class Grphm_DO_SpecAug_ConvStk_6x512Bidi_40batchsize(Librispeech960Grapheme):
+class Grphm_DO_SpecAug_ConvStk_6x512Bidi_40batchsize(Peoplesspeech100Grapheme):
 
   def Train(self):
     p = super().Train()

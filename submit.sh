@@ -1,19 +1,13 @@
 export OPENBLAS_NUM_THREADS="1"
 export MKL_NUM_THREADS="1"
 
-#$1 = tpu/gpu (def tpu)
-#$2 = train + eval_dev or train only (def train)
-#$3 = class_name (def Librispeech960Base)
 
-HOME_BASE="/home/anjali/data/mlcommons/librispeech/models/wer"
-# GS_BASE="gs://the-peoples-speech-west-europe/ag/ctc_librispeech/training_logs"
-GS_BASE="gs://the-peoples-speech-west-europe/"
+HOME_BASE="${HOME}/data/PeoplesSpeech/models"
+GS_BASE="gs://the-peoples-speech-west-europe/PeoplesSpeech/ag_training"
 
 DATE=$(date '+log_%Y_%m_%d_%H')
-# FLDRDATE=$(date '+%m%d/%H%M')
-# FLDRDATE=$(date '+%m%d')
-FLDRDATE=$4
 CLS=$3
+FLDRDATE=$4
 
 # if tpu- in $1
 if [[ "$1" == *"-tpu"* ]]; then
@@ -29,20 +23,22 @@ if [[ "$1" == *"-tpu"* ]]; then
         ip_addr=$(ctpu st -name ${name} --details | grep "TPU IP" | grep -oP "10.*")
     fi
 
-    TPUIP=$ip_addr
+    DEVICE="--tpu=grpc://${TPUIP}:8470"
 
 elif [ $1 == "gpu" ]; then
     export CUDA_VISIBLE_DEVICES="0"
-    # LOGDIR="/home/anjali/data/librispeech_models/wer/${DATE}"
-    LOGDIR="${HOME_BASE}/${DATE}"
+    DEVICE="--run_locally=gpu"
+    LOGDIR="${HOME_BASE}/${FLDRDATE}"
 else
     export CUDA_VISIBLE_DEVICES=""
-    LOGDIR="${GS_BASE}/${FLDRDATE}/${CLS}"
-    TPUIP=$5
+    LOGDIR="${HOME_BASE}/${FLDRDATE}"
+    DEVICE="--run_locally=cpu"
 fi
 
 if [ $2 == "decode" ]; then
-    OPERATION="decoder_dev"
+    OPERATION="decoder_Dev"
+    LOGDIR="${LOGDIR}/${CLS}"
+
 elif [ $2 == "trainer" ]; then
     OPERATION="trainer_client"
 else
@@ -51,12 +47,7 @@ fi
 
 bazel run //lingvo:trainer -- --logdir=${LOGDIR} \
     --mode=sync \
-    --model=asr.librispeech_ctc.${CLS} \
+    --model=asr.peoplesspeech_ctc.${CLS} \
     --logtostderr \
-    --tpu=grpc://${TPUIP}:8470 \
+    ${DEVICE} \
     --job=$OPERATION 2>&1 | tee logs/${CLS}_${DATE}.log
-
-    # ./submit.sh tpu_name executor class_model_name fldr_name
-    # ./submit.sh ag-tpu1-1019 executor Grphm_DO_SpecAug_InptStack_6x1024
-    # ./example_ctc_tpu_master.sh ag-tpu3-1019 executor Grphm_DO_SpecAug_ConvStack_6x1024 1020
-    # ./example_ctc_tpu_master.sh ag-tpu2-1019 executor Grphm_DO_SpecAug_InptStack_6x512Bidi 1020
