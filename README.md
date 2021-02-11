@@ -1,4 +1,4 @@
-# Lingvo
+# People's Speech Data Pipelines (Originally a fork of Lingvo)
 
 [![PyPI](https://badge.fury.io/py/lingvo.svg)](https://badge.fury.io/py/lingvo)
 [![Python](https://img.shields.io/pypi/pyversions/lingvo)](https://badge.fury.io/py/tensorflow)
