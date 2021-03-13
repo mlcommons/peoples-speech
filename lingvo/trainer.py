@@ -124,6 +124,7 @@ tf.flags.DEFINE_integer('evaler_gpus', 0, 'Number of gpus to use per replica.')
 tf.flags.DEFINE_string('decoder_job', '/job:decoder', 'Job name')
 tf.flags.DEFINE_integer('decoder_replicas', 0, 'Number of replicas.')
 tf.flags.DEFINE_integer('decoder_gpus', 0, 'Number of gpus to use per replica.')
+tf.flags.DEFINE_integer('decoder_tpus', 0, 'Number of tpus to use per replica.')
 
 tf.flags.DEFINE_integer(
     'inference_graph_random_seed', None,
@@ -1109,6 +1110,7 @@ class Decoder(base_runner.BaseRunner):
     super().__init__(*args, **kwargs)
     self._job_name = 'decoder_' + decoder_type
     self.params.cluster.do_eval = True
+    # Here we go!
     self._cluster = cluster_factory.Cluster(self.params.cluster)
     self._decoder_dir = GetDecoderDir(self._logdir, self._job_name,
                                       self._model_task_name)
@@ -1144,6 +1146,7 @@ class Decoder(base_runner.BaseRunner):
       self._initialize_tables = tf.tables_initializer()
       self._initialize_local_vars = tf.local_variables_initializer()
       # No queues are allowed for decoder models.
+      # Ugh, why???
       self.enqueue_ops = tf.get_collection(py_utils.ENQUEUE_OPS)
       assert not self.enqueue_ops
 
@@ -1326,6 +1329,7 @@ class RunnerManager:
   Evaler = Evaler
   Decoder = Decoder
   ExecutorTpu = executor.ExecutorTpu
+  TpuDecoder = Decoder # TODO: Don't just fall back to Decoder!
 
   # pylint: enable=invalid-name
 
@@ -1376,7 +1380,10 @@ class RunnerManager:
     """Returns params for job `job_name` on the dataset `dataset_name`."""
     # Get the current cluster and update its params from flags.
     cluster = cluster_factory.Current()
+    print("GALVEZ:job_name=", job_name)
     self.UpdateClusterParamsFromFlags(cluster.params, job_name)
+    print("GALVEZ:job_name=", cluster.params.job)
+    import sys; sys.stdout.flush()
     with cluster_factory.Cluster(cluster.params):
       try:
         cfg = self.model_registry.GetParams(self._model_name, dataset_name)
@@ -1419,6 +1426,11 @@ class RunnerManager:
         assert ',' not in job_specs[0], 'Only single machine supported'
         FLAGS.evaler_job = '/job:%s' % job
         FLAGS.evaler_replicas = 1
+      if job.startswith('tpu_decoder_'):
+        assert len(job_specs) == 1, 'TPU Decoder jobs must run on their own'
+        assert ',' not in job_specs[0], 'Only single machine supported'
+        FLAGS.decoder_job = '/job:%s' % job
+        FLAGS.decoder_replicas = 1
     if FLAGS.mode == 'sync' and FLAGS.job in ('controller', 'trainer_client',
                                               'worker', 'executor_tpu'):
       FLAGS.worker_job = '/job:worker'
@@ -1440,8 +1452,9 @@ class RunnerManager:
       FLAGS.job = 'trainer_client'
 
     # Is it possible that TPU just simply won't do inference?
-    if FLAGS.job not in ('trainer_client', 'executor_tpu'):
-      raise ValueError('Only trainer_client and executor_tpu jobs are '
+    if (FLAGS.job not in ('trainer_client', 'executor_tpu')
+        and not FLAGS.job.startswith('tpu_decoder_')):
+      raise ValueError('Only trainer_client, executor_tpu, and tpu_decoder jobs are '
                        'supported on TPU.')
 
     cluster_resolver = tf.distribute.cluster_resolver.TPUClusterResolver(
@@ -1459,6 +1472,9 @@ class RunnerManager:
     FLAGS.worker_num_tpu_hosts = len(cluster_spec_dict[FLAGS.job])
     FLAGS.worker_tpus = (
         cluster_resolver.num_accelerators()['TPU'] * FLAGS.worker_num_tpu_hosts)
+    FLAGS.decoder_tpus = (
+        cluster_resolver.num_accelerators()['TPU'] * FLAGS.worker_num_tpu_hosts)
+    FLAGS.decoder_replicas = 1
     FLAGS.ps_job = FLAGS.worker_job
     FLAGS.ps_replicas = FLAGS.worker_replicas
 
@@ -1474,7 +1490,7 @@ class RunnerManager:
     cluster.mode = FLAGS.mode
     cluster.job = job_name
     cluster.task = FLAGS.task
-    cluster.do_eval = job_name in ['evaler', 'decoder']
+    cluster.do_eval = job_name in ['evaler', 'decoder', 'tpu_decoder']
 
     cluster.controller.name = FLAGS.controller_job
     cluster.controller.gpus_per_replica = FLAGS.controller_gpus
@@ -1503,9 +1519,16 @@ class RunnerManager:
     cluster.evaler.replicas = FLAGS.evaler_replicas
     cluster.evaler.gpus_per_replica = FLAGS.evaler_gpus
 
+    # There we go!
     cluster.decoder.name = FLAGS.decoder_job
+    # When is this set?
     cluster.decoder.replicas = FLAGS.decoder_replicas
     cluster.decoder.gpus_per_replica = FLAGS.decoder_gpus
+    # I hope this wowkrs
+    cluster.decoder.tpus_per_replica = FLAGS.decoder_tpus
+
+    # Consider adding:
+    cluster.decoder.num_tpu_hosts = FLAGS.worker_num_tpu_hosts
 
     cluster.add_summary = FLAGS.add_summary
 
@@ -1513,6 +1536,7 @@ class RunnerManager:
     """Create a runner."""
     evaler_job_name_prefix = 'evaler_'
     decoder_job_name_prefix = 'decoder_'
+    tpu_decoder_job_name_prefix = 'tpu_decoder_'
 
     tf.logging.info('Job %s start', job)
     common_args = (model_task_name, logdir, tf_master, trial)
@@ -1533,12 +1557,19 @@ class RunnerManager:
       cfg = self.GetParamsForDataset('evaler', dataset_name)
       return self.Evaler(dataset_name.lower(), cfg, *common_args)
     elif job.startswith(decoder_job_name_prefix):
+      # so decoder_Inference means that dataset is "Inference"
+      # Currently here
       dataset_name = job[len(decoder_job_name_prefix):]
       cfg = self.GetParamsForDataset('decoder', dataset_name)
       return self.Decoder(dataset_name.lower(), cfg, *common_args)
+    elif job.startswith(tpu_decoder_job_name_prefix):
+      dataset_name = job[len(tpu_decoder_job_name_prefix):]
+      cfg = self.GetParamsForDataset('tpu_decoder', dataset_name)
+      return self.TpuDecoder(dataset_name.lower(), cfg, *common_args)
     elif job in ('ps', 'worker', 'input'):
       self._tf_server.join()
     elif job == 'executor_tpu':
+      # Need to base TpuDecoder on ExecutorTpu
       ps_cfg_dict, train_cfg = self.GetExecutorParams()
       return self.ExecutorTpu(train_cfg, ps_cfg_dict, model_task_name, logdir,
                               tf_master)

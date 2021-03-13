@@ -156,6 +156,7 @@ class _ModelRegistryHelper:
       tf.logging.info('Applying params overrides from file %s:\n%s\nTo:\n%s',
                       FLAGS.model_params_file_override, params_override,
                       cfg.ToText())
+      # Okay, there we go. This is where parameters are applied
       cfg.FromText(params_override)
 
   @classmethod

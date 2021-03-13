@@ -7,6 +7,7 @@ from lingvo.core import schedule
 from lingvo.core import tokenizers
 from lingvo.tasks.asr import input_generator
 from lingvo.tasks.asr import ctc_model
+from lingvo.tasks.asr import frontend as asr_frontend
 
 @model_registry.RegisterSingleTaskModel
 class Librispeech960Base(base_model_params.SingleTaskModelParams):
@@ -29,8 +30,6 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
     p.pad_to_max_seq_length = True
     p.file_random_seed = 0
     p.file_buffer_size = 10000
-    # N1 standard 2 has only 2 vCPUs, so we may want a larger machine.
-    # https://cloud.google.com/compute/docs/machine-types#n1_standard_machine_types
     p.file_parallelism = 16
 
     if is_eval:
@@ -89,6 +88,9 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
     p = ctc_model.CTCModel.Params()
     p.name = 'librispeech'
 
+    ep = p.encoder_v2
+    ep.use_stacking_subsampler = True
+
     # No default encoder params in this class.
 
     tp = p.train
@@ -107,6 +109,8 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
 
     return p
 
+  # From what I can tell, this is used only by ExecutorTpu. So perhaps
+  # I could change it such that it runs only on the Train set... Right?
   def ProgramSchedule(self):
     return program.SimpleProgramScheduleForTask(
         train_dataset_name='Train',
@@ -114,6 +118,87 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
         eval_dataset_names=['Dev', 'Train'],
         eval_steps_per_loop=50,
         decode_steps_per_loop=0)
+
+
+# gs://the-peoples-speech-west-europe/forced-aligner/vad-segments-dump/Nov_6_2020/ALL_CAPTIONED_DATA_002/part-06162-96fe2b35-f15e-46af-9002-dce290861d5d-c000.tfrecord
+@model_registry.RegisterSingleTaskModel
+class TpuDecoderLibrispeech960Base(Librispeech960Base):
+
+  SAMPLES_PER_SECOND = 16_000
+
+  def _InferenceInputParams(self):
+    """
+    Reads in a raw waveform, where samples are float32 and in the range[-1,1]
+    """
+    p = input_generator.RawAsrInputIntegerUttIds.Params()
+
+    p.file_datasource = datasource.PrefixedDataSource.Params()
+    p.file_datasource.file_type = 'tfrecord'
+    p.file_datasource.file_pattern_prefix = 'REPLACE_ME'
+    p.file_datasource.file_pattern = '*.tfrecord'
+
+    p.frame_size = 1
+    p.append_eos_frame = False
+
+    p.pad_to_max_seq_length = True
+    p.file_random_seed = 0
+    p.file_buffer_size = 1
+    # Set this to whatever
+    p.file_parallelism = 1
+
+    # 15 seconds is our maximum utterance size
+    max_sample_length = 15 * type(self).SAMPLES_PER_SECOND
+    # TODOL: change to max_sample_length
+    p.source_max_length = max_sample_length
+    p.bucket_upper_bound = [p.source_max_length]
+
+    p.bucket_batch_limit = [1]
+
+    return p
+
+  def Dev(self):
+    return self._InferenceInputParams()
+
+  def Task(self):
+    p = super().Task()
+    # This is copied from audio_lib.py. Ideally these configurations
+    # would be split off into a function, but I want to minimize merge
+    # conflicts with lingvo for now. Of course, a merge conflict would
+    # indicate that parameters had changed, so my choice is clearly
+    # wrong, but oh well.
+    p.frontend = asr_frontend.MelAsrFrontend.Params()
+    pf = p.frontend
+    pf.sample_rate = float(type(self).SAMPLES_PER_SECOND)
+    pf.frame_size_ms = 25.
+    pf.frame_step_ms = 10.
+    pf.num_bins = 80
+    pf.lower_edge_hertz = 125.
+    pf.upper_edge_hertz = 7600.
+    pf.preemph = 0.97
+    pf.noise_scale = 0.
+    pf.pad_end = False
+
+    p.inference_compute_only_log_softmax = True
+    # pe = p.encoder_v2
+    # pe.inference_compute_only_log_softmax = True
+    return p
+
+  def ProgramSchedule(self):
+    # return program.SimpleProgramScheduleForTask(
+    #     train_dataset_name='Train',
+    #     train_steps_per_loop=0,
+    #     eval_dataset_names=['Dev'],
+    #     eval_steps_per_loop=0,
+    #     decode_steps_per_loop=1)
+    number_of_inputs = 1633
+    batch_size = 8
+    import math
+    decode_steps_per_loop = math.ceil(number_of_inputs / batch_size)
+    return program.DecodeProgramSchedule(
+      eval_dataset_names=['Dev'],
+      decode_steps_per_loop=decode_steps_per_loop,  # 1,
+      # I may want to reevaluate this
+      experimental_decoder=True)
 
 
 @model_registry.RegisterSingleTaskModel
@@ -172,6 +257,8 @@ class Grphm_DO_SpecAug_ConvStk_6x512Bidi(Librispeech960Grapheme):
 
     ep = p.encoder_v2
     ep.use_specaugment = True
+    ep.use_conv_subsampler = True
+    ep.use_stacking_subsampler = False
 
     elp = p.encoder_v2.lstm_block
     elp.dropout.keep_prob = 0.8
@@ -199,6 +286,8 @@ class Grphm_DO_SpecAug_ConvStk_6x512Bidi_40batchsize(Librispeech960Grapheme):
 
     ep = p.encoder_v2
     ep.use_specaugment = True
+    ep.use_conv_subsampler = True
+    ep.use_stacking_subsampler = False
 
     elp = p.encoder_v2.lstm_block
     elp.dropout.keep_prob = 0.8

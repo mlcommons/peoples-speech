@@ -4,3 +4,9 @@
 [submodule "third_party/internetarchive"]
 	path = third_party/internetarchive
 	url = git@github.com:galv/internetarchive.git
+[submodule "third_party/100KSpeechAligner"]
+	path = third_party/100KSpeechAligner
+	url = git@github.com:agnusmaximus/100KSpeechAligner.git
+[submodule "DeepSpeech"]
+	path = third_party/DeepSpeech
+	url = git@github.com:mozilla/DeepSpeech.git

@@ -1,3 +1,5 @@
 # TODO(hinsu): Set crosstool_top option for cuda when there are GPU ops using
 # cuda. Currently there are no such ops.
 build:cuda --define=using_cuda=true
+build --cxxopt='-std=c++14'
+build -c opt

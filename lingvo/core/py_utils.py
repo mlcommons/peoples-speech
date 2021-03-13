@@ -1074,7 +1074,7 @@ class NestedMap(dict):
 
   def Pack(self, lst):
     """Returns a copy of this with each value replaced by a value in lst."""
-    assert len(self.FlattenItems()) == len(lst)
+    assert len(self.FlattenItems()) == len(lst), f"{lst} vs {self.FlattenItems()}"
     v_iter = iter(lst)
     return self._RecursiveMap(lambda unused_k, unused_v: next(v_iter))
 

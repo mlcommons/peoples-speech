@@ -43,6 +43,7 @@ def DecodeToWav(input_bytes, fmt):
     out = fh.read()
   return out
 
+
 def DecodeFlacToWav(input_bytes):
   """Decode a FLAC byte string to WAV."""
   p = subprocess.Popen(
@@ -118,6 +119,7 @@ def ExtractLogMelFeatures(wav_bytes_t):
     every three frames.
   """
 
+  # We want to use these parameters exactly.
   def _CreateAsrFrontend():
     """Parameters corresponding to default ASR frontend."""
     p = asr_frontend.MelAsrFrontend.Params()

@@ -40,6 +40,8 @@ class AsrEncoder(base_layer.BaseLayer):
              'Convolution subsampling layer params')
     p.Define('stacking_subsampler', blocks.InputStackingDownsampler.Params(),
              'Stacking subsampling layer params')
+    p.Define('use_conv_subsampler', False, 'Enable p.conv_subsampler')
+    p.Define('use_stacking_subsampler', False, 'Enable p.stacking_subsampler')
 
     # actual encoding layers, use one of these
     p.Define('lstm_block', blocks.LSTMBlock.Params(), 'LSTM layer params')
@@ -56,19 +58,14 @@ class AsrEncoder(base_layer.BaseLayer):
       self.CreateChild('specaugment', p.specaugment_network.Copy())
 
     #####  handle sub-sampling ####
-    has_conv_subsampler = p.conv_subsampler is not None
-    has_stacking_subsampler = p.stacking_subsampler is not None
 
-    assert has_conv_subsampler or has_stacking_subsampler, \
-        'Better have some sort of time subsampling'
-
-    assert not (has_conv_subsampler and has_stacking_subsampler), \
+    assert not (p.use_conv_subsampler and p.use_stacking_subsampler), \
         'Please use only one form of time subsampling'
 
-    if p.conv_subsampler:
+    if p.use_conv_subsampler:
       self.CreateChild('sub', p.conv_subsampler.Copy())
     else:
-      assert p.stacking_subsampler is not None, 'Need one stacking module'
+      assert p.use_stacking_subsampler, 'Need one stacking module'
       self.CreateChild('sub', p.stacking_subsampler.Copy())
     stack_out_feats = self.sub.output_dim
 

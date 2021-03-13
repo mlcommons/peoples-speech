@@ -21,6 +21,7 @@ from lingvo.core import hyperparams
 from lingvo.core import py_utils
 import numpy as np
 
+FLAGS = tf.flags.FLAGS
 
 _CLUSTER_STACK = py_utils.ThreadLocalStack()
 
@@ -70,6 +71,7 @@ class _Cluster:
     p.Define('task', 0, 'This process is the task-th task in the job.')
     p.Define('logdir', '', 'The log directory.')
 
+    # Helpful
     # How the cluster is composed.
     #
     # A typical training cluster has a few jobs (controller, worker, ps, etc).
@@ -123,7 +125,14 @@ class _Cluster:
       Returns a 2D np string array. ret[i, j] is the i-th replica's j-th
       devices.
     """
-    if not job_spec.gpus_per_replica:
+    if job_spec.tpus_per_replica:
+      tpus = job_spec.tpus_per_replica
+      # Unfortunately, decoder replicas is 0. I need to fix this.
+      ret = np.empty((job_spec.replicas, tpus), np.object)
+      for i in range(job_spec.replicas):
+        for j in range(tpus):
+          ret[i, j] = cls._MakeDeviceString(job_spec.name, i, 'TPU', j)
+    elif not job_spec.gpus_per_replica:
       cpus = job_spec.cpus_per_replica
       ret = np.empty((job_spec.replicas, cpus), np.object)
       for i in range(job_spec.replicas):
@@ -152,6 +161,10 @@ class _Cluster:
   def __init__(self, params):
     self._params = params.Copy()
     p = self.params
+
+    print("GALVEZ:params=", str(params))
+    print("GALVEZ:task_id=", params.task)
+    import sys; sys.stdout.flush()
 
     # A set of invariants about the setup of the cluster.
     #
@@ -190,6 +203,10 @@ class _Cluster:
       assert 0 <= p.task and p.task < p.decoder.replicas
     elif p.mode == 'sync' and p.job == 'executor_tpu':
       assert p.worker.replicas >= 1
+    elif p.mode == 'sync' and p.job == 'tpu_decoder':
+      # from IPython import embed; embed()
+      # assert p.decoder.replicas == 1
+      pass
     else:
       assert False, (p.mode, p.job)
 
@@ -203,6 +220,11 @@ class _Cluster:
       self._job_spec = p.decoder
     elif p.job == 'executor_tpu':
       self._job_spec = p.worker
+    elif p.job == 'tpu_decoder':
+      # Not quite sure of this is right
+      self._job_spec = p.decoder
+    else:
+      assert False, (p.mode, p.job)
 
   @property
   def params(self):
@@ -315,9 +337,12 @@ class _Cluster:
       # executor_tpu can use every device.
       return self.ListDevices(self._job_spec)
 
-    if self.job in ('controller', 'evaler', 'decoder'):
+    if self.job in ('controller', 'evaler', 'decoder', 'tpu_decoder'):
       # Our current policy is that each controller/evaler/decoder task
       # only uses 1 replica.
+
+      # Okay, so what is replica? Am I stuck using just one TPU for 
+      # decoding then? No, I don't think so.
       return self.ListDevices(self._job_spec)[self.task:(self.task + 1), :]
 
     assert False, (self.job, self.mode)
@@ -407,7 +432,7 @@ class _Cluster:
     Raises:
       ValueError: when strategy is not supported.
     """
-    if self.job == 'evaler' or self.job == 'decoder':
+    if self.job == 'evaler':  # or self.job == 'decoder':
       # Currently, we only support evaler/decoder uses 1 accelerator.
       return self.ListDevices(self.job_spec)[self.task, 0]
     elif strategy is None:
@@ -481,6 +506,10 @@ class VarPlacer:
     # The default policy is to place the op on the 1st device visible
     # to this task.
     assert self._devices is not None, ('Unexpected job: %s' % self._cluster.job)
+    # You know, I wonder if this is exactly the cuase of the problem Anjali and I encountered. This DeivceFunction may have misplaced a the AsciiToId operation on TPU...
+    # print("GALVEZ:", self._devices)
+    # print("GALVEZ:", len(self._devices))
+    # import sys; sys.stdout.flush()
     task = self._cluster.params.task
     assert 0 <= task and task < len(self._devices)
     return self._devices[task, 0]

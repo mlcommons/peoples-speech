@@ -19,6 +19,8 @@ Most other file formats have efficient ways to fetch the number of records in a
 dataset.  However, some formats such as TFRecord requires you to essentially
 scan the files to perform this count.
 
+# GALVEZ: This could be useful to us
+
 This is a short little beam script that can leverage many machines to read
 all of the files in parallel potentially faster than a single machine script.
 It is recommended that for other file formats, simply reading the metadata

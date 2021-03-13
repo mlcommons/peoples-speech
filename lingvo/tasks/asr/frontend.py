@@ -305,6 +305,7 @@ class MelAsrFrontend(BaseAsrFrontend):
       theta: Layer theta.
       input_batch: PCM input map:
 
+    # int16 and float32 are both permissible
         - 'src_inputs': int16 or float32 tensor of PCM audio data, scaled to
           +/-32768 (versus [-1..1)!). See class comments for supported input
           shapes.

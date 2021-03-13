@@ -145,6 +145,7 @@ class BaseProgram:
       for i in range(self._steps_per_loop):
         tf.logging.vlog(1, '_InfeedLoop %d', i)
         sess.run(self._task.input.tpu_infeed_op)
+      # Hmm... so how does self._steps_per_loop get set?
       tf.logging.info('_InfeedLoop done')
     except Exception as e:
       tf.logging.info('_InfeedLoop exception %r %s', e, e)
@@ -540,6 +541,7 @@ class DecodeProgram(BaseProgram):
       with py_utils.OpportunisticVariableReuseScope(True):
         self._model.InstantiateVariables()
         input_batch = self._task.input.TpuDequeueBatch()
+        # Bingo! self._task.Decode. This defers to DecodeWithTheta
         metrics_dict = self._task.Decode(input_batch)
       self.metrics_nm = py_utils.NestedMap(metrics_dict)
       return self.metrics_nm.Flatten()
@@ -567,12 +569,15 @@ class DecodeProgram(BaseProgram):
     dec_metrics = self._task.CreateDecoderMetrics()
     start_time = time.time()
     buffered_decode_out = []
+    # self._steps_per_loop is tricky to set.
     for i in range(self._steps_per_loop):
       metrics_values = sess.run(self.metrics)
+      # It seems like this is the right place to write to disk. PostProcessDecodeOut
       decode_out = self._task.PostProcessDecodeOut(metrics_values, dec_metrics)
       tf.logging.info('step: %d %f' %
                       (i, dec_metrics['num_samples_in_batch'].total_value))
       if decode_out:
+        # So buffered_decode_out should be a list of something. Could cause 
         buffered_decode_out.extend(decode_out)
     infeed_future.wait()
 
@@ -586,12 +591,14 @@ class DecodeProgram(BaseProgram):
         os.path.basename(self._program_dir), global_step, summaries)
     decode_out_path = os.path.join(self._program_dir,
                                    'decoder_out_%09d' % global_step)
+    # Experimental one doesn't have these finalize calls. So let's use non-experimental for now...
     decode_finalize_args = base_model.DecodeFinalizeArgs(
         decode_out_path=decode_out_path, decode_out=buffered_decode_out)
     self._task.DecodeFinalize(decode_finalize_args)
     return False
 
 
+# Note: Inherits from DecodeProgram
 class ExperimentalDecodeProgram(DecodeProgram):
   """DecodeProgram in a tpu loop.
 
@@ -619,6 +626,7 @@ class ExperimentalDecodeProgram(DecodeProgram):
       with py_utils.OpportunisticVariableReuseScope(True):
         self._model.InstantiateVariables()
         input_batch = self._task.input.TpuDequeueBatch()
+        # defers to DecodeWithTheta
         metrics_dict = self._task.Decode(input_batch)
       self.metrics_nm = py_utils.NestedMap(metrics_dict)
       device = tpu.core(0) if self.spmd else ''
@@ -684,6 +692,7 @@ class ExperimentalDecodeProgram(DecodeProgram):
 
     dec_metrics = self._task.CreateDecoderMetrics()
     start_time = time.time()
+    # set this very high
     for _ in range(self._steps_per_loop):
       metrics_values = sess.run(self.metrics)
       self._task.PostProcessDecodeOut(metrics_values, dec_metrics)
@@ -910,6 +919,7 @@ class SimpleProgramSchedule:
   """A schedule of programs associated with a single task.
 
   Simple sequence is:
+  This is the behavior!
   Run train_executions_per_eval * train_program
   Run all the eval_programs
   """
@@ -943,6 +953,8 @@ class SimpleProgramSchedule:
     if p.train_program.dataset_name not in p.task_dict:
       tf.logging.error('could not find %s in %s' %
                             (p.train_program.dataset_name, p.task_dict))
+    print("GALVEZ:task_dict=", list(p.task_dict.keys()))
+    import sys; sys.stdout.flush()
     p.train_program.task = p.task_dict[p.train_program.dataset_name]
     p.train_program.num_splits_per_client = p.num_splits_per_client
     p.train_program.task_name = p.task_name
@@ -1033,6 +1045,54 @@ def SimpleProgramScheduleForTask(train_dataset_name,
       decode_program_params.dataset_name = dataset_name
       program_schedule_params.eval_programs.append(decode_program_params)
 
+  return program_schedule_params
+
+def DecodeProgramSchedule(eval_dataset_names,
+                          decode_steps_per_loop,
+                          experimental_decoder=False,
+                          train_program_cls=TrainProgram):
+  """Convenient helper method for common case.
+
+  Args:
+    train_dataset_name: Name of the training dataset, eg: 'Train'
+    train_steps_per_loop: Number of steps to execute the training program.
+    eval_dataset_names: List of eval dataset_name strings, eg: ['Train'].
+    eval_steps_per_loop: Number of steps to execute the eval program.
+    decode_steps_per_loop: Number of steps to execute the decode program.
+    experimental_decoder: bool. Whether to use experimental deocder which is
+      placed in a tpu loop.
+    train_program_cls: The class to use for training programs.  Defaults
+      to TrainProgram.
+    eval_program_cls: The class to use for eval programs.  Defaults to
+      EvalProgram.
+
+  Returns:
+    A populated SimpleProgramSchedule.Params()
+  """
+
+  program_schedule_params = SimpleProgramSchedule.Params()
+  train_program_params = train_program_cls.Params()
+  train_program_params.name = 'train'
+  train_program_params.steps_per_loop = 0
+  train_program_params.dataset_name = "Train"
+  program_schedule_params.train_program = train_program_params
+  program_schedule_params.train_executions_per_eval = 0
+
+  program_schedule_params.dataset_names = []
+
+  for dataset_name in eval_dataset_names:
+    program_schedule_params.dataset_names.append(dataset_name)
+    if decode_steps_per_loop > 0:
+      decoder = (
+          ExperimentalDecodeProgram if experimental_decoder else DecodeProgram)
+      decode_program_params = decoder.Params()
+      # Yes! This is what I want!
+      decode_program_params.name = 'decode_tpu'
+      # TODO(blee): This should be derived from the Dataset size.
+      # GALVEZ: Yes I agree
+      decode_program_params.steps_per_loop = decode_steps_per_loop
+      decode_program_params.dataset_name = dataset_name
+      program_schedule_params.eval_programs.append(decode_program_params)
   return program_schedule_params
 
 

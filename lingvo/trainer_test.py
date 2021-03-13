@@ -126,6 +126,7 @@ class TrainerTest(BaseTrainerTest):
 
   def _GetTestConfig(self):
     model_name = 'image.mnist.LeNet5'
+    # So this is how particular parameters are obtained
     cfg = model_registry.GetParams(model_name, 'Train')
     cfg.cluster.task = 0
     cfg.cluster.mode = 'sync'

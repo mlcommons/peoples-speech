@@ -3,3 +3,4 @@ bazel-*
 *.log
 *.log.*
 settings.json
+*~

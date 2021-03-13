@@ -963,6 +963,7 @@ class BaseTinyDatasetInput(BaseInputGenerator):
         data=self._Preprocess(raw),
         label=py_utils.PadOrTrimTo(tf.gather(label, sample_ids), [b]),
         weight=py_utils.PadOrTrimTo(tf.ones([n], dtype=tf.float32), [b]))
+    # Okay, so here is my problem.
     if not py_utils.use_tpu():
       ret['sample_ids'] = sample_ids
     return ret

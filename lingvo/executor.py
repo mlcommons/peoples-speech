@@ -41,6 +41,12 @@ tf.flags.DEFINE_bool(
     'disable_meta_optimizer_in_executor', False,
     'Disabling the grappler meta_optimizer improves start-up time.')
 
+tf.flags.DEFINE_bool(
+    'lingvo_executor_skip_saving_upon_stop', False,
+    'When we are just running decoding or inference, saving is not necessary,'
+    'since no training has occurred.'
+)
+
 FLAGS = tf.flags.FLAGS
 
 
@@ -97,6 +103,7 @@ def GetExecutorParams(model_name, cluster_params, model_registry):
         ps_params_dict[k] = program_schedule_params
     else:
       program_schedule_params = ps_cfg
+      # So, what if I just remove the Train dictionary?
       program_schedule_params.task_dict = {'Train': train_cfg}
       for eval_dataset_name in program_schedule_params.dataset_names:
         task_eval_params = model_registry.GetParams(model_name,
@@ -305,11 +312,12 @@ class ExecutorTpu(base_runner.BaseRunner):
       sess.run(self._initialize_tables)
       sess.run(self._initialize_local_vars)
 
+      # How to stop?
       while True:
         global_step = sess.run(py_utils.GetGlobalStep())
         if self._ShouldStop(sess, global_step):
           tf.logging.info('Training finished.')
-          if not self._ml_perf_log:
+          if not self._ml_perf_log and not FLAGS.lingvo_executor_skip_saving_upon_stop:
             self.save_only_checkpointer.Save(sess, global_step)
           return
 
@@ -335,5 +343,5 @@ class ExecutorTpu(base_runner.BaseRunner):
         #   (train_executions_per_eval * train_steps_per_loop)
         # steps ahead already, due to program_schedule.Run(sess).
         #
-        if not self._ml_perf_log:
+        if not self._ml_perf_log and not FLAGS.lingvo_executor_skip_saving_upon_stop:
           self.save_only_checkpointer.MaybeSave(sess, py_utils.GetGlobalStep())

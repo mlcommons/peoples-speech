@@ -58,6 +58,7 @@ def _MakeFloatFeature(value):
   return tf.train.Feature(float_list=tf.train.FloatList(value=value))
 
 
+# I ought to use _MakeTfExample directly in my code.
 def _MakeTfExample(uttid, frames, text):
   flat_frames = frames.flatten()
   feature = {
@@ -65,6 +66,7 @@ def _MakeTfExample(uttid, frames, text):
       'transcript': _MakeBytesFeature([text.lower()]),
       'frames': _MakeFloatFeature(flat_frames)
   }
+  # Okay, so let's just use tf.train.Example then. Otherwise, things get too confusing.
   return tf.train.Example(features=tf.train.Features(feature=feature))
 
 
@@ -167,6 +169,7 @@ def _CreateAsrFeatures():
     trans = _ReadTranscriptions()
   tf.logging.info('Total transcripts: %d', len(trans))
   tf_bytes = tf.placeholder(dtype=tf.string)
+  # Great! It uses the frontend directly
   log_mel = audio_lib.ExtractLogMelFeatures(tf_bytes)
   # Second pass: transcode the flac.
   file_obj = tf.io.gfile.GFile(FLAGS.input_tarball, mode='rb')

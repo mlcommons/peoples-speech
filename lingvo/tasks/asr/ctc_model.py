@@ -14,6 +14,10 @@
 # limitations under the License.
 """CTC model."""
 
+from collections import defaultdict
+from typing import NamedTuple
+import os
+
 import lingvo.compat as tf
 from lingvo.core import base_model
 from lingvo.core import metrics
@@ -22,6 +26,16 @@ from lingvo.core import schedule
 from lingvo.tasks.asr import blocks
 from lingvo.tasks.asr import encoder_v2
 from lingvo.tasks.asr import decoder_utils
+from lingvo.tasks.asr import input_generator
+
+# https://stackoverflow.com/a/2912455
+class keydefaultdict(defaultdict):
+  def __missing__(self, key):
+    if self.default_factory is None:
+      raise KeyError(key)
+    else:
+      ret = self[key] = self.default_factory(key) # pylint: disable=not-callable
+      return ret
 
 
 class CTCModel(base_model.BaseTask):
@@ -33,6 +47,7 @@ class CTCModel(base_model.BaseTask):
   def Params(cls):
     p = super().Params()
     p.Define(
+      # Need to set frontend appropriately
         'frontend', None,
         'ASR frontend to extract features from input. Defaults to no frontend '
         'which means that features are taken directly from the input.')
@@ -45,6 +60,12 @@ class CTCModel(base_model.BaseTask):
     p.Define(
         'blank_index', 73, 'Index assigned to epsilon, aka blank for CTC. '
         'This should never appear in the label sequence. Reconsider this.')
+
+    p.Define('inference_compute_only_log_softmax', False,
+             'At inference time, compute the output of log softmax, rather '
+             'than running any sort of CTC decoder.')
+    p.Define('log_softmax_output_directory', '',
+             'Path to which to dump log_softmax values')
 
     tp = p.train
     tp.lr_schedule = (schedule.PiecewiseConstantSchedule.Params().Set(
@@ -75,15 +96,44 @@ class CTCModel(base_model.BaseTask):
     projection_p.input_dim = self.encoder.output_dim
     self.CreateChild('project_to_vocab_size', projection_p)
 
+    if p.inference_compute_only_log_softmax:
+      assert p.log_softmax_output_directory, 'Must provide non-empty path to which to dump log softmax values'
+      # `ulimit -n` gives me 1024 on this machine. We may need to
+      # increase the number of open file descriptors allowed in this
+      # process
+      class WriterAndRecordsWritten:
+        records_written: int
+        file_handle: tf.io.TFRecordWriter
+        def __init__(self, write_path: str):
+          self.records_written = 0
+          self.file_handle = tf.io.TFRecordWriter(write_path)
+      self._int64_audio_document_id_to_file_handle = keydefaultdict(
+        WriterAndRecordsWritten)
+
   def ComputePredictions(self, theta, input_batch):
     return self._FrontendAndEncoderFProp(theta, input_batch.src)
 
   def DecodeWithTheta(self, theta, input_batch):
     """Constructs the inference graph."""
     p = self.params
+    # from IPython import embed; embed()
     with tf.name_scope('decode'), tf.name_scope(p.name):
       with tf.name_scope('encoder'):
         encoder_outputs = self._FrontendAndEncoderFProp(theta, input_batch.src)
+      if p.inference_compute_only_log_softmax:
+        global_step = tf.train.get_global_step()
+        increment_global_step = tf.assign(global_step, global_step + 1)
+        with tf.control_dependencies([increment_global_step]):
+          log_probabilities = tf.transpose(tf.nn.log_softmax(encoder_outputs.encoded, axis=2), 
+                                           perm=(1, 0, 2))
+        # encoder_outputs's shape is [T,B,F]
+        return {'log_probabilities': log_probabilities,
+                'log_probabilities_lengths':
+                py_utils.LengthsFromBitMask(encoder_outputs.padding, 0),
+                'int64_uttid': input_batch.sample_ids,
+                'int64_audio_document_id': input_batch.audio_document_ids,
+                'num_utterances_in_audio_document': input_batch.num_utterances_in_audio_document
+        }
       with tf.name_scope('decoder'):
         decoder_outs = self._DecodeCTC(encoder_outputs)
 
@@ -91,6 +141,35 @@ class CTCModel(base_model.BaseTask):
       return decoder_metrics
 
   def PostProcessDecodeOut(self, decode_out_dict, dec_metrics_dict):
+    p = self.params
+    if p.inference_compute_only_log_softmax:
+      mini_batch_size = decode_out_dict['log_probabilities'].shape[0]
+      dec_metrics_dict['num_samples_in_batch'].Update(mini_batch_size)
+
+      for i in range(mini_batch_size):
+        int64_uttid = decode_out_dict['int64_uttid'][i]
+        int64_audio_document_id = decode_out_dict['int64_audio_document_id'][i]
+        if int64_uttid == input_generator.RawAsrInputIntegerUttIds.PAD_INDEX:
+          continue
+        length = decode_out_dict['log_probabilities_lengths'][i]
+        flat_log_probabilities = decode_out_dict['log_probabilities'][i, :length, :].flatten()
+        record_bytes = tf.train.Example(
+          features=tf.train.Features(feature={
+            'int64_uttid': tf.train.Feature(
+              int64_list=tf.train.Int64List(value=[int64_uttid])),
+            'log_probabilities': tf.train.Feature(
+              float_list=tf.train.FloatList(value=flat_log_probabilities)),
+          })
+        ).SerializeToString()
+        output_path = os.path.join(p.log_softmax_output_directory, f'int64_audio_document_id={int64_audio_document_id}/shard.tfrecord')
+        pair = self._int64_audio_document_id_to_file_handle[output_path]
+        pair.file_handle.write(record_bytes)
+        pair.records_written += 1
+        if pair.records_written == decode_out_dict['num_utterances_in_audio_document'][i]:
+          pair.file_handle.close()
+          del self._int64_audio_document_id_to_file_handle[output_path]
+      return
+
     gt_transcripts = decode_out_dict['target_transcripts']
     hyp_transcripts = decode_out_dict['decoded_transcripts']
     utt_id = decode_out_dict['utt_id']
@@ -161,11 +240,17 @@ class CTCModel(base_model.BaseTask):
     idxs[self.params.blank_index] = 0
     tok_logits = tf.stack([tok_logits[:, :, idx] for idx in idxs], axis=-1)
 
-    (decoded,), _ = tf.nn.ctc_beam_search_decoder(tok_logits,
-                                                  py_utils.LengthsFromBitMask(
-                                                      output_batch.padding, 0),
-                                                  beam_width=100)
+    # GALVEZ: Make beam_width a tunable parameter!
+    (decoded,), _ = py_utils.RunOnTpuHost(tf.nn.ctc_beam_search_decoder, tok_logits,
+                                          py_utils.LengthsFromBitMask(
+                                            output_batch.padding, 0),
+                                          beam_width=100)
+    # (decoded,), _ = tf.nn.ctc_beam_search_decoder(tok_logits,
+    #                                               py_utils.LengthsFromBitMask(
+    #                                                   output_batch.padding, 0),
+    #                                               beam_width=100)
 
+    return py_utils.NestedMap(sparse_ids=decoded) #, transcripts=hyp_str)
     dense_dec = tf.sparse_to_dense(decoded.indices,
                                    decoded.dense_shape,
                                    decoded.values,
@@ -176,8 +261,9 @@ class CTCModel(base_model.BaseTask):
 
     decoded_seq_lengths = py_utils.LengthsFromBitMask(tf.transpose(bit_mask), 0)
 
-    hyp_str = self.input_generator.IdsToStrings(tf.cast(dense_dec, tf.int32),
-                                                decoded_seq_lengths)
+    hyp_str = py_utils.RunOnTpuHost(self.input_generator.IdsToStrings,
+                                    tf.cast(dense_dec, tf.int32),
+                                    decoded_seq_lengths)
 
     # Some predictions have start and stop tokens predicted, we dont want
     # to include those in WER calculation
@@ -187,9 +273,11 @@ class CTCModel(base_model.BaseTask):
     return py_utils.NestedMap(sparse_ids=decoded, transcripts=hyp_str)
 
   def _CalculateErrorRates(self, dec_outs_dict, input_batch):
+    return {'stuff': dec_outs_dict.sparse_ids.values}
     gt_seq_lens = py_utils.LengthsFromBitMask(input_batch.tgt.paddings, 1)
-    gt_transcripts = self.input_generator.IdsToStrings(input_batch.tgt.labels,
-                                                       gt_seq_lens)
+    gt_transcripts = py_utils.RunOnTpuHost(self.input_generator.IdsToStrings,
+                                           input_batch.tgt.labels,
+                                           gt_seq_lens)
 
     # token error rate
     char_dist = tf.edit_distance(tf.string_split(dec_outs_dict.transcripts,
@@ -210,7 +298,6 @@ class CTCModel(base_model.BaseTask):
     wer = num_wrong_words / num_ref_words
 
     ret_dict = {
-        'utt_id': input_batch.sample_ids,
         'target_ids': input_batch.tgt.ids,
         'target_labels': input_batch.tgt.labels,
         'target_weights': input_batch.tgt.weights,
@@ -224,5 +311,7 @@ class CTCModel(base_model.BaseTask):
         'num_wrong_chars': num_wrong_chars,
         'num_ref_chars': num_ref_chars
     }
+    if not py_utils.use_tpu():
+      ret_dict['utt_id'] = input_batch.sample_ids
 
     return ret_dict
