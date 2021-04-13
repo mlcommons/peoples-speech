@@ -196,10 +196,16 @@ class RawAsrInputIntegerUttIds(base_input_generator.BaseSequenceInputGenerator):
           ('int64_audio_document_id', tf.io.VarLenFeature(tf.int64)),
           ('num_utterances_in_audio_document', tf.io.VarLenFeature(tf.int64)),
           ('transcript', tf.io.VarLenFeature(tf.string)),
-          ('frames', tf.io.VarLenFeature(tf.float32)),
+          ('frames', tf.io.FixedLenFeature((), tf.string)),
       ]
       example = tf.io.parse_single_example(record, dict(features))
-      fval = {k: v.values for k, v in example.items()}
+      fval = {}
+      for k, v in example.items():
+        if k == 'frames':
+          fval[k] = tf.cast(tf.io.decode_raw(v, tf.int16), tf.float32)
+        else:
+          assert isinstance(v, tf.SparseTensor)
+          fval[k] = v.values
       # Reshape the flattened vector into its original time-major
       # representation.
       fval['frames'] = tf.reshape(

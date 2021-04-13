@@ -10,7 +10,46 @@ from lingvo.tasks.asr import input_generator
 from lingvo.tasks.asr import ctc_model
 from lingvo.tasks.asr import frontend as asr_frontend
 
-VOCAB_FILEPATH = "gs://the-peoples-speech-west-europe/Librispeech/tokens.txt"
+VOCAB_FILEPATH = "gs://the-peoples-speech-west-europe/Librispeech/tokens2.txt"
+
+tf.flags.DEFINE_integer(
+    'ctc_inference_model_num_samples', 0, 'Total number of samples to run inference on. Should be equal to input.num_samples (this is checked)')
+tf.flags.DEFINE_integer(
+    'ctc_inference_model_batch_size', 0,
+  '')
+tf.flags.DEFINE_integer(
+    'ctc_inference_model_number_of_tpus', 8,
+  '')
+
+
+
+FLAGS = tf.flags.FLAGS
+
+
+def intialize_vocab_file_tokenizer_params():
+  pt = tokenizers.VocabFileTokenizer.Params()
+  pt.append_eos = False
+
+  # TODO: Don't hard-code this path! How can I make it relative?
+  pt.token_vocab_filepath = VOCAB_FILEPATH
+  pt.tokens_delimiter = ""
+  pt.load_token_ids_from_vocab = False
+  with tf.io.gfile.GFile(VOCAB_FILEPATH, mode='r') as fh:
+    lines = fh.readlines()
+    for i, line in enumerate(lines):
+      if line == "<unk>\n":
+        pt.target_unk_id = i
+      elif line == "<s>\n":
+        pt.target_sos_id = i
+      elif line == "</s>\n":
+        pt.target_eos_id = i
+    pt.vocab_size = len(lines)
+  assert pt.vocab_size == 32
+  assert pt.target_unk_id == 0
+  assert pt.target_sos_id == 1, pt.target_sos_id
+  assert pt.target_eos_id == 2, pt.target_eos_id
+
+  return pt
 
 @model_registry.RegisterSingleTaskModel
 class Librispeech960Base(base_model_params.SingleTaskModelParams):
@@ -48,15 +87,8 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
 
     p.bucket_batch_limit = [48] * 8
 
-    p.tokenizer = tokenizers.VocabFileTokenizer.Params()
 
-    # TODO: Don't hard-code this path! How can I make it relative?
-    p.tokenizer.token_vocab_filepath = VOCAB_FILEPATH
-    p.tokenizer.tokens_delimiter = ""
-    p.tokenizer.load_token_ids_from_vocab = False
-    with tf.io.gfile.GFile(VOCAB_FILEPATH, mode='r') as fh:
-      p.tokenizer.vocab_size = len(fh.readlines())
-    assert p.tokenizer.vocab_size == 32
+    p.tokenizer = intialize_vocab_file_tokenizer_params()
 
     return p
 
@@ -109,8 +141,13 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
     p.name = 'librispeech'
 
     with tf.io.gfile.GFile(VOCAB_FILEPATH, mode='r') as fh:
-      p.vocab_size = len(fh.readlines())
+      lines = fh.readlines()
+      assert lines[-1] == "<blk>\n"
+      p.vocab_size = len(lines)
+      p.blank_index = 31
+
     assert p.vocab_size == 32
+    assert p.blank_index == 31
 
     ep = p.encoder_v2
     ep.use_stacking_subsampler = True
@@ -136,90 +173,83 @@ class Librispeech960Base(base_model_params.SingleTaskModelParams):
   def ProgramSchedule(self):
     return program.SimpleProgramScheduleForTask(
         train_dataset_name='Train',
-        train_steps_per_loop=500,
-        eval_dataset_names=['Dev', 'Train'],
-        eval_steps_per_loop=50,
-        decode_steps_per_loop=0)
+        train_steps_per_loop=100,
+      # I want to compute WER...
+        eval_dataset_names=['Dev'],
+        eval_steps_per_loop=1,
+        decode_steps_per_loop=1,)
 
 
-@model_registry.RegisterSingleTaskModel
-class TpuDecoderLibrispeech960Base(Librispeech960Base):
+# @model_registry.RegisterSingleTaskModel
+# class TpuDecoderLibrispeech960Base(Librispeech960Base):
 
-  SAMPLES_PER_SECOND = 16_000
+#   SAMPLES_PER_SECOND = 16_000
 
-  def _InferenceInputParams(self):
-    """
-    Reads in a raw waveform, where samples are float32 and in the range[-1,1]
-    """
-    p = input_generator.RawAsrInputIntegerUttIds.Params()
+#   def _InferenceInputParams(self):
+#     """
+#     Reads in a raw waveform, where samples are float32 and in the range[-1,1]
+#     """
+#     p = input_generator.RawAsrInputIntegerUttIds.Params()
 
-    p.file_datasource = datasource.PrefixedDataSource.Params()
-    p.file_datasource.file_type = 'tfrecord'
-    p.file_datasource.file_pattern_prefix = 'REPLACE_ME'
-    p.file_datasource.file_pattern = '*.tfrecord'
+#     p.file_datasource = datasource.PrefixedDataSource.Params()
+#     p.file_datasource.file_type = 'tfrecord'
+#     p.file_datasource.file_pattern_prefix = 'REPLACE_ME'
+#     p.file_datasource.file_pattern = '*.tfrecord'
 
-    p.frame_size = 1
-    p.append_eos_frame = False
+#     p.frame_size = 1
+#     p.append_eos_frame = False
 
-    p.pad_to_max_seq_length = True
-    p.file_random_seed = 0
-    p.file_buffer_size = 1
-    # Set this to whatever
-    p.file_parallelism = 1
+#     p.pad_to_max_seq_length = True
+#     p.file_random_seed = 0
+#     p.file_buffer_size = 1
+#     # Set this to whatever
+#     p.file_parallelism = 1
 
-    # 15 seconds is our maximum utterance size
-    max_sample_length = 15 * type(self).SAMPLES_PER_SECOND
-    # TODOL: change to max_sample_length
-    p.source_max_length = max_sample_length
-    p.bucket_upper_bound = [p.source_max_length]
+#     # 15 seconds is our maximum utterance size
+#     max_sample_length = 15 * type(self).SAMPLES_PER_SECOND
+#     p.source_max_length = max_sample_length
+#     p.bucket_upper_bound = [p.source_max_length]
 
-    p.bucket_batch_limit = [1]
+#     p.bucket_batch_limit = [1]
 
-    return p
+#     return p
 
-  def Dev(self):
-    return self._InferenceInputParams()
+#   def Dev(self):
+#     return self._InferenceInputParams()
 
-  def Task(self):
-    p = super().Task()
-    # This is copied from audio_lib.py. Ideally these configurations
-    # would be split off into a function, but I want to minimize merge
-    # conflicts with lingvo for now. Of course, a merge conflict would
-    # indicate that parameters had changed, so my choice is clearly
-    # wrong, but oh well.
-    p.frontend = asr_frontend.MelAsrFrontend.Params()
-    pf = p.frontend
-    pf.sample_rate = float(type(self).SAMPLES_PER_SECOND)
-    pf.frame_size_ms = 25.
-    pf.frame_step_ms = 10.
-    pf.num_bins = 80
-    pf.lower_edge_hertz = 125.
-    pf.upper_edge_hertz = 7600.
-    pf.preemph = 0.97
-    pf.noise_scale = 0.
-    pf.pad_end = False
+#   def Task(self):
+#     p = super().Task()
+#     # This is copied from audio_lib.py. Ideally these configurations
+#     # would be split off into a function, but I want to minimize merge
+#     # conflicts with lingvo for now. Of course, a merge conflict would
+#     # indicate that parameters had changed, so my choice is clearly
+#     # wrong, but oh well.
+#     p.frontend = asr_frontend.MelAsrFrontend.Params()
+#     pf = p.frontend
+#     pf.sample_rate = float(type(self).SAMPLES_PER_SECOND)
+#     pf.frame_size_ms = 25.
+#     pf.frame_step_ms = 10.
+#     pf.num_bins = 80
+#     pf.lower_edge_hertz = 125.
+#     pf.upper_edge_hertz = 7600.
+#     pf.preemph = 0.97
+#     pf.noise_scale = 0.
+#     pf.pad_end = False
 
-    p.inference_compute_only_log_softmax = True
-    # pe = p.encoder_v2
-    # pe.inference_compute_only_log_softmax = True
-    return p
+#     p.inference_compute_only_log_softmax = True
+#     return p
 
-  def ProgramSchedule(self):
-    # return program.SimpleProgramScheduleForTask(
-    #     train_dataset_name='Train',
-    #     train_steps_per_loop=0,
-    #     eval_dataset_names=['Dev'],
-    #     eval_steps_per_loop=0,
-    #     decode_steps_per_loop=1)
-    number_of_inputs = 1633
-    batch_size = 8
-    import math
-    decode_steps_per_loop = math.ceil(number_of_inputs / batch_size)
-    return program.DecodeProgramSchedule(
-      eval_dataset_names=['Dev'],
-      decode_steps_per_loop=decode_steps_per_loop,  # 1,
-      # I may want to reevaluate this
-      experimental_decoder=True)
+#   def ProgramSchedule(self):
+#     # This value must be parameterized
+#     number_of_inputs = FLAGS.ctc_inference_model_num_samples
+#     batch_size = 8
+#     import math
+#     decode_steps_per_loop = math.ceil(number_of_inputs / batch_size)
+#     return program.DecodeProgramSchedule(
+#       eval_dataset_names=['Dev'],
+#       decode_steps_per_loop=decode_steps_per_loop,  # 1,
+#       # I may want to reevaluate this
+#       experimental_decoder=True)
 
 
 @model_registry.RegisterSingleTaskModel
@@ -229,6 +259,7 @@ class Librispeech960Grapheme(Librispeech960Base):
   GRAPHEME_VOCAB_SIZE = 76
   BLANK_IDX = 73
 
+  # This seems bad. Does this undo my VocabFileTokenizer???
   def InitializeTokenizer(self, params):
     """Initializes a grapheme tokenizer."""
     params.tokenizer = tokenizers.AsciiTokenizer.Params()
@@ -270,7 +301,7 @@ class Librispeech960Grapheme(Librispeech960Base):
     return p
 
 @model_registry.RegisterSingleTaskModel
-class Grphm_DO_SpecAug_StackingSubSampler(Librispeech960Grapheme):
+class Grphm_DO_SpecAug_StackingSubSampler(Librispeech960Base):
 
   def Task(self):
     p = super().Task()
@@ -379,7 +410,11 @@ class TpuDecoderGrphm_DO_SpecAug_StackingSubSampler(Grphm_DO_SpecAug_StackingSub
     p.source_max_length = max_sample_length
     p.bucket_upper_bound = [p.source_max_length]
 
-    p.bucket_batch_limit = [1]
+    p.bucket_batch_limit = [FLAGS.ctc_inference_model_batch_size]
+
+    # assert p.num_samples == FLAGS.ctc_inference_model_num_samples
+
+    p.tokenizer = intialize_vocab_file_tokenizer_params()
 
     return p
 
@@ -406,16 +441,22 @@ class TpuDecoderGrphm_DO_SpecAug_StackingSubSampler(Grphm_DO_SpecAug_StackingSub
     pf.pad_end = False
 
     p.inference_compute_only_log_softmax = True
+
+    # TODO: Consider doing this
+    # ep = p.encoder_v2
+    # ep.use_specaugment = False
     return p
 
   def ProgramSchedule(self):
     # TODO: Generalize this
-    number_of_inputs = 1633
-    batch_size = 8
+    number_of_inputs = FLAGS.ctc_inference_model_num_samples
+    assert number_of_inputs != 0
+    assert FLAGS.ctc_inference_model_batch_size != 0
+    batch_size = FLAGS.ctc_inference_model_batch_size * FLAGS.ctc_inference_model_number_of_tpus
     import math
     decode_steps_per_loop = math.ceil(number_of_inputs / batch_size)
     return program.DecodeProgramSchedule(
       eval_dataset_names=['Dev'],
       decode_steps_per_loop=decode_steps_per_loop,  # 1,
       # I may want to reevaluate this
-      experimental_decoder=True)
+      experimental_decoder=False)

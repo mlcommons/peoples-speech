@@ -15,6 +15,7 @@
 """CTC model."""
 
 from collections import defaultdict
+import numpy as np
 import os
 
 import lingvo.compat as tf
@@ -122,20 +123,23 @@ class CTCModel(base_model.BaseTask):
         global_step = tf.train.get_global_step()
         increment_global_step = tf.assign(global_step, global_step + 1)
         with tf.control_dependencies([increment_global_step]):
-          log_probabilities = tf.transpose(tf.nn.log_softmax(encoder_outputs.encoded, axis=2), 
+          log_probabilities = tf.transpose(tf.nn.log_softmax(encoder_outputs.encoded, axis=2),
                                            perm=(1, 0, 2))
+        with tf.name_scope('decoder'):
+          decoder_outs = self._DecodeCTC(encoder_outputs)
         # encoder_outputs's shape is [T,B,F]
         return {'log_probabilities': log_probabilities,
                 'log_probabilities_lengths':
                 py_utils.LengthsFromBitMask(encoder_outputs.padding, 0),
                 'int64_uttid': input_batch.sample_ids,
                 'int64_audio_document_id': input_batch.audio_document_ids,
-                'num_utterances_in_audio_document': input_batch.num_utterances_in_audio_document
+                'num_utterances_in_audio_document': input_batch.num_utterances_in_audio_document,
+                'transcripts': decoder_outs.transcripts,
         }
       with tf.name_scope('decoder'):
         decoder_outs = self._DecodeCTC(encoder_outputs)
 
-      decoder_metrics = self._CalculateErrorRates(decoder_outs, input_batch)
+      decoder_metrics = py_utils.RunOnTpuHost(self._CalculateErrorRates, decoder_outs, input_batch)
       return decoder_metrics
 
   def PostProcessDecodeOut(self, decode_out_dict, dec_metrics_dict):
@@ -157,6 +161,8 @@ class CTCModel(base_model.BaseTask):
               int64_list=tf.train.Int64List(value=[int64_uttid])),
             'log_probabilities': tf.train.Feature(
               float_list=tf.train.FloatList(value=flat_log_probabilities)),
+            'transcripts': tf.train.Feature(
+              bytes_list=tf.train.BytesList(value=[decode_out_dict['transcripts'][i]])),
           })
         ).SerializeToString()
         output_path = os.path.join(p.log_softmax_output_directory, f'int64_audio_document_id={int64_audio_document_id}/shard.tfrecord')
@@ -170,17 +176,20 @@ class CTCModel(base_model.BaseTask):
 
     gt_transcripts = decode_out_dict['target_transcripts']
     hyp_transcripts = decode_out_dict['decoded_transcripts']
-    utt_id = decode_out_dict['utt_id']
+    if not py_utils.use_tpu():
+      utt_id = decode_out_dict['utt_id']
+    else:
+      utt_id = [["TPU does not know utt_id, sorry"]] * len(gt_transcripts)
 
     for i in range(len(gt_transcripts)):
-      tf.logging.info('utt_id : %s', utt_id[i][0])
+      # tf.logging.info('utt_id : %s', utt_id[i][0])
       tf.logging.info('ref_str: %s', gt_transcripts[i])
       tf.logging.info('hyp_str: %s', hyp_transcripts[i])
 
-    total_word_err = decode_out_dict['num_wrong_words']
-    total_ref_words = decode_out_dict['num_ref_words']
-    total_char_err = decode_out_dict['num_wrong_chars']
-    total_ref_chars = decode_out_dict['num_ref_chars']
+    total_word_err = np.sum(decode_out_dict['num_wrong_words'])
+    total_ref_words = np.sum(decode_out_dict['num_ref_words'])
+    total_char_err = np.sum(decode_out_dict['num_wrong_chars'])
+    total_ref_chars = np.sum(decode_out_dict['num_ref_chars'])
 
     dec_metrics_dict['num_samples_in_batch'].Update(len(gt_transcripts))
     dec_metrics_dict['wer'].Update(total_word_err / max(1., total_ref_words),
@@ -193,6 +202,7 @@ class CTCModel(base_model.BaseTask):
 
   def ComputeLoss(self, theta, predictions, input_batch):
     output_batch = predictions
+    assert self.params.blank_index == 31
     ctc_loss = tf.nn.ctc_loss(
         input_batch.tgt.labels,
         output_batch.encoded,
@@ -233,45 +243,22 @@ class CTCModel(base_model.BaseTask):
 
   def _DecodeCTC(self, output_batch):
     tok_logits = output_batch.encoded  # (T, B, F)
-    idxs = list(range(tok_logits.shape[-1]))
-    idxs[0] = self.params.blank_index
-    idxs[self.params.blank_index] = 0
-    tok_logits = tf.stack([tok_logits[:, :, idx] for idx in idxs], axis=-1)
 
     # GALVEZ: Make beam_width a tunable parameter!
-    (decoded,), _ = py_utils.RunOnTpuHost(tf.nn.ctc_beam_search_decoder, tok_logits,
-                                          py_utils.LengthsFromBitMask(
-                                            output_batch.padding, 0),
-                                          beam_width=100)
+    # (decoded,), _ = py_utils.RunOnTpuHost(tf.nn.ctc_beam_search_decoder, tok_logits,
+    #                                       py_utils.LengthsFromBitMask(
+    #                                         output_batch.padding, 0),
+    #                                       beam_width=100)
     # (decoded,), _ = tf.nn.ctc_beam_search_decoder(tok_logits,
     #                                               py_utils.LengthsFromBitMask(
     #                                                   output_batch.padding, 0),
     #                                               beam_width=100)
-
-    return py_utils.NestedMap(sparse_ids=decoded) #, transcripts=hyp_str)
-    dense_dec = tf.sparse_to_dense(decoded.indices,
-                                   decoded.dense_shape,
-                                   decoded.values,
-                                   default_value=self.params.blank_index)
-
-    invalid = tf.constant(self.params.blank_index, tf.int64)
-    bit_mask = tf.cast(tf.math.equal(dense_dec, invalid), tf.float32)  # (B, T)
-
-    decoded_seq_lengths = py_utils.LengthsFromBitMask(tf.transpose(bit_mask), 0)
-
-    hyp_str = py_utils.RunOnTpuHost(self.input_generator.IdsToStrings,
-                                    tf.cast(dense_dec, tf.int32),
-                                    decoded_seq_lengths)
-
-    # Some predictions have start and stop tokens predicted, we dont want
-    # to include those in WER calculation
-    hyp_str = tf.strings.regex_replace(hyp_str, '(<unk>)+', '')
-    hyp_str = tf.strings.regex_replace(hyp_str, '(<s>)+', '')
-    hyp_str = tf.strings.regex_replace(hyp_str, '(</s>)+', '')
-    return py_utils.NestedMap(sparse_ids=decoded, transcripts=hyp_str)
+    return py_utils.RunOnTpuHost(cpu_tf_graph_decode,
+                                 tok_logits, output_batch.padding,
+                                 self.params.blank_index, self.input_generator)
 
   def _CalculateErrorRates(self, dec_outs_dict, input_batch):
-    return {'stuff': dec_outs_dict.sparse_ids.values}
+    # return {'stuff': dec_outs_dict.sparse_ids.values}
     gt_seq_lens = py_utils.LengthsFromBitMask(input_batch.tgt.paddings, 1)
     gt_transcripts = py_utils.RunOnTpuHost(self.input_generator.IdsToStrings,
                                            input_batch.tgt.labels,
@@ -294,7 +281,6 @@ class CTCModel(base_model.BaseTask):
     num_wrong_words = tf.reduce_sum(word_dist[:, 0])
     num_ref_words = tf.reduce_sum(word_dist[:, 1])
     wer = num_wrong_words / num_ref_words
-
     ret_dict = {
         'target_ids': input_batch.tgt.ids,
         'target_labels': input_batch.tgt.labels,
@@ -313,3 +299,35 @@ class CTCModel(base_model.BaseTask):
       ret_dict['utt_id'] = input_batch.sample_ids
 
     return ret_dict
+
+def cpu_tf_graph_decode(tok_logits, padding, blank_index, input_generator):
+  # (T, B, F)
+  # ctc_beam_search_decoder assumes blank_index=0
+  assert blank_index == 31
+
+  # TODO: Consider making beam_width larger
+  (decoded,), _ = tf.nn.ctc_beam_search_decoder(tok_logits,
+                                                py_utils.LengthsFromBitMask(padding, 0),
+                                                beam_width=100)
+  # Could easily use blank_index here as well, right?
+  invalid = tf.constant(-1, tf.int64)
+  dense_dec = tf.sparse_to_dense(decoded.indices,
+                                 decoded.dense_shape,
+                                 decoded.values,
+                                 default_value=invalid)
+
+  batch_segments = decoded.indices[:, 0]
+  times_in_each_batch = decoded.indices[:, 1]
+
+  decoded_seq_lengths = tf.cast(tf.math.segment_max(times_in_each_batch, batch_segments) + 1, tf.int32)
+  # What happens if an empty sequence is output??? Then pad appropriately, tada!
+  decoded_seq_lengths = py_utils.PadBatchDimension(decoded_seq_lengths, tf.shape(tok_logits)[1], 0)
+
+  hyp_str = py_utils.RunOnTpuHost(input_generator.IdsToStrings,
+                                  tf.cast(dense_dec, tf.int32),
+                                  decoded_seq_lengths)
+
+  hyp_str = tf.strings.regex_replace(hyp_str, '(<unk>)+', '')
+  hyp_str = tf.strings.regex_replace(hyp_str, '(<s>)+', '')
+  hyp_str = tf.strings.regex_replace(hyp_str, '(</s>)+', '')
+  return py_utils.NestedMap(sparse_ids=decoded, transcripts=hyp_str)
