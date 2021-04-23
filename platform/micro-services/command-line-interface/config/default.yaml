@@ -1,0 +1,14 @@
+
+task_manager:
+    engine: LocalEngine
+
+search:
+    engine: ExistingDatasetSearchEngine
+    dataset_paths: "test"
+    samples_per_page: 10
+
+forced_alignment:
+    max_duration_seconds: 15
+
+
+
