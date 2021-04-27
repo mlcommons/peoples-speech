@@ -1,0 +1,66 @@
+#! /bin/bash
+
+# Safely execute this bash script
+# e exit on first failure
+# u unset variables are errors
+# f disable globbing on *
+# pipefail | produces a failure code if any stage fails
+set -euf -o pipefail
+
+# Get the directory of this script
+LOCAL_DIRECTORY="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+
+# Setup virtual environment
+PYTHON_ENV=$(python3 -c "import sys; sys.stdout.write(sys.prefix) if (hasattr(sys, 'real_prefix') or sys.base_prefix != sys.prefix) else sys.stdout.write('0')")
+if [[ $PYTHON_ENV == 0 ]];
+then
+echo "Not in virtual environment"
+
+ACTIVATE=$LOCAL_DIRECTORY/environment/bin/activate
+
+if [ ! -f $ACTIVATE ]; then
+echo "Virtual environment doesn't exist, making it..."
+python3 -m venv $LOCAL_DIRECTORY/environment
+python3 -m pip install --upgrade pip > /dev/null
+fi
+
+source $ACTIVATE
+else
+echo "Running in virtual environment $PYTHON_ENV"
+fi
+
+# Make sure requirements are installed
+pip install -r $LOCAL_DIRECTORY/requirements.txt > /dev/null
+
+# Set python environment
+PYTHONPATH="$LOCAL_DIRECTORY/source/flask"
+export PYTHONPATH
+
+# Setup google credentials
+export GOOGLE_APPLICATION_CREDENTIALS=$LOCAL_DIRECTORY/source/config/gcloud_key.json
+
+# export flask
+export FLASK_APP=$LOCAL_DIRECTORY/source/flask/app.py
+
+# Setup the react dev environment
+REACT_DEV_ENVIRONMENT=$LOCAL_DIRECTORY/react-development
+
+# Setup the dev environment if it doesn't exist
+if [ ! -d $REACT_DEV_ENVIRONMENT ]; then
+npx create-react-app $REACT_DEV_ENVIRONMENT
+fi
+
+# Move the code over
+rsync -av --delete $LOCAL_DIRECTORY/source/react/ $REACT_DEV_ENVIRONMENT/src/
+rsync -av --delete $LOCAL_DIRECTORY/source/config/ $REACT_DEV_ENVIRONMENT/src/config/
+
+# kill background tasks on script exit
+trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM EXIT
+
+# Start the dev environment
+cd $REACT_DEV_ENVIRONMENT
+python -m flask run &
+COLOR=1 npm start | cat &
+wait
+
+

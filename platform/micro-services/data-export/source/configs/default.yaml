@@ -1,0 +1,15 @@
+
+datasets:
+    "0": gs://the-peoples-speech-west-europe/peoples-speech-v0.5/train.csv
+
+exporter:
+    type: GoogleCloudParallelExporter
+    task_count: 1024
+    output_path: gs://the-peoples-speech-west-europe/peoples-speech-v0.5/train
+
+google:
+    work_queue:
+        name: "export_work_queue"
+
+verbose: True
+
