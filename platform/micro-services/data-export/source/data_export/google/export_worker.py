@@ -26,7 +26,7 @@ def main():
             print("Waiting for work")
     print("Queue empty, exiting")
 
-def export_data(itemstr):
+def export_data(itemstr, config):
     item = json.loads(itemstr)
 
     task_id = item["task_id"]
