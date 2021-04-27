@@ -1,0 +1,41 @@
+#! /bin/bash
+
+# Safely execute this bash script
+# e exit on first failure
+# u unset variables are errors
+# f disable globbing on *
+# pipefail | produces a failure code if any stage fails
+set -euf -o pipefail
+
+# Get the directory of this script
+LOCAL_DIRECTORY="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+
+# Setup virtual environment
+PYTHON_ENV=$(python3 -c "import sys; sys.stdout.write(sys.prefix) if (hasattr(sys, 'real_prefix') or sys.base_prefix != sys.prefix) else sys.stdout.write('0')")
+if [[ $PYTHON_ENV == 0 ]];
+then
+echo "Not in virtual environment"
+
+ACTIVATE=$LOCAL_DIRECTORY/environment/bin/activate
+
+if [ ! -f $ACTIVATE ]; then
+echo "Virtual environment doesn't exist, making it..."
+python3 -m venv $LOCAL_DIRECTORY/environment
+python3 -m pip install --upgrade pip > /dev/null
+fi
+
+source $ACTIVATE
+else
+echo "Running in virtual environment $PYTHON_ENV"
+fi
+
+# Make sure requirements are installed
+pip install -r $LOCAL_DIRECTORY/requirements.txt > /dev/null
+
+# Set python environment
+PYTHONPATH+="$LOCAL_DIRECTORY/source"
+export PYTHONPATH
+
+python source/data_export/api/test/test_export_dataset.py
+
+

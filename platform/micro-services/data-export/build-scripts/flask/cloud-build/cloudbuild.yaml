@@ -1,0 +1,14 @@
+steps:
+# build the data export container
+- name: 'gcr.io/cloud-builders/docker'
+  args: [ 'build', '-t', 'gcr.io/the-peoples-speech/data-export:0.12', '-f', 'platform/micro-services/data-export/build-scripts/flask/docker/Dockerfile', 'platform/micro-services/data-export' ]
+# push container image
+- name: "gcr.io/cloud-builders/docker"
+  args: ["push", "gcr.io/the-peoples-speech/data-export:0.12"]
+# deploy container image to GKE staging
+- name: "gcr.io/cloud-builders/gke-deploy"
+  args:
+  - run
+  - --filename=platform/micro-services/data-export/build-scripts/flask/kubernetes/export-service.yaml
+  - --location=europe-west4-c
+  - --cluster=peoples-speech-platform
