@@ -60,7 +60,7 @@ def write_samples(samples, path):
 def stream_to_command(command, samples):
     p = subprocess.Popen(command, stdin=subprocess.PIPE)
     for sample in samples:
-        line = sample[0]
+        line = sample["path"]
         try:
             p.stdin.write(line)
         except IOError as e:
