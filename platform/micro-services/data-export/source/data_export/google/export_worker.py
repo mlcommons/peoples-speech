@@ -11,6 +11,7 @@ import subprocess
 import errno
 
 import logging
+import os
 
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("google").setLevel(logging.WARNING)
