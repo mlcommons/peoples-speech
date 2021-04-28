@@ -70,7 +70,7 @@ def stream_to_command(command, samples):
     for sample in samples:
         line = sample["path"]
         try:
-            p.stdin.write(line.encode('utf-8'))
+            p.stdin.write(line.encode('utf-8') + "\n")
         except IOError as e:
             if e.errno == errno.EPIPE or e.errno == errno.EINVAL:
                 # Stop loop on "Invalid pipe" or "Invalid argument".
