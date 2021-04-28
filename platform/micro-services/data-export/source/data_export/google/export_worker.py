@@ -68,9 +68,9 @@ def write_samples(samples, path):
 def stream_to_command(command, samples):
     p = subprocess.Popen(command, stdin=subprocess.PIPE)
     for sample in samples:
-        line = sample["path"]
+        line = sample["path"] + "\n"
         try:
-            p.stdin.write(line.encode('utf-8') + "\n")
+            p.stdin.write(line.encode('utf-8'))
         except IOError as e:
             if e.errno == errno.EPIPE or e.errno == errno.EINVAL:
                 # Stop loop on "Invalid pipe" or "Invalid argument".
