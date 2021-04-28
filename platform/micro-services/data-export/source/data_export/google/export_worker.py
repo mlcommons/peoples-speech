@@ -10,6 +10,11 @@ import json
 import subprocess
 import errno
 
+import logging
+
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("google").setLevel(logging.WARNING)
+
 def main():
     config = get_config()
     q = GoogleCloudWorkQueue(config)
@@ -40,6 +45,8 @@ def export_data(itemstr, config):
     write_samples(samples, path)
 
 def write_samples(samples, path):
+    os.makedirs("/tmp/export-data", exist_ok=True)
+
     # copy locally
     command = ["gsutil", "-m", "cp", "-I", "/tmp/export-data"]
 
