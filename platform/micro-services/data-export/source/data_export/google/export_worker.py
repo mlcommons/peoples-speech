@@ -65,6 +65,8 @@ def write_samples(samples, path):
     # upload it
     command = ["gsutil", "-m", "cp", temp_archive, path]
 
+    subprocess.run(command)
+
 def stream_to_command(command, samples):
     p = subprocess.Popen(command, stdin=subprocess.PIPE)
     for sample in samples:
