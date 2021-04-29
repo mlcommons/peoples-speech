@@ -50,3 +50,16 @@ py_binary(
     "//lingvo/core/ops:ops",
     "//lingvo/core:py_utils"
 ])
+
+# bazel run galvasr2:dump_cc_by_licenses
+# bazel build galvasr2:dump_cc_by_licenses
+# python dump_cc_by_licenses.py
+py_binary(
+    name = "dump_cc_by_licenses",
+    main = "dump_cc_by_licenses.py",
+    srcs = ["dump_cc_by_licenses.py",
+            "align/spark/schemas.py",],
+    python_version = "PY3",
+    srcs_version = "PY3",
+    visibility = ["//visibility:public"],
+)
