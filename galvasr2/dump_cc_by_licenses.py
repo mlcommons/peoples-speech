@@ -24,7 +24,7 @@ def create_dump_license(input_catalogue_path:str="gs://the-peoples-speech-west-e
     ##There only 4 register without license at the moment. Without information in the rest of the data
     df = df.dropna(subset=['licenseurl'])
     ##Regex filter to search any kind of "by" license
-    regexp = r'\b(http|https)://creativecommons.org/licenses/by\b'
+    regexp = r'(http|https)://creativecommons.org/licenses/by/(1[.]0|2[.]0|2[.]5|3[.]0|4[.]0)'
     df = df.filter(df['licenseurl'].rlike(regexp))
     if save_as == 'csv':
         df.write.csv('cc_by_licenses.csv')
