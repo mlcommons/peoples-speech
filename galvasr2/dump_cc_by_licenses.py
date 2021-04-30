@@ -3,8 +3,6 @@
 from align.spark.schemas import ARCHIVE_ORG_SCHEMA
 from pyspark.sql import SparkSession
 
-spark = SparkSession.builder.appName('CC-BY-license').getOrCreate()
-
 def myConcat(*cols):
     concat_columns = []
     for c in cols[:-1]:
@@ -13,7 +11,7 @@ def myConcat(*cols):
     concat_columns.append(F.coalesce(cols[-1], F.lit("*")))
     return F.concat(*concat_columns)
 
-def create_dump_license(input_catalogue_path:str="gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/EXPANDED_LICENSES_FILTERED_ACCESS.jsonl.gz", save_as:str='csv', spark=spark):
+def create_dump_license(spark:SparkSession, input_catalogue_path:str="gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/EXPANDED_LICENSES_FILTERED_ACCESS.jsonl.gz", save_as:str='csv'):
     df = spark.read.format('json').schema(ARCHIVE_ORG_SCHEMA).load(input_catalogue_path)
     ##Filter by necessary columns 
     columns = [df.metadata.licenseurl, df.metadata.creator, df.metadata.title, df.metadata.credits]
@@ -34,7 +32,8 @@ def create_dump_license(input_catalogue_path:str="gs://the-peoples-speech-west-e
     return 'save file successful'
 
 def main():
-    create_dump_license()
+    spark = SparkSession.builder.appName('CC-BY-license').getOrCreate()
+    create_dump_license(spark)
 
 if __name__ == '__main__':
     main()
