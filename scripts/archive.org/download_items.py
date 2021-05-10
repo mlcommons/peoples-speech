@@ -5,20 +5,36 @@ import json
 import internetarchive as ia
 from tqdm import tqdm
 
-LICENSE_WHITELIST = "(licenseurl:*creativecommons.org\/publicdomain\/zero\/1.0* OR licenseurl:*creativecommons.org\/licenses\/by\/4.0* OR licenseurl:*creativecommons.org\/licenses\/by\/3.0* OR licenseurl:*creativecommons.org\/licenses\/by\/2.5* OR licenseurl:*creativecommons.org\/licenses\/by\/2.0* OR licenseurl:*creativecommons.org\/licenses\/by\/1.0* OR licenseurl:*creativecommons.org\/licenses\/publicdomain* OR licenseurl:*creativecommons.org\/publicdomain\/mark\/1.0* OR licenseurl:*usa.gov\/government-works* OR licenseurl:*creativecommons.org\/licenses\/cc0\/3.0*)"  # pylint: disable=line-too-long,anomalous-backslash-in-string
+LICENSE_WHITELIST = """(\
+licenseurl:*creativecommons.org\/licenses\/by-sa\/4.0* OR \
+licenseurl:*creativecommons.org\/licenses\/by-sa\/3.0* OR \
+licenseurl:*creativecommons.org\/licenses\/by-sa\/2.5* OR \
+licenseurl:*creativecommons.org\/licenses\/by-sa\/2.0* OR \
+licenseurl:*creativecommons.org\/licenses\/by-sa\/1.0* OR \
+licenseurl:*creativecommons.org\/publicdomain\/zero\/1.0* OR \
+licenseurl:*creativecommons.org\/licenses\/by\/4.0* OR \
+licenseurl:*creativecommons.org\/licenses\/by\/3.0* OR \
+licenseurl:*creativecommons.org\/licenses\/by\/2.5* OR \
+licenseurl:*creativecommons.org\/licenses\/by\/2.0* OR \
+licenseurl:*creativecommons.org\/licenses\/by\/1.0* OR \
+licenseurl:*creativecommons.org\/licenses\/publicdomain* OR \
+licenseurl:*creativecommons.org\/publicdomain\/mark\/1.0* OR \
+licenseurl:*usa.gov\/government-works* OR \
+licenseurl:*creativecommons.org\/licenses\/cc0\/3.0* \
+)"""  # pylint: disable=line-too-long,anomalous-backslash-in-string
 
 QUERIES = dict(
   # TODO: Consider adding AND NOT format:ASR to disclude speech recognition-based labels.
   #ALL_CAPTIONED_DATA=f"{LICENSE_WHITELIST} AND (mediatype:audio OR mediatype:movies) AND (closed_captioning:yes OR format:SubRip OR format:\"Web Video Text Tracks\") AND (NOT access-restricted-item:TRUE)",
   # NON_CAPTIONED_DATA_WITH_TEXT=f"{LICENSE_WHITELIST} AND (format:DjVuTXT AND format:MP3 AND NOT format:SubRip) AND NOT (subject:'librivox')",
-  EXPANDED_LICENSES_FILTERED_ACCESS=f"{LICENSE_WHITELIST} AND (mediatype:audio OR mediatype:movies) AND (closed_captioning:yes OR format:SubRip OR format:\"Web Video Text Tracks\") AND (NOT access-restricted-item:TRUE)",
+  CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS=f"{LICENSE_WHITELIST} AND (mediatype:audio OR mediatype:movies) AND (closed_captioning:yes OR format:SubRip OR format:\"Web Video Text Tracks\") AND (NOT access-restricted-item:TRUE)",
 )
 
 
 def download_data(metadata_file, save_directory):
   def get_data(identifier):
     ia.download(identifier,
-                formats=["SubRip", "MP3", "Web Video Text Tracks", "Closed Caption Text"],
+                formats=["SubRip", "VBR MP3", "MP3", "Web Video Text Tracks", "Closed Caption Text"],
                 destdir=save_directory,
                 # Very import to set this. tf.io.gfile uses mtime in
                 # nanoseconds, while archive.org uses mtime in seconds
@@ -35,7 +51,7 @@ def download_data(metadata_file, save_directory):
     for line in fh:
       ids.append(json.loads(line)["identifier"])
 
-  with ThreadPoolExecutor(15) as executor:
+  with ThreadPoolExecutor(5) as executor:
     list(tqdm(executor.map(get_data, ids), total=len(ids)))
 
 
@@ -54,6 +70,7 @@ def download_metadata(query, save_file):
     metadata_list = list(tqdm(executor.map(get_metadata, all_results), total=len(all_results)))
   with gzip.open(save_file, "wt") as fh:
     for metadata in metadata_list:
+      # Don't use jsonl, use... 
       json.dump(metadata, fh)
       fh.write("\n")
 
@@ -62,7 +79,7 @@ if __name__ == '__main__':
     print(query)
     print(f"Dumping metadata for {key}")
     save_file = key + ".jsonl.gz"
-    download_metadata(query, save_file)
+    # download_metadata(query, save_file)
     download_data(save_file, f"gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/{key}")
 
   # download_data("CAPTIONED_DATA.jsonl.gz", "gs://the-peoples-speech-west-europe/archive_org/Aug_18_2020/CAPTIONED_DATA")

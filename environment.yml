@@ -206,7 +206,7 @@ dependencies:
     - tensorboard==2.2.2
     - tensorboard-plugin-profile==2.2.0
     - tensorboard-plugin-wit==1.7.0
-    - tensorflow==2.2.0
+    - tensorflow-gpu==2.2.0
     - tensorflow-datasets==3.2.1
     - tensorflow-estimator==2.2.0
     - tensorflow-metadata==0.22.2

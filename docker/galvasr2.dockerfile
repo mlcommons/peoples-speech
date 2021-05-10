@@ -1,4 +1,4 @@
-ARG cpu_base_image="ubuntu:18.04"
+ARG cpu_base_image="nvidia/cuda:10.0-cudnn7-devel-ubuntu18.04"
 ARG base_image=$cpu_base_image
 FROM $base_image
 
@@ -133,6 +133,17 @@ RUN cd /install/spark/python && conda run -n 100k-hours-lingvo-3  python setup.p
 RUN    echo 'spark.eventLog.enabled  true' >> $SPARK_CONF_DIR/spark-defaults.conf \
     && echo 'spark.eventLog.dir file:///development/lingvo-source/spark-events' >> $SPARK_CONF_DIR/spark-defaults.conf \
     && echo 'spark.history.fs.logDirectory file:///development/lingvo-source/spark-events' >> $SPARK_CONF_DIR/spark-defaults.conf
+
+RUN apt-get update && apt-get install -y --no-install-recommends automake autoconf gfortran libtool subversion
+
+COPY third_party/kaldi /opt/kaldi
+RUN cd /opt/kaldi \
+    && cd tools \
+    && extras/install_openblas.sh \
+    && make -j 4
+RUN cd /opt/kaldi/src \
+    && ./configure --use-cuda=yes --cudatk-dir=/usr/local/cuda --mathlib=OPENBLAS \
+    && make -j 4 depend && make -j 4
 
 # TensorBoard
 EXPOSE 6006
