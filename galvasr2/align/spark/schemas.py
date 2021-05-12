@@ -45,7 +45,7 @@ ARCHIVE_ORG_SCHEMA = StructType([
             StructField("aspect_ratio", StringType(), True),
             StructField("backup_location", StringType(), True),
             StructField("closed_captioning", StringType(), True),
-            StructField("collection", ArrayType(StringType(), True), True),
+            StructField("collection", StringType(), True),
             StructField("color", StringType(), True),
             StructField("contact", StringType(), True),
             StructField("coverage", StringType(), True),

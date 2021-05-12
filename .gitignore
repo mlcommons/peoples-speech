@@ -5,3 +5,5 @@ bazel-*
 settings.json
 # emacs backups
 *~
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
