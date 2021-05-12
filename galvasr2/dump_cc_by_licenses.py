@@ -34,12 +34,11 @@ def my_concat(*cols):
     return F.concat(*concat_columns)
 
 
-def create_dump_license(
+def create_dump_license_data(
     spark: SparkSession,
-    input_catalogue_path: str = "gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/EXPANDED_LICENSES_FILTERED_ACCESS.jsonl.gz",
-    save_as: str = "csv",
+    input_catalogue_path: str = "gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/EXPANDED_LICENSES_FILTERED_ACCESS.jsonl.gz"
 ):
-    """Function that takes the type of licenses to verify in which one needs to grant the necessary credits and deliver the file (cvs, txt, etc) with this data
+    """Function that takes the type of licenses to verify in which one needs to grant the necessary credits and deliver the dataframe with this data
 
     Parameters
     ----------
@@ -77,6 +76,19 @@ def create_dump_license(
     ##Regex filter to search any kind of "by" license
     regexp = r"(http|https)://creativecommons.org/licenses/by/(1[.]0|2[.]0|2[.]5|3[.]0|4[.]0)"
     data_license = data_license.filter(data_license["licenseurl"].rlike(regexp))
+    return data_license
+
+def save_dump_license_data(data_license, save_as: str = "csv"):
+    """Function that takes the table with the neccesary credits of licenses and deliver the file (cvs, txt, etc)
+
+    Parameters
+    ----------
+    data_license : SparkSession
+        Data with the neccesary credicts by CC-BY licenses
+    -------
+    Str
+        Status of the file generation
+    """
     if save_as == "csv":
         data_license.write.csv("cc_by_licenses.csv")
     elif save_as == "txt":
@@ -87,14 +99,14 @@ def create_dump_license(
             "append"
         ).save("credits.txt")
     else:
-        return "This format to save is not allowed"
+        return "This format to save is not allowed", 0
     return "save file successful"
-
 
 def main():
     spark = SparkSession.builder.appName("CC-BY-license").getOrCreate()
-    create_dump_license(spark, FLAGS.input_catalogue_path, FLAGS.save_as)
+    data_license = create_dump_license_data(spark, FLAGS.input_catalogue_path, FLAGS.save_as)
+    save_dump_license_data(data_license)
 
-
+    
 if __name__ == "__main__":
     main()
