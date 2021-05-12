@@ -7,4 +7,4 @@ def test_create_dump_license():
     input_catalogue_path = "gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/EXPANDED_LICENSES_FILTERED_ACCESS.jsonl.gz"
     data_license = create_dump_license_data(spark, input_catalogue_path)
     assert len(data_license.columns) == 4
-    assert data_license.columns == ['licenseurl', 'creator', 'title', 'credits']
+    assert data_license.columns == ["licenseurl", "creator", "title", "credits"]

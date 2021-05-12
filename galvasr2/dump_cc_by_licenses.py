@@ -36,7 +36,7 @@ def my_concat(*cols):
 
 def create_dump_license_data(
     spark: SparkSession,
-    input_catalogue_path: str = "gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/EXPANDED_LICENSES_FILTERED_ACCESS.jsonl.gz"
+    input_catalogue_path: str = "gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/EXPANDED_LICENSES_FILTERED_ACCESS.jsonl.gz",
 ):
     """Function that takes the type of licenses to verify in which one needs to grant the necessary credits and deliver the dataframe with this data
 
@@ -78,6 +78,7 @@ def create_dump_license_data(
     data_license = data_license.filter(data_license["licenseurl"].rlike(regexp))
     return data_license
 
+
 def save_dump_license_data(data_license, save_as: str = "csv"):
     """Function that takes the table with the neccesary credits of licenses and deliver the file (cvs, txt, etc)
 
@@ -102,11 +103,14 @@ def save_dump_license_data(data_license, save_as: str = "csv"):
         return "This format to save is not allowed", 0
     return "save file successful"
 
+
 def main():
     spark = SparkSession.builder.appName("CC-BY-license").getOrCreate()
-    data_license = create_dump_license_data(spark, FLAGS.input_catalogue_path, FLAGS.save_as)
+    data_license = create_dump_license_data(
+        spark, FLAGS.input_catalogue_path, FLAGS.save_as
+    )
     save_dump_license_data(data_license)
 
-    
+
 if __name__ == "__main__":
     main()
