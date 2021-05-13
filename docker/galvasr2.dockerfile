@@ -54,9 +54,9 @@ ENV SPARK_CONF_DIR="$SPARK_HOME/conf"
 RUN curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh \
     && bash Miniconda3-latest-Linux-x86_64.sh -b -p /install/miniconda3
 
-COPY environment2.yml /install/environment2.yml
+COPY environment.yml /install/environment.yml
 ENV PATH="/install/miniconda3/bin/:${PATH}"
-RUN conda env create -f /install/environment2.yml
+RUN conda env create -f /install/environment.yml
 
 RUN curl -L -o /usr/local/bin/bazel https://github.com/bazelbuild/bazelisk/releases/download/v1.7.4/bazelisk-linux-amd64 \
      && chmod a+x /usr/local/bin/bazel \
