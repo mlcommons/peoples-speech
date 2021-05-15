@@ -3,7 +3,11 @@
     {
         "train_path": "gs://the-peoples-speech-west-europe/peoples-speech-v0.7/train.tar.gz",
         "dev_path": "gs://the-peoples-speech-west-europe/peoples-speech-v0.7/development.tar.gz",
-        "test_path": "gs://the-peoples-speech-west-europe/peoples-speech-v0.7/test.tar.gz"
+        "test_path": "gs://the-peoples-speech-west-europe/peoples-speech-v0.7/test.tar.gz",
+
+        "access_list" : [
+            "datasets.mlcommons@gmail.com"
+        ]
     }
 }
 
