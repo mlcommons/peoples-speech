@@ -48,6 +48,8 @@ REACT_DEV_ENVIRONMENT=$LOCAL_DIRECTORY/react-development
 # Setup the dev environment if it doesn't exist
 if [ ! -d $REACT_DEV_ENVIRONMENT ]; then
 npx create-react-app $REACT_DEV_ENVIRONMENT
+cd $REACT_DEV_ENVIRONMENT
+npm i react-google-login
 fi
 
 # Move the code over

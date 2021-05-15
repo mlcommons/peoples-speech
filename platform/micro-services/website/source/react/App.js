@@ -1,7 +1,7 @@
 import logo from './logo.png';
 import './App.css';
-//import getGoogleCloudStorageUrl from './getSignUrl.js';
-//import getTrainingSetPath from './getTrainingSetPath.js';
+import Login from './components/Login.js'
+import Logout from './components/Logout.js'
 
 import React, { Component } from 'react';
 
@@ -10,7 +10,8 @@ class App extends Component {
     state = {
         train_dataset_url: [],
         dev_dataset_url: [],
-        test_dataset_url: []
+        test_dataset_url: [],
+        logged_in: false
       }
 
     render() {
@@ -19,6 +20,12 @@ class App extends Component {
           <header className="App-header">
             <img src={logo} className="App-logo" alt="logo" />
             <p>Download the People's Speech Dataset</p>
+            <Login
+                addTrainURL={this.addTrainURL.bind(this)}
+                addDevURL={this.addDevURL.bind(this)}
+                addTestURL={this.addTestURL.bind(this)}
+             />
+            <Logout />
             <a
               className="App-link"
               href={this.state.train_dataset_url}
@@ -48,29 +55,16 @@ class App extends Component {
       );
     }
 
-    componentDidMount() {
-        fetch('http://localhost:5000/peoples_speech/train_url')
-        .then(res => res.json())
-        .then((data) => {
-          console.log("Got response: ", data);
-          this.setState({ train_dataset_url : data["url"] })
-        })
-        .catch(console.log)
-        fetch('http://localhost:5000/peoples_speech/dev_url')
-        .then(res => res.json())
-        .then((data) => {
-          console.log("Got response: ", data);
-          this.setState({ dev_dataset_url : data["url"] })
-        })
-        .catch(console.log)
-        fetch('http://localhost:5000/peoples_speech/test_url')
-        .then(res => res.json())
-        .then((data) => {
-          console.log("Got response: ", data);
-          this.setState({ test_dataset_url : data["url"] })
-        })
-        .catch(console.log)
-      }
+    addTrainURL(url) {
+        this.setState({ train_dataset_url : url });
+    }
+    addDevURL(url) {
+        this.setState({ dev_dataset_url : url });
+    }
+    addTestURL(url) {
+        this.setState({ test_dataset_url : url });
+    }
+
 }
 
 export default App;
