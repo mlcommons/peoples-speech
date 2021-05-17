@@ -10,3 +10,6 @@
 [submodule "DeepSpeech"]
 	path = third_party/DeepSpeech
 	url = git@github.com:mozilla/DeepSpeech.git
+[submodule "kaldi"]
+	path = third_party/kaldi
+	url = git@github.com:galv/kaldi.git

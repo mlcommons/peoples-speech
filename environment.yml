@@ -148,6 +148,7 @@ dependencies:
     - lazy-object-proxy==1.4.3
     - markdown==3.2.2
     - markupsafe==1.1.1
+    - matching==1.4
     - matplotlib==3.2.2
     - mccabe==0.6.1
     - mistune==0.8.4

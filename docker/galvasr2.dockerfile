@@ -1,4 +1,4 @@
-ARG cpu_base_image="nvidia/cuda:10.0-cudnn7-devel-ubuntu18.04"
+ARG cpu_base_image="nvidia/cuda:10.1-cudnn7-devel-ubuntu18.04"
 ARG base_image=$cpu_base_image
 FROM $base_image
 
@@ -46,6 +46,8 @@ RUN /bin/bash -c "source /install/google-cloud-sdk/path.bash.inc && \
     && mkdir -p /install/spark \
     && tar zxf spark-3.0.0-bin-hadoop2.7.tgz -C /install/spark --strip-components=1 \
     && gsutil cp gs://hadoop-lib/gcs/gcs-connector-hadoop2-2.1.6.jar /install/spark/jars"
+
+RUN echo "source /install/google-cloud-sdk/path.bash.inc" >> $HOME/.bashrc
 
 ENV SPARK_HOME="/install/spark"
 ENV PATH="$SPARK_HOME/bin:$SPARK_HOME/sbin:$PATH"
@@ -136,14 +138,41 @@ RUN    echo 'spark.eventLog.enabled  true' >> $SPARK_CONF_DIR/spark-defaults.con
 
 RUN apt-get update && apt-get install -y --no-install-recommends automake autoconf gfortran libtool subversion
 
-COPY third_party/kaldi /opt/kaldi
-RUN cd /opt/kaldi \
-    && cd tools \
+RUN export GCSFUSE_REPO=gcsfuse-`lsb_release -c -s` \
+    && echo "deb http://packages.cloud.google.com/apt $GCSFUSE_REPO main" | tee /etc/apt/sources.list.d/gcsfuse.list \
+    && curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add - \
+    && apt-get update \
+    && apt-get install -y gcsfuse
+
+    # && apt-get update \
+    # && apt-get install -y kmod \
+    # && modprobe fuse \
+    # && gcsfuse --implicit-dirs the-peoples-speech-west-europe \
+    #    $HOME/the-peoples-speech-west-europe-bucket
+# gcsfuse --implicit-dirs the-peoples-speech-west-europe $HOME/the-peoples-speech-west-europe-bucket
+RUN mkdir -p /spark-events \
+    && mkdir -p $HOME/the-peoples-speech-west-europe-bucket
+
+RUN /install/google-cloud-sdk/bin/gsutil cp gs://the-peoples-speech-west-europe/downloadable-code-mirror/NsightSystems-linux-cli-public-2021.2.1.58-642947b.deb \
+    NsightSystems-linux-cli-public-2021.2.1.58-642947b.deb \
+    && dpkg -i NsightSystems-linux-cli-public-2021.2.1.58-642947b.deb
+
+COPY third_party/kaldi/tools /opt/kaldi/tools
+RUN cd /opt/kaldi/tools \
     && extras/install_openblas.sh \
-    && make -j 4
+    && make -j $(nproc)
+
+COPY third_party/kaldi/egs /opt/kaldi/egs
+COPY third_party/kaldi/src /opt/kaldi/src
 RUN cd /opt/kaldi/src \
     && ./configure --use-cuda=yes --cudatk-dir=/usr/local/cuda --mathlib=OPENBLAS \
-    && make -j 4 depend && make -j 4
+    && make -j $(nproc) depend && make -j $(nproc)
+
+RUN cd /opt/kaldi/egs/aspire/s5 \
+    && wget http://kaldi-asr.org/models/1/0001_aspire_chain_model_with_hclg.tar.bz2 \
+    && tar jxfv 0001_aspire_chain_model_with_hclg.tar.bz2 \
+    && steps/online/nnet3/prepare_online_decoding.sh --mfcc-config conf/mfcc_hires.conf \
+       data/lang_chain exp/nnet3/extractor exp/chain/tdnn_7b exp/tdnn_7b_chain_online
 
 # TensorBoard
 EXPOSE 6006

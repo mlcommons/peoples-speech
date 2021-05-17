@@ -68,10 +68,6 @@ def main(argv):
 
   catalogue_df = load_audio_id_text_id_mapping(spark, FLAGS.input_catalogue)
   training_sample_rows = catalogue_df.collect()
-  # from random import seed, shuffle
-  # seed(721)
-  # shuffle(training_sample_rows)
-  # training_sample_rows = training_sample_rows[:5]
 
   vad_out_dir = os.path.join(FLAGS.work_dir, "vad_pcm_tfrecords")
   audio_document_id_int64_id_dir = os.path.join(FLAGS.work_dir, "audio_document_id_to_int64_id")

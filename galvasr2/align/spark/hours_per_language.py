@@ -1,57 +1,38 @@
-# from functools import partial
-# from io import BytesIO
-# import json
-# import logging
-# import os
-# import subprocess
-# import shlex
-# import tempfile
-# from typing import List, Tuple
-# import wave
+import logging
+import sys
 
-# import ds_ctcdecoder
-# from ftfy import fix_text, guess_bytes
-# import langid
-# import numpy as np
-# import pandas as pd
-# import re
-# import srt
+from absl import app
+from absl import flags
+import pyspark
+from pyspark.sql import SparkSession
+import pyspark.sql.functions as F
 
-# from absl import app
-# from absl import flags
-
-# import pyspark
-# from pyspark.sql import SparkSession
-# from pyspark.sql.functions import col, pandas_udf
-# import pyspark.sql.functions as F
-# import pyspark.sql.types as T
-# from pyspark.sql.functions import array, array_contains, count, explode, lit
-# from pyspark.sql.types import ArrayType, BinaryType, DoubleType, FloatType, ShortType, StructType, StructField, StringType, IntegerType, LongType
-
-from galvasr2.align.spark.align import *
+from galvasr2.align.spark.align_lib import load_audio_id_text_id_mapping, load_transcripts, get_audio_seconds_udf, infer_language_udf
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string('input_dir',
-                    'gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/EXPANDED_LICENSES_FILTERED_ACCESS',
-                    'Input directory. Exact format of this is a bit undefined right now and will likely change.')
 flags.DEFINE_string('input_catalogue',
-                    'gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/EXPANDED_LICENSES_FILTERED_ACCESS.jsonl.gz',
+                    'gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS.jsonl.gz',
                     'Input catalogue. Basically just a dump of archive.org metadata for now.')
-flags.DEFINE_string('vad_dir',
-                    'gs://the-peoples-speech-west-europe/forced-aligner/Mar_18_2021/vad_pcm_tfrecords',
-                    'Input catalogue. Basically just a dump of archive.org metadata for now.')
+# input_dir and input_gcs_path must be kept in sync!
+flags.DEFINE_string('input_dir',
+                    '/root/the-peoples-speech-west-europe-bucket/archive_org/Mar_7_2021/CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS',
+                    'Input directory. Exact format of this is a bit undefined right now and will likely change.')
+flags.DEFINE_string('input_gcs_path',
+                    'gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS',
+                    'Input directory. Exact format of this is a bit undefined right now and will likely change.')
 
 def main(argv):
   spark = SparkSession.builder \
                       .master("local[*]") \
-                      .appName("Forced Aligner") \
+                      .appName("Hours Per Language") \
+                      .config("spark.sql.files.ignoreMissingFiles", "true")\
+                      .config("spark.sql.files.ignoreCorruptFiles", "true")\
                       .config("spark.sql.execution.arrow.pyspark.enabled", "true")\
-                      .config("spark.sql.execution.arrow.maxRecordsPerBatch", "1")\
                       .config("spark.driver.extraJavaOptions", "-Dio.netty.tryReflectionSetAccessible=true")\
                       .config("spark.executor.extraJavaOptions", "-Dio.netty.tryReflectionSetAccessible=true")\
-                      .config("spark.driver.memory", "120g")\
-                      .config("spark.executor.memory", "120g")\
+                      .config("spark.driver.memory", "40g")\
+                      .config("spark.executor.memory", "40g")\
                       .config("spark.task.maxFailures", "2")\
                       .config("spark.rpc.askTimeout", "480s")\
                       .config("spark.executor.heartbeatInterval", "20000ms")\
@@ -64,22 +45,15 @@ def main(argv):
   catalogue_df = load_audio_id_text_id_mapping(spark, FLAGS.input_catalogue)
   training_sample_rows = catalogue_df.collect()
 
-  transcripts_df = load_transcripts(spark, FLAGS.input_dir, training_sample_rows)
+  catalogue_df = catalogue_df.withColumn("duration",
+                                         get_audio_seconds_udf(F.concat(F.lit(FLAGS.input_gcs_path), F.lit("/"), catalogue_df.identifier, F.lit("/"), catalogue_df.audio_document_id)) / 60. / 60.)
+  transcripts_df = load_transcripts(spark, FLAGS.input_gcs_path, training_sample_rows)
   languages_df = transcripts_df.select(transcripts_df.text_document_id,
                                        infer_language_udf(transcripts_df.transcript).alias('language'))
-  vad_df = spark.read.format('tfrecord').load(FLAGS.vad_dir)
-  vad_df = vad_df.withColumn('duration', (F.length(vad_df.frames) / 2. / 16_000. / 60. / 60.))
-  language_and_duration_df = languages_df.join(catalogue_df, ['text_document_id']).join(vad_df, ['audio_document_id']).select('language', 'duration')
 
-  # language_and_frames_df.printSchema()
-  # from IPython import embed; embed()
-
-  # language_and_duration_df = language_and_frames_df.select(language_and_frames_df.language,
-  #                                                          (F.length(language_and_frames_df.frames) / 2. / 16_000. / 60. / 60.).alias('duration'))
-
-  rows = (language_and_duration_df.groupBy(language_and_duration_df.language)
-          .sum('duration')
-          .collect())
+  # gcsfuse --implicit-dirs the-peoples-speech-west-europe $HOME/the-peoples-speech-west-europe-bucket
+  catalogue_df = catalogue_df.join(languages_df, 'text_document_id')
+  rows = catalogue_df.groupBy(catalogue_df.language).sum('duration').collect()
   print(rows)
   from IPython import embed; embed()
 
@@ -87,22 +61,29 @@ if __name__ == '__main__':
   app.run(main)
 
 """
-[Row(language='en', sum(duration)=1493288.057928944),
-Row(language='ro', sum(duration)=0.00013333333333333334), 
-Row(language='pt', sum(duration)=0.7605275173611105), 
-Row(language='ms', sum(duration)=10.04390634548606), 
-Row(language='tr', sum(duration)=108.71806056423623), 
-Row(language='de', sum(duration)=1.0519790277777779), 
-Row(language='br', sum(duration)=0.024377508680555552), 
-Row(language='es', sum(duration)=0.10690637152777778), 
-Row(language='eu', sum(duration)=1.9484548437499973), 
-Row(language='it', sum(duration)=0.06852736979166667), 
-Row(language='nl', sum(duration)=1.4896868576388875), 
-Row(language='mt', sum(duration)=0.01699868923611111), 
-Row(language='no', sum(duration)=0.02376923611111111), 
-Row(language='cy', sum(duration)=2.8405886631944433), 
-Row(language='fr', sum(duration)=0.3955049739583286), 
-Row(language='id', sum(duration)=0.17152500000000095), 
-Row(language='la', sum(duration)=0.1311827517361111), 
-Row(language='fi', sum(duration)=0.008527647569444446)]
+[Row(language='en', sum(duration)=79043.2241041677), 
+Row(language='ro', sum(duration)=0.18604722861111112), 
+Row(language='sk', sum(duration)=0.015528331944444444), 
+Row(language='pt', sum(duration)=0.8029441672222222), 
+Row(language='ms', sum(duration)=39.340964462500004), 
+Row(language='tr', sum(duration)=0.0489819425), 
+Row(language='de', sum(duration)=11.079705825), 
+Row(language='br', sum(duration)=0.024625554166666667), 
+Row(language='es', sum(duration)=4.928195001111111), 
+Row(language='eu', sum(duration)=3.870641945), 
+Row(language='it', sum(duration)=0.7015947202777778), 
+Row(language='sv', sum(duration)=0.6141902797222223), 
+Row(language='nl', sum(duration)=1.8030086005555555), 
+Row(language='ru', sum(duration)=10.924616139444442), 
+Row(language='mt', sum(duration)=0.01752277777777778), 
+Row(language='no', sum(duration)=13.603658894999999), 
+Row(language='bg', sum(duration)=0.3130866666666667), 
+Row(language='cy', sum(duration)=5.814326111111112), 
+Row(language='zu', sum(duration)=0.4729961111111111), 
+Row(language='', sum(duration)=512.8351283508333), 
+Row(language='fr', sum(duration)=3.4299111086111114), 
+Row(language='se', sum(duration)=12.611557778888889), 
+Row(language='id', sum(duration)=0.3214013883333333), 
+Row(language='la', sum(duration)=1.3733055555555556), 
+Row(language='fi', sum(duration)=0.025745555555555556)]
 """
