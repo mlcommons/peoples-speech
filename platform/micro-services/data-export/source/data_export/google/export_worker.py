@@ -1,20 +1,9 @@
-import time
 
 from data_export.google.google_cloud_work_queue import GoogleCloudWorkQueue
 from data_export.utility.get_config import get_config
+from data_export.utility.load_dataset_csv import load_dataset_csv
 
-from smart_open import open
-import csv
 import json
-
-import subprocess
-import errno
-
-import logging
-import os
-
-logging.getLogger("urllib3").setLevel(logging.WARNING)
-logging.getLogger("google").setLevel(logging.WARNING)
 
 def main():
     config = get_config()
@@ -43,66 +32,7 @@ def export_data(itemstr, config):
 
     path = config["exporter"]["output_path"] + "-" + str(task_id) + "-tar.gz"
 
-    write_samples(samples, path)
-
-def write_samples(samples, path):
-    os.makedirs("/tmp/export-data", exist_ok=True)
-
-    # copy locally
-    command = ["gsutil", "-m", "cp", "-I", "/tmp/export-data"]
-
-    stream_to_command(command, samples)
-
-    # tar it
-    filename = os.path.basename(path)
-
-    temp_archive = os.path.join("/tmp", filename)
-
-    command = ["tar", "-czvf", temp_archive, "/tmp/export-data"]
-
-    subprocess.run(command)
-
-    # upload it
-    command = ["gsutil", "-m", "cp", temp_archive, path]
-
-    subprocess.run(command)
-
-def stream_to_command(command, samples):
-    p = subprocess.Popen(command, stdin=subprocess.PIPE)
-    for sample in samples:
-        line = sample["path"] + "\n"
-        try:
-            p.stdin.write(line.encode('utf-8'))
-        except IOError as e:
-            if e.errno == errno.EPIPE or e.errno == errno.EINVAL:
-                # Stop loop on "Invalid pipe" or "Invalid argument".
-                # No sense in continuing with broken pipe.
-                break
-            else:
-                # Raise any other error.
-                raise
-
-    p.stdin.close()
-    p.wait()
-
-def load_csv(csv_path, task_id, task_count):
-
-    index = 0
-    new_samples = []
-    with open(csv_path) as csv_file:
-        reader = csv.reader(csv_file, delimiter=',', quotechar='"')
-
-        for row in reader:
-            path, caption = row[0], row[1]
-
-            metadata = {}
-            if len(row) >= 3:
-                metadata = json.loads(row[2])
-
-            if index % task_count == task_id:
-                yield {"path" : path, "caption" : caption, "metadata" : metadata}
-
-            index += 1
+    write_samples_to_tar_gz(samples, path)
 
 if __name__ == "__main__":
     main()

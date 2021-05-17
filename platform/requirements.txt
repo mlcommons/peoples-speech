@@ -4,3 +4,4 @@ gtts
 python-configuration[yaml]
 whoosh
 audiofile
+redis
