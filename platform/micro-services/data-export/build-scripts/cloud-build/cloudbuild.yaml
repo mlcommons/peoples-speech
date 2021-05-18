@@ -1,3 +1,0 @@
-steps:
-- name: 'gcr.io/cloud-builders/docker'
-  args: [ 'build', '-t', 'gcr.io/peoples-speech/platform', '-f', 'build-scripts/docker/Dockerfile', '.' ]
