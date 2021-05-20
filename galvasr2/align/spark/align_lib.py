@@ -72,6 +72,7 @@ def load_audio_files(spark, collected_audio_document_rows, base_path: str):
   return raw_audio_df.select('content',
                              F.reverse(F.split(raw_audio_df.path, "[.]"))[0].alias("format"),
                              F.reverse(F.split(raw_audio_df.path, "/"))[0].alias("audio_document_id"),
+                             F.reverse(F.split(raw_audio_df.path, "/"))[1].alias("identifier"),
                              F.monotonically_increasing_id().alias("int64_audio_document_id")
   )
 
@@ -92,6 +93,7 @@ def load_transcripts(spark, base_path: str, collected_text_document_rows: List[p
       return "hrs05H_A1310_100511.auto.srt"
     else:
       return text_document_id
+  # TODO: Upload this file
   with open("/development/lingvo-source/missing_files.json", "r") as fh:
     missing_text_document_ids = set(json.load(fh))
   text_document_ids = [os.path.join(base_path, row.identifier, fix_name(row.identifier, row.text_document_id))
@@ -118,7 +120,7 @@ def load_transcripts(spark, base_path: str, collected_text_document_rows: List[p
   # Note the duplication with load_audio_files
   return srt_df.select(srt_to_text(fix_text_udf(srt_df.content)).alias('transcript'),
                        F.reverse(F.split(srt_df.path, "/"))[0].alias("text_document_id"),
-                       #F.reverse(F.split(srt_df.path, "/"))[1].alias("identifier")
+                       F.reverse(F.split(srt_df.path, "/"))[1].alias("identifier"),
   )
 
 
@@ -271,7 +273,7 @@ def load_audio_id_text_id_mapping(spark, input_catalogue_path: str):
   filtered_exploded_df = exploded_df.where(
     # When a file's size is 0 bytes, scripts/archive.org/download_items.py does
     # not download that file. We therefore filter out size 0 bytes to prevent
-    # file-not-found errors in aling.py::load_transcripts()
+    # file-not-found errors in align_lib.py::load_transcripts()
     # https://archive.org/metadata/house.hbs.mars.hrs06RES2154_090401
     (exploded_df.exploded_files.size.cast(T.LongType()) != 0)
     &
@@ -317,15 +319,29 @@ def load_audio_id_text_id_mapping(spark, input_catalogue_path: str):
   # This creates duplicates, doesn't it? Ooops
   joined_df = audio_df.join(text_df, "identifier")
   joined_df = joined_df.withColumn("levenshtein", F.levenshtein(joined_df.audio_document_id, joined_df.text_document_id))
-  audio_to_text_mapping = joined_df.groupBy("identifier").applyInPandas(fuzzy_matching, schema=FUZZY_MATCHING_RETURN_TYPE)
-  return audio_df.join(audio_to_text_mapping, "audio_document_id").join(text_df.drop(text_df.identifier), "text_document_id")
+  audio_to_text_mapping_df = joined_df.groupBy("identifier").applyInPandas(fuzzy_matching, schema=FUZZY_MATCHING_RETURN_TYPE)
+  # audio_to_text_mapping_df = audio_to_text_mapping_df.cache()
+  # This join-ing is a bit odd...
+  # Don't I need to match on identifier?
+  # blah_df = audio_df.join(audio_to_text_mapping, ["identifier", "audio_document_id"]).join(text_df, ["identifier", "text_document_id"])
+  # from IPython import embed; embed()
+  return audio_to_text_mapping_df
 
-FUZZY_MATCHING_RETURN_TYPE = StructType([StructField("audio_document_id", StringType()),
-                                         StructField("text_document_id", StringType())])
+# In [4]: #a = blah_df.where(blah_df.audio_document_id == "horror_express.mp3").collect()
+
+# In [5]: b = audio_to_text_mapping.where(audio_to_text_mapping.audio_document_id == "horror_express.mp3").collect()
+
+
+FUZZY_MATCHING_RETURN_TYPE = StructType([StructField("identifier", StringType()),
+                                         StructField("audio_document_id", StringType()),
+                                         StructField("text_document_id", StringType()),
+])
 def fuzzy_matching(identifier: Tuple, pdf: pd.DataFrame):
   # Default recusion limit of 1000 causes the deepcopy in
   # HospitalResident.create_from_dictionaries to fail for particularly
   # large inputs.
+  (identifier, ) = identifier
+  identifier = str(identifier) # instead of np.str
   sys.setrecursionlimit(10000)
   audio_preferences = defaultdict(list)
   text_preferences = defaultdict(list)
@@ -364,7 +380,7 @@ def fuzzy_matching(identifier: Tuple, pdf: pd.DataFrame):
     raise
   pairs = problem.solve(optimal="hospital")
 
-  pdf_dict = {"audio_document_id": [], "text_document_id": []}
+  pdf_dict = {"identifier": [], "audio_document_id": [], "text_document_id": []}
   for hospital_id, (resident_id, ) in pairs.items():
     if more_audio_files:
       audio_id = resident_id
@@ -372,10 +388,9 @@ def fuzzy_matching(identifier: Tuple, pdf: pd.DataFrame):
     else:
       audio_id = hospital_id
       text_id = resident_id
+    pdf_dict["identifier"].append(identifier)
     pdf_dict["audio_document_id"].append(audio_id.name)
     pdf_dict["text_document_id"].append(text_id.name)
-    assert isinstance(audio_id.name, str)
-    assert isinstance(text_id.name, str)
 
   return pd.DataFrame(pdf_dict)
 
