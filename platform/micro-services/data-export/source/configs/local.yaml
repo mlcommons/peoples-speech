@@ -1,10 +1,10 @@
 
 datasets:
-    "0": gs://the-peoples-speech-west-europe/peoples-speech-v0.5/train.csv
+    "0": gs://the-peoples-speech-west-europe/peoples-speech-v0.8/unittest.csv
 
 exporter:
     type: LocalExporter
 
-output_dataset_path: gs://the-peoples-speech-west-europe/peoples-speech-v0.5/train.tar.gz
+output_dataset_path: gs://the-peoples-speech-west-europe/peoples-speech-v0.8/unittest.tar.gz
 
 verbose: True

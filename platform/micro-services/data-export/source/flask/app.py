@@ -1,13 +1,19 @@
-from flask import Flask
+from flask import Flask, request
 from flask_cors import CORS #comment this on deployment
 
-from data_export import export_dataset_by_id
+import data_export
+
+import logging
 
 app = Flask(__name__)
 CORS(app) #comment this on deployment
 
-@app.route('/peoples_speech/export_dataset/<dataset_id>')
-def export_dataset(dataset_id):
-    exported_id = export_dataset_by_id(dataset_id)
-    return {"exported_id" : exported_id}
+logger = logging.getLogger(__name__)
+
+@app.route('/peoples_speech/export_dataset', methods=['GET', 'POST'])
+def export_dataset():
+    dataset = request.json["dataset"]
+    output_dataset = request.json["output_dataset"]
+    data_export.export_dataset(output_dataset, dataset)
+    return { "results_path" : output_dataset }
 

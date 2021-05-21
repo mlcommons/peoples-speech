@@ -8,7 +8,7 @@ class GoogleCloudParallelExporter:
 
         self.work_queue = GoogleCloudWorkQueue(config)
 
-    def export(self, dataset):
+    def export(self, output_dataset_path, dataset):
         print("Exporting dataset", dataset)
 
         task_count = int(self.config["exporter"]["task_count"])

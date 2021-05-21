@@ -10,10 +10,9 @@ class TestDataExport(unittest.TestCase):
     def test_tiny_local(self):
         tiny_dataset = "gs://the-peoples-speech-west-europe/peoples-speech-v0.8/unittest.csv"
         tiny_config = {
-            "exporter" : { "type" : "LocalExporter" },
-            "output_dataset_path" : "/tmp/export-data/unittest.tar.gz" }
+            "exporter" : { "type" : "LocalExporter" } }
 
-        export_dataset(tiny_dataset, tiny_config)
+        export_dataset("/tmp/export-data/unittest.tar.gz", tiny_dataset, tiny_config)
 
         self.extract_dataset(tiny_config)
         self.verify_dataset(tiny_dataset, tiny_config)

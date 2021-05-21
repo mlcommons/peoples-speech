@@ -23,7 +23,7 @@ def config_path():
     if os.path.exists(home_config_path):
         return home_config_path
 
-    return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "configs", "default.yaml")
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "configs", "server.yaml")
 
 def setup_logging(arguments):
 

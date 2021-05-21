@@ -1,4 +1,9 @@
 FROM python
+
 COPY . /app
 
-CMD /app/start-production
+ENV BOTO_CONFIG=/app/source/configs/google.boto
+
+EXPOSE 5000
+
+CMD /app/start-production $PORT

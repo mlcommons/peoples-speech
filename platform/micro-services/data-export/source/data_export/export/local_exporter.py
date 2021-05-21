@@ -6,10 +6,8 @@ class LocalExporter:
     def __init__(self, config):
         self.config = config
 
-    def export(self, dataset):
+    def export(self, path, dataset):
         samples = load_dataset_csv(dataset, task_id=0, task_count=1)
-
-        path = self.config["output_dataset_path"]
 
         write_samples_to_tar_gz(samples, path)
 

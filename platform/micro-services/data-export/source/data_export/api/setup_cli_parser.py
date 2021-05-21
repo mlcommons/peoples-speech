@@ -11,9 +11,9 @@ def setup_cli_parser(subparsers):
 
     parser = subparsers.add_parser('export')
 
-    parser.add_argument("-i", "--input-dataset", default="gs://the-peoples-speech-west-europe/peoples-speech-v0.5/train.csv", help="The dataset to export.")
-    parser.add_argument("-o", "--output-dataset-path", default="", help="The path to save the new dataset.")
-    parser.add_argument("-c", "--config-file-path", default=".csv", help="The path to the config file.")
+    parser.add_argument("-i", "--input-dataset", default="gs://the-peoples-speech-west-europe/peoples-speech-v0.8/unittest.csv", help="The dataset to export.")
+    parser.add_argument("-o", "--output-dataset-path", default="gs://the-peoples-speech-west-europe/peoples-speech-v0.8/unittest.tar.gz", help="The path to save the new dataset.")
+    parser.add_argument("-c", "--config-file-path", default="", help="The path to the config file.")
     parser.add_argument("-v", "--verbose", default=False, action="store_true", help="Print out debug messages.")
     parser.add_argument("-vi", "--verbose-info", default=False, action="store_true", help="Print out info messages.")
 
@@ -28,7 +28,7 @@ def dispatch(args):
 
     logger.debug("Full config: " + str(config))
 
-    export_dataset(config["input_dataset"], config)
+    export_dataset(config["output_dataset_path"], config["input_dataset"], config)
 
 def setup_config(dictionary):
     return config.ConfigurationSet(

@@ -39,13 +39,13 @@ export PYTHONPATH
 
 # export flask
 export FLASK_APP=$LOCAL_DIRECTORY/source/flask/app.py
-export FLASK_DEBUG=1
+export FLASK_DEBUG=0
 
 # kill background tasks on script exit
 trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM EXIT
 
 # Start the dev environment
-python -m flask run &
+python -m flask run --host=0.0.0.0 --port=$1 &
 wait
 
 

@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import csv
 import json
+import errno
 
 def write_samples_to_tar_gz(samples, path):
     os.makedirs("/tmp/export-data", exist_ok=True)
