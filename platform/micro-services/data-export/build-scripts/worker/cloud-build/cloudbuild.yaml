@@ -1,0 +1,3 @@
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args: [ 'build', '-t', 'gcr.io/peoples-speech/data-export', '-f', 'platform/micro-services/data-export/build-scripts/flask/docker/Dockerfile', 'platform/micro-services/data-export' ]

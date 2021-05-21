@@ -1,0 +1,14 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: data-export-worker
+spec:
+  parallelism: 2
+  template:
+    metadata:
+      name: data-export-worker
+    spec:
+      containers:
+      - name: c
+        image: gcr.io/peoples-speech/data-export-worker
+      restartPolicy: OnFailure
