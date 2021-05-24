@@ -17,6 +17,7 @@ from ftfy import fix_text, guess_bytes
 import langid
 import numpy as np
 import pandas as pd
+from pydub import AudioSegment
 import pyspark
 from matching.games import HospitalResident
 import tensorflow as tf
@@ -394,15 +395,23 @@ def fuzzy_matching(identifier: Tuple, pdf: pd.DataFrame):
 
   return pd.DataFrame(pdf_dict)
 
-# class TemporaryMountDirectory(tempfile.TemporaryDirectory):
-#   def __init__(self, mount_cmd: List, unmount_cmd: List):
-#     super().__init__()
+class TemporaryMountDirectory(tempfile.TemporaryDirectory):
+  # pylint: disable=no-member
+  def __init__(self, mount_cmd: List, unmount_cmd: List):
+    # subprocess.check_call(shlex.split(f"gcsfuse --implicit-dirs the-peoples-speech-west-europe \"{temp_dir_name}\""))
+    super().__init__()
+    self._unmount_cmd = unmount_cmd
+    subprocess.check_call(mount_cmd + [self.name])
     
-#   def __enter__(self):
-#     pass
-#   def __exit__(self):
-    
-#     pass
+  def __exit__(self, exc, value, tb):
+    subprocess.check_call(self._unmount_cmd + [self.name])
+    # subprocess.check_call(shlex.split(f"fusermount -u \"{temp_dir_name}\""))
+    # subprocess.check_call(shlex.split(f"fusermount -u \"{temp_dir_name}\""))
+    # subprocess.check_call(unmount_cmd)
+    super().__exit__(exc, value, tb)
+    # finally:
+    #   # Try to remove directory even if subprocess fails
+    #   # Could this accidentally delete the entire gcs path?
 
 def _prepare_soxi_udf(soxi_flags, spark_return_type, python_return_type):
   @pandas_udf(spark_return_type)
@@ -435,3 +444,41 @@ def _prepare_soxi_udf(soxi_flags, spark_return_type, python_return_type):
 get_audio_seconds_udf = _prepare_soxi_udf("-D", DoubleType(), float)
 get_audio_sample_rate_udf = _prepare_soxi_udf("-r", DoubleType(), float)
 get_audio_annotations_udf = _prepare_soxi_udf("-a", BinaryType(), bytes)
+
+def prepare_create_audio_segments_udf(gs_bucket: str, output_dir: str):
+  RETURN_TYPE = ArrayType(StringType())
+  @pandas_udf(RETURN_TYPE)
+  def create_audio_segments_udf(audio_file_gcs_paths: pd.Series, identifier_series: pd.Series,
+                                audio_document_id_series: pd.Series, start_ms_arrays: pd.Series,
+                                end_ms_arrays: pd.Series) -> pd.Series:
+    chunk_paths = []
+    with TemporaryMountDirectory(
+            mount_cmd=["gcsfuse", "--implicit-dirs", gs_bucket.lstrip("gs://")],
+            unmount_cmd=["fusermount", "-u"]) as temp_dir_name:
+      for audio_file_gcs_path, identifier, audio_document_id, start_ms_array, end_ms_array in zip(audio_file_gcs_paths, identifier_series, audio_document_id_series, start_ms_arrays, end_ms_arrays):
+        chunk_paths.append([])
+        audio_file_path = re.sub(r'^{0}'.format(gs_bucket), temp_dir_name, audio_file_gcs_path)
+        source = AudioSegment.from_file(audio_file_path)
+        this_file_output_dir = os.path.join(output_dir, identifier)
+        os.makedirs(this_file_output_dir, exist_ok=True)
+        base, _ = os.path.splitext(audio_document_id)
+        for i, (start_ms, end_ms) in enumerate(zip(start_ms_array, end_ms_array)):
+          # Flac encoding probably good
+          write_file_name = f"{base}-{i:04d}.wav"
+          fh = source[start_ms:end_ms].export(os.path.join(output_dir, identifier, write_file_name))
+          fh.close()
+          chunk_paths[-1].append(os.path.join(identifier, write_file_name))
+      return pd.Series(chunk_paths)
+  return create_audio_segments_udf
+
+# (1, 300, Counter(),
+#  [{'start': 1513510,
+#    'end': 1529030,
+#    'transcript': "[noise] but it's actually <unk> i believe what i remember is that we get the mayor to send a letter two said commissioner stating such and such and such we need a response from the commissioner um saving",
+#    'text-start': 17857,
+#    'text-end': 18030,
+#    'meta': {},
+#    'aligned-raw': 'I believe what I remember is that we get the mayor to send a letter to said Commissioner stating such and such and such we need a response from the commissioner. For saving ',
+#    'aligned': 'ibelievewhatirememberisthatwegetthemayortosendalettertosaidcommissionerstatingsuchandsuchandsuchweneedaresponsefromthecommissioner.forsaving'}])
+
+

@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         dirmngr \
         emacs \
+        ffmpeg \
         git \
         gpg-agent \
         less \
@@ -71,25 +72,6 @@ RUN conda init bash \
 RUN curl -L -o /install/spark/jars/spark-tfrecord_2.12-0.3.0.jar \
     https://search.maven.org/remotecontent?filepath=com/linkedin/sparktfrecord/spark-tfrecord_2.12/0.3.0/spark-tfrecord_2.12-0.3.0.jar
 
-RUN curl -L -O https://github.com/Kitware/CMake/releases/download/v3.19.1/cmake-3.19.1-Linux-x86_64.sh \
-    && chmod +x cmake-3.19.1-Linux-x86_64.sh \
-    && ./cmake-3.19.1-Linux-x86_64.sh --exclude-subdir --skip-license --prefix=/usr/local/
-
-# https://100k-hours.slack.com/archives/CLQAYP797/p1605036830303800
-# https://100k-hours.slack.com/archives/CLQAYP797/p1605045990306700?thread_ts=1605039855.304800&cid=CLQAYP797
-# TODO: Download a particular version of kenlm, not just the latest one.
-RUN mkdir -p /install/kenlm/ \
-    && curl -L -o /install/kenlm/kenlm.tar.gz https://kheafield.com/code/kenlm.tar.gz \
-    && cd /install/kenlm/ \
-    && tar zxf kenlm.tar.gz --strip-components=1 \
-    && mkdir -p build \
-    && cd build \
-    && cmake .. \
-    && make -j $(nproc)
-
-# This is probably not necessary. I initially believed I needed to run autoconf, but this is no longer the case.
-# RUN apt-get update && apt-get install -y --no-install-recommends autoconf autotools-dev automake libtool
-
 RUN mkdir -p /install/mad/ \
     && curl -L -o /install/mad/mad.tar.gz https://downloads.sourceforge.net/project/mad/libmad/0.15.1b/libmad-0.15.1b.tar.gz \
     && cd /install/mad \
@@ -112,29 +94,12 @@ RUN mkdir -p /install/sox/ \
     && ./configure --prefix=/usr \
     && make -j $(nproc) install
 
-# RUN apt-get install libdw1 libpci3 libslang2 libunwind8 linux-tools-common \
-#     && wget http://launchpadlibrarian.net/301849399/linux-tools-4.9.0-12_4.9.0-12.13_amd64.deb \
-#     && dpkg -i linux-tools-4.9.0-12_4.9.0-12.13_amd64.deb \
-#     && wget http://launchpadlibrarian.net/301849369/linux-tools-4.9.0-12-generic_4.9.0-12.13_amd64.deb \
-#     && dpkg -i linux-tools-4.9.0-12-generic_4.9.0-12.13_amd64.deb
-
-# --cap-add SYS_ADMIN
-
-# RUN apt-get update && apt-get install -y --no-install-recommends bison flex gcc-6 
-
-# RUN git clone --single-branch --branch v4.9 https://github.com/torvalds/linux.git /install/linux \
-#     && CC=gcc-6 make -C /install/linux/tools/perf install
-
 RUN cd /install/spark/python && conda run -n 100k-hours-lingvo-3  python setup.py install
 
-# RUN    echo 'spark.driver.extraJavaOptions="-Dio.netty.tryReflectionSetAccessible=true"' >> $SPARK_CONF_DIR/spark-defaults.conf \
-#     && echo 'spark.driver.memory=8g' >> $SPARK_CONF_DIR/spark-defaults.conf \
-#     && echo 'spark.executor.extraJavaOptions="-Dio.netty.tryReflectionSetAccessible=true"' >> $SPARK_CONF_DIR/spark-defaults.conf \
-#     && echo 'spark.executor.memory=8g' >> $SPARK_CONF_DIR/spark-defaults.conf
-
-RUN    echo 'spark.eventLog.enabled  true' >> $SPARK_CONF_DIR/spark-defaults.conf \
-    && echo 'spark.eventLog.dir file:///development/lingvo-source/spark-events' >> $SPARK_CONF_DIR/spark-defaults.conf \
-    && echo 'spark.history.fs.logDirectory file:///development/lingvo-source/spark-events' >> $SPARK_CONF_DIR/spark-defaults.conf
+RUN    echo 'spark.eventLog.enabled  true' >> $SPARK_CONF_DIR/spark-defaults.conf
+# \
+#     && echo 'spark.eventLog.dir file:///development/lingvo-source/spark-events' >> $SPARK_CONF_DIR/spark-defaults.conf \
+#     && echo 'spark.history.fs.logDirectory file:///development/lingvo-source/spark-events' >> $SPARK_CONF_DIR/spark-defaults.conf
 
 RUN apt-get update && apt-get install -y --no-install-recommends automake autoconf gfortran libtool subversion
 
@@ -153,10 +118,6 @@ RUN export GCSFUSE_REPO=gcsfuse-`lsb_release -c -s` \
 RUN mkdir -p /spark-events \
     && mkdir -p $HOME/the-peoples-speech-west-europe-bucket
 
-RUN /install/google-cloud-sdk/bin/gsutil cp gs://the-peoples-speech-west-europe/downloadable-code-mirror/NsightSystems-linux-cli-public-2021.2.1.58-642947b.deb \
-    NsightSystems-linux-cli-public-2021.2.1.58-642947b.deb \
-    && dpkg -i NsightSystems-linux-cli-public-2021.2.1.58-642947b.deb
-
 COPY third_party/kaldi/tools /opt/kaldi/tools
 RUN cd /opt/kaldi/tools \
     && extras/install_openblas.sh \
@@ -165,7 +126,7 @@ RUN cd /opt/kaldi/tools \
 COPY third_party/kaldi/egs /opt/kaldi/egs
 COPY third_party/kaldi/src /opt/kaldi/src
 RUN cd /opt/kaldi/src \
-    && ./configure --use-cuda=yes --cudatk-dir=/usr/local/cuda --mathlib=OPENBLAS \
+    && ./configure --use-cuda=yes --cudatk-dir=/usr/local/cuda --mathlib=OPENBLAS --cuda-arch="-gencode arch=compute_75,code=sm_75" \
     && make -j $(nproc) depend && make -j $(nproc)
 
 RUN cd /opt/kaldi/egs/aspire/s5 \

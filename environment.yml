@@ -181,12 +181,12 @@ dependencies:
     - pyasn1-modules==0.2.8
     - pycparser==2.20
     - pydot==1.4.1
+    - pydub==0.25.1
     - pygments==2.6.1
     - pylint==2.5.3
     - pymongo==3.11.0
     - pyparsing==2.4.7
     - pyrsistent==0.16.0
-    - pyspark==3.1.1
     - python-dateutil==2.8.1
     - pytz==2020.1
     - pyyaml==5.3.1
@@ -231,7 +231,6 @@ dependencies:
     - zipp==3.1.0
     - webrtcvad
     - textdistance
-    - pydub
     - opuslib
     - sox
     - ds-ctcdecoder==0.7.1

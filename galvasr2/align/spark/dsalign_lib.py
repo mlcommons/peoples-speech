@@ -14,7 +14,6 @@ from dsalign_main import ALGORITHMS, NAMED_NUMBERS
 import logging
 
 import pandas as pd
-from pydub import AudioSegment
 import pyspark.sql.functions as F
 import pyspark.sql.types as T
 
@@ -421,25 +420,3 @@ def prepare_align_udf(dsalign_args, alphabet_path):
         result_dict["label"].append([])
     return pd.DataFrame(result_dict)
   return align_table
-
-def prepare_create_audio_segments_udf(gs_bucket: str):
-  RETURN_TYPE = ArrayType(StringType())
-  @pandas_udf(RETURN_TYPE)
-  def create_audio_segments_udf(start_ms: pd.Series, end_ms: pd.Series, audio_file_paths: pd.Series) -> pd.Series:
-    base, ext = os.path.splitext(audio_file_path)
-    source = AudioSegment.from_file(audio_file_path)
-    # Flac encoding probably good
-    source[start_ms:end_ms].export(f"{base}_{i}.flac")
-    pass
-
-# (1, 300, Counter(),
-#  [{'start': 1513510,
-#    'end': 1529030,
-#    'transcript': "[noise] but it's actually <unk> i believe what i remember is that we get the mayor to send a letter two said commissioner stating such and such and such we need a response from the commissioner um saving",
-#    'text-start': 17857,
-#    'text-end': 18030,
-#    'meta': {},
-#    'aligned-raw': 'I believe what I remember is that we get the mayor to send a letter to said Commissioner stating such and such and such we need a response from the commissioner. For saving ',
-#    'aligned': 'ibelievewhatirememberisthatwegetthemayortosendalettertosaidcommissionerstatingsuchandsuchandsuchweneedaresponsefromthecommissioner.forsaving'}])
-
-

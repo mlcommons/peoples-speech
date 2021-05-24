@@ -24,8 +24,9 @@ py_binary(
     main = "align/spark/align_cuda_decoder.py",
     imports = ["align"],
     srcs = [
-	   "align/spark/align_cuda_decoder.py",
-	   "align/spark/align_lib.py",
+           "align/spark/align_cuda_decoder.py",
+           "align/spark/align_lib.py",
+           "align/spark/dsalign_lib.py",
            "align/spark/event_listener.py",
            "align/spark/schemas.py",
            ] +
@@ -62,7 +63,7 @@ py_binary(
     imports = ["align"],
     srcs = [
            "align/spark/sampling_rate.py",
-      	   "align/spark/align_lib.py",
+           "align/spark/align_lib.py",
            "align/spark/schemas.py",
            ] +
            glob(["align/*.py"]),
