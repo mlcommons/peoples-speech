@@ -43,16 +43,20 @@ def main(argv):
   spark.sparkContext.setLogLevel("INFO") # "ALL" for very verbose logging
   logging.getLogger("py4j").setLevel(logging.ERROR)
   catalogue_df = load_audio_id_text_id_mapping(spark, FLAGS.input_catalogue)
+  catalogue_df = catalogue_df.cache()
   training_sample_rows = catalogue_df.collect()
+  # Uncomment this line if you want to run the entire pipeline in a relatively short amount of time.
+  # training_sample_rows = training_sample_rows[:100]
 
   catalogue_df = catalogue_df.withColumn("duration",
                                          get_audio_seconds_udf(F.concat(F.lit(FLAGS.input_gcs_path), F.lit("/"), catalogue_df.identifier, F.lit("/"), catalogue_df.audio_document_id)) / 60. / 60.)
   transcripts_df = load_transcripts(spark, FLAGS.input_gcs_path, training_sample_rows)
-  languages_df = transcripts_df.select(transcripts_df.text_document_id,
+  languages_df = transcripts_df.select(transcripts_df.identifier,
+                                       transcripts_df.text_document_id,
                                        infer_language_udf(transcripts_df.transcript).alias('language'))
 
   # gcsfuse --implicit-dirs the-peoples-speech-west-europe $HOME/the-peoples-speech-west-europe-bucket
-  catalogue_df = catalogue_df.join(languages_df, 'text_document_id')
+  catalogue_df = catalogue_df.join(languages_df, ['identifier', 'text_document_id'])
   rows = catalogue_df.groupBy(catalogue_df.language).sum('duration').collect()
   print(rows)
   from IPython import embed; embed()

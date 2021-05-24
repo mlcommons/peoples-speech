@@ -398,20 +398,13 @@ def fuzzy_matching(identifier: Tuple, pdf: pd.DataFrame):
 class TemporaryMountDirectory(tempfile.TemporaryDirectory):
   # pylint: disable=no-member
   def __init__(self, mount_cmd: List, unmount_cmd: List):
-    # subprocess.check_call(shlex.split(f"gcsfuse --implicit-dirs the-peoples-speech-west-europe \"{temp_dir_name}\""))
     super().__init__()
     self._unmount_cmd = unmount_cmd
     subprocess.check_call(mount_cmd + [self.name])
     
   def __exit__(self, exc, value, tb):
     subprocess.check_call(self._unmount_cmd + [self.name])
-    # subprocess.check_call(shlex.split(f"fusermount -u \"{temp_dir_name}\""))
-    # subprocess.check_call(shlex.split(f"fusermount -u \"{temp_dir_name}\""))
-    # subprocess.check_call(unmount_cmd)
     super().__exit__(exc, value, tb)
-    # finally:
-    #   # Try to remove directory even if subprocess fails
-    #   # Could this accidentally delete the entire gcs path?
 
 def _prepare_soxi_udf(soxi_flags, spark_return_type, python_return_type):
   @pandas_udf(spark_return_type)
@@ -419,8 +412,9 @@ def _prepare_soxi_udf(soxi_flags, spark_return_type, python_return_type):
     # soxi does not support reading from stdin, so we need to use
     # gcsfuse-mounted posix paths
     durations = []
-    with tempfile.TemporaryDirectory() as temp_dir_name:
-      subprocess.check_call(shlex.split(f"gcsfuse --implicit-dirs the-peoples-speech-west-europe \"{temp_dir_name}\""))
+    with TemporaryMountDirectory(
+            mount_cmd=["gcsfuse", "--implicit-dirs", "gs://the-peoples-speech-west-europe".lstrip("gs://")],
+            unmount_cmd=["fusermount", "-u"]) as temp_dir_name:
       for audio_file in audio_file_series:
         audio_file = re.sub(r'^{0}'.format("gs://the-peoples-speech-west-europe"), temp_dir_name, audio_file)
         assert not audio_file.startswith("gs://")
@@ -434,10 +428,8 @@ def _prepare_soxi_udf(soxi_flags, spark_return_type, python_return_type):
           duration = python_return_type()
         except subprocess.TimeoutExpired:
           # Call again. Sometimes gcsfuse just stalls, so we need restartability
-          subprocess.check_call(shlex.split(f"fusermount -u \"{temp_dir_name}\""))
           return get_soxi_info_udf(audio_file_series)
         durations.append(duration)
-      subprocess.check_call(shlex.split(f"fusermount -u \"{temp_dir_name}\""))
       return pd.Series(durations)
   return get_soxi_info_udf
 
