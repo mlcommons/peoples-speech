@@ -28,7 +28,7 @@ ARCHIVE_ORG_SCHEMA = StructType([
                 StructField("title", StringType(), True),
                 StructField("track", StringType(), True),
                 StructField("width", StringType(), True),
-              # Strangely, choosing "BooleanType()" for "private" makes all of the rows "null".
+                # Strangely, choosing "BooleanType()" for "private" makes all of the rows "null".
                 StructField("private", StringType(), True)
             ]), True),
         True),

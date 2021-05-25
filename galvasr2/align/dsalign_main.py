@@ -141,6 +141,7 @@ def align(triple):
                 fragment['sws'] = sws_score
                 fragment['substitutions'] = match_substitutions
                 # Here's the recursive joining, is that right?
+                # This is an exponential time algorithm?
                 for f in split_match(fragments[0:index], start=start, end=match_start):
                     yield f
                 yield fragment
@@ -564,7 +565,7 @@ def main():
             logging.info(' - {}: {}'.format(key, number))
 
 
-def parse_args():
+def parse_args(args=None):
     parser = argparse.ArgumentParser(description='Force align speech data with a transcript.')
 
     parser.add_argument('--audio', type=str,
@@ -704,7 +705,7 @@ def parse_args():
                                            'has to have when compared with the original text{}'
                                       .format(extreme, long, short, desc))
 
-    return parser.parse_args()
+    return parser.parse_args(args)
 
 
 if __name__ == '__main__':

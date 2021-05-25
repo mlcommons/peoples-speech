@@ -148,6 +148,7 @@ dependencies:
     - lazy-object-proxy==1.4.3
     - markdown==3.2.2
     - markupsafe==1.1.1
+    - matching==1.4
     - matplotlib==3.2.2
     - mccabe==0.6.1
     - mistune==0.8.4
@@ -180,12 +181,12 @@ dependencies:
     - pyasn1-modules==0.2.8
     - pycparser==2.20
     - pydot==1.4.1
+    - pydub==0.25.1
     - pygments==2.6.1
     - pylint==2.5.3
     - pymongo==3.11.0
     - pyparsing==2.4.7
     - pyrsistent==0.16.0
-    - pyspark==3.1.1
     - python-dateutil==2.8.1
     - pytz==2020.1
     - pyyaml==5.3.1
@@ -206,7 +207,7 @@ dependencies:
     - tensorboard==2.2.2
     - tensorboard-plugin-profile==2.2.0
     - tensorboard-plugin-wit==1.7.0
-    - tensorflow==2.2.0
+    - tensorflow-gpu==2.2.0
     - tensorflow-datasets==3.2.1
     - tensorflow-estimator==2.2.0
     - tensorflow-metadata==0.22.2
@@ -230,7 +231,6 @@ dependencies:
     - zipp==3.1.0
     - webrtcvad
     - textdistance
-    - pydub
     - opuslib
     - sox
     - ds-ctcdecoder==0.7.1
