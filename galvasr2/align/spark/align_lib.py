@@ -321,11 +321,8 @@ def load_audio_id_text_id_mapping(spark, input_catalogue_path: str):
   joined_df = audio_df.join(text_df, "identifier")
   joined_df = joined_df.withColumn("levenshtein", F.levenshtein(joined_df.audio_document_id, joined_df.text_document_id))
   audio_to_text_mapping_df = joined_df.groupBy("identifier").applyInPandas(fuzzy_matching, schema=FUZZY_MATCHING_RETURN_TYPE)
-  # audio_to_text_mapping_df = audio_to_text_mapping_df.cache()
-  # This join-ing is a bit odd...
-  # Don't I need to match on identifier?
-  # blah_df = audio_df.join(audio_to_text_mapping, ["identifier", "audio_document_id"]).join(text_df, ["identifier", "text_document_id"])
-  # from IPython import embed; embed()
+  licenses_df = df.select(df.identifier, df.metadata.licenseurl.alias('licenseurl'))
+  audio_to_text_mapping_df = audio_to_text_mapping_df.join(licenses_df, ['identifier'])
   return audio_to_text_mapping_df
 
 # In [4]: #a = blah_df.where(blah_df.audio_document_id == "horror_express.mp3").collect()
