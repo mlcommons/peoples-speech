@@ -18,10 +18,10 @@ gsutil cp gs://the-peoples-speech-west-europe/forced-aligner/cuda-forced-aligner
 gsutil rsync -r gs://the-peoples-speech-west-europe/forced-aligner/cuda-forced-aligner/output_work_dir_5b/output_work_dir_5b/training_set ${YOUR_LOCAL_DESTINATION_DIR}/training_set
 ```
 
-You may also use `gsutil cp` instead of `gsutil rsync`. However,
-gsutil `rsync` allows you to restart without recopying data. The full
-dataset is 1.2TiB, so a broken connection during download should be
-anticipated.
+You may also use `gsutil cp` instead of `gsutil rsync`. However, we
+recommend gsutil `rsync` because it allows you to restart the download
+without recopying data. The full dataset is 1.12TiB, so a broken
+connection during download should be anticipated.
 
 ## Data Description
 
@@ -74,6 +74,6 @@ output_paths[i])`
 
 We show an example script to convert the dataset into a format usable
 by NVIDIA NeMo here:
-[process_peoples_speech_data.py](scripts/peoples_speech/process_peoples_speech_data.py). NeMo's
+[process_peoples_speech_data.py](/scripts/peoples_speech/process_peoples_speech_data.py). NeMo's
 speech recognition input format is described
 [here](https://docs.nvidia.com/deeplearning/nemo/user-guide/docs/en/stable/asr/datasets.html#preparing-custom-asr-data).
