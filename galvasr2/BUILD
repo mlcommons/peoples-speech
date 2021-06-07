@@ -58,6 +58,24 @@ py_binary(
 )
 
 py_binary(
+    name = "spark_hours_per_license",
+    main = "align/spark/hours_per_license.py",
+    imports = ["align"],
+    srcs = [
+           "align/spark/hours_per_license.py",
+           "align/spark/align_lib.py",
+           "align/spark/event_listener.py",
+           "align/spark/schemas.py",
+           ] +
+           glob(["align/*.py"]),
+    deps = [
+    ],
+    data = [
+    ],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
     name = "spark_sampling_rate",
     main = "align/spark/sampling_rate.py",
     imports = ["align"],

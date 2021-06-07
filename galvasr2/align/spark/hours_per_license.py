@@ -4,8 +4,10 @@ import sys
 from absl import app
 from absl import flags
 import pyspark
+import pandas as pd
 from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
+import pyspark.sql.types as T
 
 from galvasr2.align.spark.align_lib import load_audio_id_text_id_mapping, load_transcripts, get_audio_seconds_udf, infer_language_udf
 
@@ -44,51 +46,41 @@ def main(argv):
   spark.sparkContext.setLogLevel("INFO") # "ALL" for very verbose logging
   logging.getLogger("py4j").setLevel(logging.ERROR)
   catalogue_df = load_audio_id_text_id_mapping(spark, FLAGS.input_catalogue)
-  catalogue_df = catalogue_df.cache()
-  training_sample_rows = catalogue_df.collect()
+
   # Uncomment this line if you want to run the entire pipeline in a relatively short amount of time.
-  # training_sample_rows = training_sample_rows[:100]
+  #catalogue_df = catalogue_df.limit(100)
 
   catalogue_df = catalogue_df.withColumn("duration",
                                          get_audio_seconds_udf(F.concat(F.lit(FLAGS.input_gcs_path), F.lit("/"), catalogue_df.identifier, F.lit("/"), catalogue_df.audio_document_id)) / 60. / 60.)
-  transcripts_df = load_transcripts(spark, FLAGS.input_gcs_path, training_sample_rows)
-  languages_df = transcripts_df.select(transcripts_df.identifier,
-                                       transcripts_df.text_document_id,
-                                       infer_language_udf(transcripts_df.transcript).alias('language'))
+  catalogue_df = catalogue_df.cache()
 
-  # gcsfuse --implicit-dirs the-peoples-speech-west-europe $HOME/the-peoples-speech-west-europe-bucket
-  catalogue_df = catalogue_df.join(languages_df, ['identifier', 'text_document_id'])
-  rows = catalogue_df.groupBy(catalogue_df.language).sum('duration').collect()
-  print(rows)
+  # Switch the following 'rows' assignment for more granular license data.
+  rows = catalogue_df.groupBy(normalize_license_udf(catalogue_df.licenseurl)).sum('duration')
+  #rows = catalogue_df.groupBy(catalogue_df.licenseurl).sum('duration')
+
+  #rows = rows.collect()
+  for row in rows.collect():
+      print(row)
+
   from IPython import embed; embed()
+
+NORMALIZE_LICENSE_RETURN_TYPE = T.StringType()
+@F.pandas_udf(NORMALIZE_LICENSE_RETURN_TYPE)
+def normalize_license_udf(licenseurl_series: pd.Series) -> pd.Series:
+  normalized_licenses = []
+  for licenseurl in licenseurl_series:
+    if "government-works" in licenseurl:
+      normalized_licenses.append("US Government Public Domain Work")
+    elif "publicdomain" in licenseurl:
+      normalized_licenses.append("Public Domain Work")
+    elif "by-sa" in licenseurl:
+      normalized_licenses.append("CC-BY-SA")
+    elif "by" in licenseurl:
+      # This doesn't every match by-sa, because a previous elif statement catches that.
+      normalized_licenses.append("CC-BY")
+    else:
+      normalized_licenses.append(f"Unknown licenseurl: {licenseurl}")
+  return pd.Series(normalized_licenses)
 
 if __name__ == '__main__':
   app.run(main)
-
-"""
-[Row(language='en', sum(duration)=79043.2241041677), 
-Row(language='ro', sum(duration)=0.18604722861111112), 
-Row(language='sk', sum(duration)=0.015528331944444444), 
-Row(language='pt', sum(duration)=0.8029441672222222), 
-Row(language='ms', sum(duration)=39.340964462500004), 
-Row(language='tr', sum(duration)=0.0489819425), 
-Row(language='de', sum(duration)=11.079705825), 
-Row(language='br', sum(duration)=0.024625554166666667), 
-Row(language='es', sum(duration)=4.928195001111111), 
-Row(language='eu', sum(duration)=3.870641945), 
-Row(language='it', sum(duration)=0.7015947202777778), 
-Row(language='sv', sum(duration)=0.6141902797222223), 
-Row(language='nl', sum(duration)=1.8030086005555555), 
-Row(language='ru', sum(duration)=10.924616139444442), 
-Row(language='mt', sum(duration)=0.01752277777777778), 
-Row(language='no', sum(duration)=13.603658894999999), 
-Row(language='bg', sum(duration)=0.3130866666666667), 
-Row(language='cy', sum(duration)=5.814326111111112), 
-Row(language='zu', sum(duration)=0.4729961111111111), 
-Row(language='', sum(duration)=512.8351283508333), 
-Row(language='fr', sum(duration)=3.4299111086111114), 
-Row(language='se', sum(duration)=12.611557778888889), 
-Row(language='id', sum(duration)=0.3214013883333333), 
-Row(language='la', sum(duration)=1.3733055555555556), 
-Row(language='fi', sum(duration)=0.025745555555555556)]
-"""
