@@ -14,6 +14,7 @@ Then run the following commands:
 
 ```
 mkdir -p ${YOUR_LOCAL_DESTINATION_DIR}
+gsutil cp gs://the-peoples-speech-west-europe/forced-aligner/cuda-forced-aligner/output_work_dir_5b/output_work_dir_5b/credits.csv ${YOUR_LOCAL_DESTINATION_DIR}/credits.csv
 gsutil cp gs://the-peoples-speech-west-europe/forced-aligner/cuda-forced-aligner/output_work_dir_5b/output_work_dir_5b/dataset_manifest_mp3_956_all.json ${YOUR_LOCAL_DESTINATION_DIR}/dataset_manifest_mp3_956_all.json
 gsutil rsync -r gs://the-peoples-speech-west-europe/forced-aligner/cuda-forced-aligner/output_work_dir_5b/output_work_dir_5b/training_set ${YOUR_LOCAL_DESTINATION_DIR}/training_set
 ```
@@ -24,6 +25,12 @@ without recopying data. The full dataset is 1.12TiB, so a broken
 connection during download should be anticipated.
 
 ## Data Description
+
+credits.csv lists the name of each CC-BY or CC-BY-SA work, the author
+of the work, the URL to the exact license they used, and any
+statements the author made about the rights granted for the work. This
+file is here to comply with CC-BY and CC-BY-SA sources' requirements
+that we attribute the creators of the works.
 
 dataset_manifest_mp3_956_all.json is a [JSON
 Lines](https://jsonlines.org/) formatted file that associates
