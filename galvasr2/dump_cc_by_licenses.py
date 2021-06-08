@@ -1,10 +1,9 @@
 #!/usr/bin/env python
 from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
+from absl import app
 from absl import flags
 from align.spark.schemas import ARCHIVE_ORG_SCHEMA
-
-FLAGS = flags.FLAGS
 
 flags.DEFINE_string(
     "input_catalogue_path",
@@ -12,6 +11,8 @@ flags.DEFINE_string(
     "Ubication of the path with the licence metadata",
 )
 flags.DEFINE_string("save_as", "csv", "Format to save the file")
+
+FLAGS = flags.FLAGS
 
 
 def my_concat(*cols):
@@ -74,7 +75,8 @@ def create_dump_license_data(
     ##There only 4 register without license at the moment. Without information in the rest of the data
     data_license = data_license.dropna(subset=["licenseurl"])
     ##Regex filter to search any kind of "by" license
-    regexp = r"(http|https)://creativecommons.org/licenses/by/(1[.]0|2[.]0|2[.]5|3[.]0|4[.]0)"
+    # Not enough. We need to detect CC-BY-SA data as well.
+    regexp = r"(http|https)://creativecommons.org/licenses/(by|by-sa)/(1[.]0|2[.]0|2[.]5|3[.]0|4[.]0)"
     data_license = data_license.filter(data_license["licenseurl"].rlike(regexp))
     return data_license
 
@@ -91,7 +93,7 @@ def save_dump_license_data(data_license, save_as: str = "csv"):
         Status of the file generation
     """
     if save_as == "csv":
-        data_license.write.csv("cc_by_licenses.csv")
+        data_license.write.mode("overwrite").format("csv").option("header", "true").save("cc_by_licenses.csv")
     elif save_as == "txt":
         data_license = data_license.withColumn(
             "credits", my_concat(*data_license.columns)
@@ -104,13 +106,13 @@ def save_dump_license_data(data_license, save_as: str = "csv"):
     return "save file successful"
 
 
-def main():
+def main(argv):
     spark = SparkSession.builder.appName("CC-BY-license").getOrCreate()
     data_license = create_dump_license_data(
-        spark, FLAGS.input_catalogue_path, FLAGS.save_as
+        spark, FLAGS.input_catalogue_path
     )
-    save_dump_license_data(data_license)
+    save_dump_license_data(data_license, FLAGS.save_as)
 
 
 if __name__ == "__main__":
-    main()
+    app.run(main)
