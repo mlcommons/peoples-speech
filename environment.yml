@@ -94,6 +94,7 @@ dependencies:
     - entrypoints==0.3
     - fastavro==0.23.6
     - fasteners==0.15
+    - flair==0.8.0
     - ftfy==5.8
     - future==0.18.2
     - gast==0.3.3
@@ -142,6 +143,7 @@ dependencies:
     - jupyter-client==6.1.6
     - jupyter-console==6.1.0
     - jupyter-core==4.6.3
+    - ktrain==0.26.3
     - keras-preprocessing==1.1.2
     - kiwisolver==1.2.0
     - langid==1.1.6
@@ -215,6 +217,9 @@ dependencies:
     - terminado==0.8.3
     - testpath==0.4.4
     - toml==0.10.1
+    - torch==1.7.1
+    - torchaudio==0.8.1
+    - torchvision==0.9.1
     - tornado==6.0.4
     - total-ordering==0.1.0
     - tqdm==4.46.1

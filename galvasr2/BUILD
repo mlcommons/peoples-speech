@@ -114,3 +114,25 @@ py_binary(
     srcs_version = "PY3",
     visibility = ["//visibility:public"],
 )
+
+py_binary(
+    name = "ner_pipeline_transcript",
+    main = "ner_pipeline_transcript.py",
+    srcs = ["ner_pipeline_transcript.py",
+            "align/spark/align_lib.py",
+            "align/spark/schemas.py",],
+    python_version = "PY3",
+    srcs_version = "PY3",
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "zero_shot_classification_pipeline",
+    main = "zero_shot_classification_pipeline.py",
+    srcs = ["zero_shot_classification_pipeline.py",
+            "align/spark/align_lib.py",
+            "align/spark/schemas.py",],
+    python_version = "PY3",
+    srcs_version = "PY3",
+    visibility = ["//visibility:public"],
+)
