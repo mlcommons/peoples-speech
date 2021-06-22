@@ -17,6 +17,7 @@ import pandas as pd
 import pyspark
 import pyspark.sql.functions as F
 import pyspark.sql.types as T
+import tensorflow as tf
 
 from galvasr2.align.spark.align_lib import fix_text_udf, load_audio_id_text_id_mapping, load_transcripts, prepare_create_audio_segments_udf, TemporaryMountDirectory
 from galvasr2.align.spark.dsalign_lib import prepare_align_udf
@@ -45,17 +46,19 @@ flags.DEFINE_string('work_dir',
                     'Input directory. Exact format of this is a bit undefined right now and will likely change.')
 
 
-def create_wav_scp(wav_scp_file_name: str, rows: List[pyspark.Row], base_path: str):
+def create_wav_scp(wav_scp_file_name: str, rows: List[pyspark.Row], base_path: str, ctm_path: str):
   with open(wav_scp_file_name, "w") as fh:
-    lines = []
-    for row in rows:
+    import tqdm
+    for row in tqdm.tqdm(rows):
       key = os.path.join(row.identifier, row.audio_document_id)
+      if ctm_path is not None:
+        output_file_name = os.path.join(ctm_path, row.kaldi_normalized_uttid + ".ctm")
+        if tf.io.gfile.exists(output_file_name):
+          continue
       path = os.path.join(base_path, key)
       value = f"/usr/bin/sox \"{path}\" -t wav --channels 1 --rate 8000 --encoding signed --bits 16 - |"
       line = f"{row.kaldi_normalized_uttid} {value}\n"
-      lines.append(line)
       fh.write(line)
-    # shuffle(lines)
     # fh.writelines(lines)
 
 def split_wav_scp(posix_wav_scp, work_dir, num_splits):
@@ -68,7 +71,7 @@ def split_wav_scp(posix_wav_scp, work_dir, num_splits):
     file_handles.append(open(file_names[-1], "w"))
   with open(posix_wav_scp) as fh:
     for i, line in enumerate(fh):
-      i = i % 4
+      i = i % num_splits
       file_handles[i].write(line)
   for fh in file_handles:
     fh.close()
@@ -83,7 +86,9 @@ def main(argv):
                         .config("spark.sql.execution.arrow.pyspark.enabled", "true")\
                         .config("spark.driver.extraJavaOptions", "-Dio.netty.tryReflectionSetAccessible=true")\
                         .config("spark.executor.extraJavaOptions", "-Dio.netty.tryReflectionSetAccessible=true")\
+                        .config('spark.driver.memory', '310g')\
                         .config("spark.history.fs.logDirectory", "/spark-events")\
+                        .config("spark.sql.execution.arrow.maxRecordsPerBatch", "1000")\
                         .getOrCreate()
   spark.sparkContext.setLogLevel("INFO") # "ALL" for very verbose logging
   logging.getLogger("py4j").setLevel(logging.ERROR)
@@ -96,6 +101,7 @@ def main(argv):
   if not FLAGS.work_dir.startswith("gs://"):
     os.makedirs(FLAGS.work_dir, exist_ok=True)
   wav_scp = os.path.join(FLAGS.work_dir, "wav.scp")
+  ctm_out_dir = os.path.join(FLAGS.work_dir, "decoder_ctm_dir")
   if FLAGS.stage <= 0:
     catalogue_df = catalogue_df.cache()
     # catalogue_df.write.mode("overwrite").format("csv").options(header="true").save(key_int_mapping)
@@ -107,7 +113,7 @@ def main(argv):
             unmount_cmd=["fusermount", "-u"]) as temp_dir_name:
       posix_wav_scp = re.sub(r'^{0}'.format(FLAGS.input_gcs_bucket),
                              temp_dir_name, wav_scp)
-      create_wav_scp(posix_wav_scp, training_sample_rows, FLAGS.input_dir)
+      create_wav_scp(posix_wav_scp, training_sample_rows, FLAGS.input_dir, ctm_out_dir)
 
   # /development/lingvo-source/output_ctm_dir/
 
@@ -117,7 +123,6 @@ def main(argv):
   # Can get 266x RTF with this configuration. Keep it?
   # bath size of 100 and num channels of 100 works just fine
 
-  ctm_out_dir = os.path.join(FLAGS.work_dir, "decoder_ctm_dir")
   if FLAGS.stage <= 1:
     if not FLAGS.work_dir.startswith("gs://"):
       os.makedirs(ctm_out_dir, exist_ok=True)
@@ -180,7 +185,6 @@ def main(argv):
   # /opt/kaldi/egs/aspire/s5/exp/tdnn_7b_chain_online/graph_pp/phones/word_boundary.int
   # /opt/kaldi/egs/aspire/s5/exp/tdnn_7b_chain_online/graph_pp/phones/word_boundary.int
   # --word-boundary-rxfilename=/opt/kaldi/egs/aspire/s5/exp/tdnn_7b_chain_online/graph_pp/phones/word_boundary.int \
-  assert False
   if FLAGS.stage <= 2:
     FAKE_WORDS = {"<eps>", "<unk>", "[laughter]", "[noise]", "<s>", "</s>", "#0"}
     alphabet_set = set()
@@ -200,7 +204,8 @@ def main(argv):
     # TODO: Add options to DSAlign here
     dsalign_args = dsalign_main.parse_args("")
 
-    align_udf = prepare_align_udf(dsalign_args, alphabet_path)
+    alphabet_normalized_path = "/development/lingvo-source/alphabet2.txt"
+    align_udf = prepare_align_udf(dsalign_args, alphabet_normalized_path)
 
     ctm_df = spark.read.format("binaryFile").option("pathGlobFilter", "*.ctm").load(ctm_out_dir)
     ctm_df = ctm_df.withColumn("kaldi_normalized_uttid", F.regexp_replace(F.reverse(F.split(ctm_df.path, "/"))[0], r"[.]ctm$", ""))
@@ -210,8 +215,8 @@ def main(argv):
     downsampled_catalogue_df = ctm_df.drop("ctm_content")
 
     training_sample_rows = downsampled_catalogue_df.collect()
+    # training_sample_rows = training_sample_rows[:10]
     transcripts_df = load_transcripts(spark, FLAGS.input_gcs_path, training_sample_rows)
-    # TODO: Fix this. We need to recover the original identifier for each ctm file.
     ctm_df = ctm_df.join(transcripts_df, ['identifier', 'text_document_id'])
 
     # alignments_df = ctm_df.select(align_udf(F.concat(ctm_df.identifier, F.lit("/"), ctm_df.text_document_id),
@@ -220,19 +225,22 @@ def main(argv):
     alignments_df = ctm_df.withColumn("alignments",
         align_udf(F.concat(ctm_df.identifier, F.lit("/"), ctm_df.text_document_id),
                   F.concat(ctm_df.identifier, F.lit("/"), ctm_df.audio_document_id),
-                  ctm_df.transcript, ctm_df.ctm_content))
+                  ctm_df.transcript, ctm_df.ctm_content)).drop('ctm_content')
     print("GALVEZ:schema")
     alignments_df.printSchema()
     import sys; sys.stdout.flush()
 
     alignments_df.write.mode("overwrite").format("json").save(os.path.join(FLAGS.work_dir, "alignments_json"))
 
-    pass
   training_data_export_dir = os.path.join(FLAGS.work_dir, "training_data_export")
   if FLAGS.stage <= 3:
     alignments_df = spark.read.json(os.path.join(FLAGS.work_dir, "alignments_json"))
+    # We would like the number of partitions to be some large multiple
+    # of the number of executors. Not every audio file is the same
+    # length, so this helps with load balancing.
+    alignments_df = alignments_df.repartition(960)
     create_audio_segments_udf = prepare_create_audio_segments_udf(gs_bucket=FLAGS.input_gcs_bucket,
-                                                                  output_dir=os.path.join(FLAGS.work_dir, "training_set")
+                                                                  output_dir=os.path.join(FLAGS.work_dir, "training_set_wav")
     )
     audio_paths = F.concat(F.lit(FLAGS.input_gcs_path), F.lit("/"),
                            alignments_df.identifier, F.lit("/"),
@@ -245,12 +253,14 @@ def main(argv):
         alignments_df.audio_document_id,
         alignments_df.text_document_id,
         F.struct(
-            alignments_df.alignments.label,
-            alignments_df.output_paths
+            alignments_df.alignments.label.alias('label'),
+            alignments_df.output_paths,
+            F.expr("transform(arrays_zip(alignments.end_ms, alignments.start_ms), x -> x.end_ms - x.start_ms)").alias('duration_ms')
+            # (alignments_df.alignments.end_ms - alignments_df.alignments.start_ms).alias('duration_ms'),
         ).alias('training_data')
     )
     # coalesce(1) seems to make the create_audio_segments_udf function run serially
-    output_df.write.mode("overwrite").json(os.path.join(FLAGS.work_dir, "dataset_manifest"))
+    output_df.write.mode("overwrite").json(os.path.join(FLAGS.work_dir, "dataset_manifest_wav"))
 
 if __name__ == '__main__':
   app.run(main)

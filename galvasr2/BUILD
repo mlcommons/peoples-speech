@@ -29,6 +29,7 @@ py_binary(
            "align/spark/dsalign_lib.py",
            "align/spark/event_listener.py",
            "align/spark/schemas.py",
+           "align/spark/timeout.py",
            ] +
            glob(["align/*.py"]),
     deps = [
@@ -48,6 +49,7 @@ py_binary(
            "align/spark/align_lib.py",
            "align/spark/event_listener.py",
            "align/spark/schemas.py",
+           "align/spark/timeout.py",
            ] +
            glob(["align/*.py"]),
     deps = [

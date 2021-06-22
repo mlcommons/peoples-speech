@@ -1,6 +1,8 @@
 import collections
 import io
 import json
+import signal
+import threading
 from typing import Dict, List, Tuple
 
 from collections import Counter
@@ -17,6 +19,7 @@ import pandas as pd
 import pyspark.sql.functions as F
 import pyspark.sql.types as T
 
+from galvasr2.align.spark.timeout import timeout
 
 def parse_ctm(ctm_buffer):
   fh = io.StringIO(ctm_buffer)
@@ -29,7 +32,7 @@ def parse_ctm(ctm_buffer):
       _, _, start_s, duration_s, word, _ = line.split(" ")
     except ValueError:
       print("GALVEZ: problematic line: ", line)
-      raise
+      return []
     start_ms = int(float(start_s) * 1000)
     duration_ms = int(float(duration_s) * 1000)
     words.append(Fragment(start_ms=start_ms,
@@ -148,7 +151,7 @@ def align(args, asr_output_fragments, transcript, alphabet):
   matched_fragments = split_match(fragments)
   matched_fragments = list(filter(lambda f: f is not None, matched_fragments))
 
-  print(f"GALVEZ:matched_fragments_length={len(matched_fragments)}")
+  # print(f"GALVEZ:matched_fragments_length={len(matched_fragments)}")
 
   similarity_algos = {}
 
@@ -270,7 +273,7 @@ def align(args, asr_output_fragments, transcript, alphabet):
 
   substitutions = Counter()
   result_fragments = []
-  print(f"GALVEZ:matched_fragments_length2={len(matched_fragments)}")
+  # print(f"GALVEZ:matched_fragments_length2={len(matched_fragments)}")
   for fragment in matched_fragments:
     index = fragment['index']
     time_start = fragment['start']
@@ -371,9 +374,9 @@ def align(args, asr_output_fragments, transcript, alphabet):
   #   result_file.write(json.dumps(result_fragments, indent=4 if args.output_pretty else None, ensure_ascii=False))
   num_result_fragments = len(result_fragments)
   num_dropped_fragments = len(fragments) - len(result_fragments)
-  print(f"GALVEZ:reasons={reasons}")
-  print(f"GALVEZ:num_result_fragments={num_result_fragments}")
-  print(f"GALVEZ:num_dropped_fragments={num_dropped_fragments}")
+  # print(f"GALVEZ:reasons={reasons}")
+  # print(f"GALVEZ:num_result_fragments={num_result_fragments}")
+  # print(f"GALVEZ:num_dropped_fragments={num_dropped_fragments}")
   return num_result_fragments, num_dropped_fragments, reasons, result_fragments
 
 def prepare_align_udf(dsalign_args, alphabet_path):
@@ -395,22 +398,22 @@ def prepare_align_udf(dsalign_args, alphabet_path):
       print(f"GALVEZ:name={name}")
       print(f"GALVEZ:audio_name={audio_name}")
       fragments = join_fragments(parse_ctm(ctm_content), 15_000)
-      # print(f"GALVEZ:fragments=")
-      # import pprint
-      # pprint.pprint(fragments)
-      # print(f"GALVEZ:transcript={transcript}")
-      # import sys; sys.stdout.flush()
-      output = align(args, fragments, transcript, alphabet)
+      # timeout after 200 seconds
+      output = timeout(align, (args, fragments, transcript, alphabet),
+                       timeout_duration=200)
+      if output is None:
+        print(f"GALVEZ: timed out for name={name} audio_name={audio_name}")
       if output is not None:
         _, _, _, aligned_results = output
-        print(f"GALVEZ:aligned_results_length={len(aligned_results)}")
         start_times = []
         end_times = []
         labels = []
         for result in aligned_results:
-          start_times.append(result['text-start'])
-          end_times.append(result['text-end'])
+          start_times.append(result['start'])
+          end_times.append(result['end'])
           labels.append(result['aligned-raw'])
+          # TODO: Add metrics like CER, WER, etc., for filtering out
+          # bad alignments later.
         result_dict["start_ms"].append(start_times)
         result_dict["end_ms"].append(end_times)
         result_dict["label"].append(labels)

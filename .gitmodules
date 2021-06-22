@@ -4,3 +4,6 @@
 [submodule "kaldi"]
 	path = third_party/kaldi
 	url = git://github.com/galv/kaldi.git
+[submodule "third_party/pydub"]
+	path = third_party/pydub
+	url = https://github.com/galv/pydub.git
