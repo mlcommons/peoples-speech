@@ -43,9 +43,9 @@ RUN export CLOUDSDK_CORE_DISABLE_PROMPTS=1 CLOUDSDK_INSTALL_DIR=/install \
 
 # TODO: Set the configurations in launch_pyspark_notebook.sh here as well.
 RUN /bin/bash -c "source /install/google-cloud-sdk/path.bash.inc && \
-    curl -O https://archive.apache.org/dist/spark/spark-3.0.0/spark-3.0.0-bin-hadoop2.7.tgz \
+    curl -O https://archive.apache.org/dist/spark/spark-3.1.2/spark-3.1.2-bin-hadoop2.7.tgz \
     && mkdir -p /install/spark \
-    && tar zxf spark-3.0.0-bin-hadoop2.7.tgz -C /install/spark --strip-components=1 \
+    && tar zxf spark-3.1.2-bin-hadoop2.7.tgz -C /install/spark --strip-components=1 \
     && gsutil cp gs://hadoop-lib/gcs/gcs-connector-hadoop2-2.1.6.jar /install/spark/jars"
 
 RUN echo "source /install/google-cloud-sdk/path.bash.inc" >> $HOME/.bashrc
@@ -85,6 +85,13 @@ RUN mkdir -p /install/lame/ \
     && cd /install/lame \
     && tar zxf lame.tar.gz --strip-components=1 \
     && ./configure --prefix=/usr \
+    && make -j $(nproc) install
+
+RUN mkdir -p /install/flac/ \
+    && curl -L -o /install/flac/flac.tar.xz https://downloads.xiph.org/releases/flac/flac-1.3.3.tar.xz \
+    && cd /install/flac \
+    && tar xf flac.tar.xz --strip-components=1 \
+    && ./configure --prefix=/usr --disable-dependency-tracking --disable-debug --enable-static \
     && make -j $(nproc) install
 
 RUN mkdir -p /install/sox/ \
