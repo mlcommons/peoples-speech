@@ -1,3 +1,18 @@
+"""
+Copyright 2021 MLCommons
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"""
 import pandas as pd
 from flair.data import Sentence
 from flair.models import SequenceTagger
@@ -24,7 +39,7 @@ flags.DEFINE_string(
     "gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS",
     "Ubication of the path with the transcription data",
 )
-flags.DEFINE_string(
+flags.DEFINE_integer(
     "num_rows",
     10,
     "Number of transcripts to analyze",
@@ -62,9 +77,9 @@ class ZSClassification:
             "television",
             "artificial intelligence",
             "food",
-            "healthy",
+            "health",
             "Information technology",
-            "financials",
+            "finance",
             "communication services",
         ]
 
@@ -75,7 +90,7 @@ class ZSClassification:
                     row,
                     labels=labels,
                     include_labels=True,
-                    batch_size=1,
+                    batch_size=32,
                     multilabel=False,
                 )
                 classification.sort(key=lambda tup: tup[1])
