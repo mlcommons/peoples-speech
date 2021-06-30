@@ -59,7 +59,8 @@ class AudioIdTextIdMappingTest(unittest.TestCase):
         text_file_exists = file_exists_udf(full_path(catalogue_df.identifier,
                                                      catalogue_df.text_document_id))
         files = catalogue_df.collect()
-        
+
+    # Warning: Takes 76.7 minutes to run
     def test_load_catalogue(self):
         base_dir = "gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS"
         catalogue_path = "gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS.jsonl.gz"

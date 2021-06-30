@@ -64,6 +64,20 @@ def main():
             Row(identifier='gov.uscourts.ca7.18-2571', audio_document_id='gov.uscourts.ca7.18-2571.2019-01-16.mp3', text_document_id='gov.uscourts.ca7.18-2571.2019-01-16.asr.srt', licenseurl='https://www.usa.gov/government-works'),
             Row(identifier='mnn_23078_388', audio_document_id='23078_388.mp3', text_document_id='23078_388.asr.srt', licenseurl='https://creativecommons.org/licenses/by-sa/4.0/'),
             Row(identifier='gov.uscourts.ca8.18-1312', audio_document_id='gov.uscourts.ca8.18-1312.2019-01-17.mp3', text_document_id='gov.uscourts.ca8.18-1312.2019-01-17.asr.srt', licenseurl='https://www.usa.gov/government-works')]
+
+
+    missing_audio_rows = \
+    [Row(identifier='gov.uscourts.ca4.12-364-cv', audio_document_id='gov.uscourts.ca4.12-364-cv.2015-10-29.mp3'),
+     Row(identifier='metavid', audio_document_id='video_archive/house_proceeding_07-18-06_00_1.HQ.mp3'),
+     Row(identifier='metavid', audio_document_id='video_archive/house_proceeding_07-19-06_1.HQ.mp3'),
+     Row(identifier='metavid', audio_document_id='video_archive/senate_proceeding_02-27-07.HQ.mp3'),
+     Row(identifier='metavid', audio_document_id='video_archive/senate_proceeding_03-06-06.mp3'),
+     Row(identifier='metavid', audio_document_id='video_archive/senate_proceeding_03-08-06.mini.mp3'),
+     Row(identifier='metavid', audio_document_id='video_archive/senate_proceeding_03-15-07.HQ.mp3'),
+     Row(identifier='metavid', audio_document_id='video_archive/senate_proceeding_05-05-06.mp3'),
+     Row(identifier='submedia_videos_2011', audio_document_id='AmateurRiot.mp3'),
+    ]
+
     download_missing_data(missing_audio_rows, "audio_document_id")
 
 
