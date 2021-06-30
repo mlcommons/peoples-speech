@@ -36,7 +36,7 @@ def download_data(metadata_file, save_directory):
     ia.download(identifier,
                 formats=["SubRip", "VBR MP3", "MP3", "Web Video Text Tracks", "Closed Caption Text"],
                 destdir=save_directory,
-                # Very import to set this. tf.io.gfile uses mtime in
+                # Very important to set this. tf.io.gfile uses mtime in
                 # nanoseconds, while archive.org uses mtime in seconds
                 # (as far as I can tell). I could convert the
                 # nanoseconds to seconds, of course, but don't want to

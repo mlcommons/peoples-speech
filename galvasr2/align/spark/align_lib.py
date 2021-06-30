@@ -2,6 +2,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from io import BytesIO
+import logging
 import os
 import pprint
 import json
@@ -32,9 +33,9 @@ from pyspark.sql.functions import col, pandas_udf
 import pyspark.sql.types as T
 import pyspark.sql.functions as F
 from pyspark.sql.functions import array, array_contains, count, explode, lit
-from pyspark.sql.types import (ArrayType, BinaryType, DoubleType, FloatType,
-                               ShortType, StructType, StructField, StringType,
-                               IntegerType, LongType)
+from pyspark.sql.types import (ArrayType, BooleanType, BinaryType, DoubleType,
+                               FloatType, ShortType, StructType, StructField,
+                               StringType, IntegerType, LongType)
 
 from galvasr2.align.spark.schemas import ARCHIVE_ORG_SCHEMA
 from galvasr2.align.spark.timeout import timeout
@@ -267,9 +268,7 @@ def prepare_generate_lm_udf(kenlm_path: str, debug_work_dir: str, alphabet_path:
     return pd.DataFrame({"path": pd.Series(transcripts)})
   return generate_lm
 
-#  Two columns:
-# identifer, MP3 file name, transcript file name
-def load_audio_id_text_id_mapping(spark, input_catalogue_path: str):
+def load_audio_and_text_dfs(spark, input_catalogue_path: str):
   df = spark.read.format('json').schema(ARCHIVE_ORG_SCHEMA).load(input_catalogue_path)
 
   exploded_df = df.withColumn("exploded_files", F.explode(df.files))
@@ -301,9 +300,6 @@ def load_audio_id_text_id_mapping(spark, input_catalogue_path: str):
 
   # from IPython import embed; embed()
 
-  print("GALVEZ:json=", df.count())
-  print("GALVEZ:exploded=", filtered_exploded_df.count())
-
   text_df = filtered_exploded_df.select(
     filtered_exploded_df.identifier,
     filtered_exploded_df.exploded_files["name"].alias("text_document_id"),
@@ -321,6 +317,12 @@ def load_audio_id_text_id_mapping(spark, input_catalogue_path: str):
       # https://ia802901.us.archive.org/4/items/disneychannelourhourafterhourafterhourprankstermarathonapril12004/disneychannelourhourafterhourafterhourprankstermarathonapril12004_files.xml
       (filtered_exploded_df.exploded_files["name"].endswith('.mp3'))
     )
+  return audio_df, text_df
+
+# Three columns:
+# identifer, MP3 file name, transcript file name
+def load_audio_id_text_id_mapping(spark, input_catalogue_path: str, input_base_dir: str):
+  audio_df, text_df = load_audio_and_text_dfs(spark, input_catalogue_path)
 
   joined_df = audio_df.join(text_df, "identifier")
   joined_df = joined_df.withColumn("levenshtein", F.levenshtein(joined_df.audio_document_id, joined_df.text_document_id))
@@ -330,10 +332,13 @@ def load_audio_id_text_id_mapping(spark, input_catalogue_path: str):
   audio_to_text_mapping_df = audio_to_text_mapping_df.join(licenses_df, ['identifier'])
   return audio_to_text_mapping_df
 
-# In [4]: #a = blah_df.where(blah_df.audio_document_id == "horror_express.mp3").collect()
-
-# In [5]: b = audio_to_text_mapping.where(audio_to_text_mapping.audio_document_id == "horror_express.mp3").collect()
-
+@pandas_udf(BooleanType())
+def file_exists_udf(path_series: pd.Series) -> pd.Series:
+    # print("GALVEZ:", path_series[0])
+    # print("GALVEZ:", len(path_series))
+    # import sys; sys.stdout.flush()
+    with ThreadPoolExecutor(80) as executor:
+        return pd.Series(list(tqdm.tqdm(executor.map(tf.io.gfile.exists, path_series), total=len(path_series))))
 
 FUZZY_MATCHING_RETURN_TYPE = StructType([StructField("identifier", StringType()),
                                          StructField("audio_document_id", StringType()),
