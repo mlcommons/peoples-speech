@@ -9,6 +9,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import threading
 from typing import List, Tuple
 import wave
 
@@ -17,6 +18,7 @@ from ftfy import fix_text, guess_bytes
 import langid
 import numpy as np
 import pandas as pd
+import pydub
 from pydub import AudioSegment
 import pyspark
 from matching.games import HospitalResident
@@ -35,6 +37,7 @@ from pyspark.sql.types import (ArrayType, BinaryType, DoubleType, FloatType,
                                IntegerType, LongType)
 
 from galvasr2.align.spark.schemas import ARCHIVE_ORG_SCHEMA
+from galvasr2.align.spark.timeout import timeout
 
 def DecodeToWavPipe(input_bytes, fmt):
   cmd = f'sox -t {fmt} - -t wav --channels 1 --rate 16000 --encoding signed --bits 16 -'
@@ -298,6 +301,9 @@ def load_audio_id_text_id_mapping(spark, input_catalogue_path: str):
 
   # from IPython import embed; embed()
 
+  print("GALVEZ:json=", df.count())
+  print("GALVEZ:exploded=", filtered_exploded_df.count())
+
   text_df = filtered_exploded_df.select(
     filtered_exploded_df.identifier,
     filtered_exploded_df.exploded_files["name"].alias("text_document_id"),
@@ -316,11 +322,10 @@ def load_audio_id_text_id_mapping(spark, input_catalogue_path: str):
       (filtered_exploded_df.exploded_files["name"].endswith('.mp3'))
     )
 
-  # The cause of the problem
-  # This creates duplicates, doesn't it? Ooops
   joined_df = audio_df.join(text_df, "identifier")
   joined_df = joined_df.withColumn("levenshtein", F.levenshtein(joined_df.audio_document_id, joined_df.text_document_id))
   audio_to_text_mapping_df = joined_df.groupBy("identifier").applyInPandas(fuzzy_matching, schema=FUZZY_MATCHING_RETURN_TYPE)
+  # This is needed for the hours-per-license job. We should probably avoid adding one-off columsn inside this function.
   licenses_df = df.select(df.identifier, df.metadata.licenseurl.alias('licenseurl'))
   audio_to_text_mapping_df = audio_to_text_mapping_df.join(licenses_df, ['identifier'])
   return audio_to_text_mapping_df
@@ -400,8 +405,18 @@ class TemporaryMountDirectory(tempfile.TemporaryDirectory):
     subprocess.check_call(mount_cmd + [self.name])
     
   def __exit__(self, exc, value, tb):
-    subprocess.check_call(self._unmount_cmd + [self.name])
-    super().__exit__(exc, value, tb)
+    try:
+      subprocess.check_call(self._unmount_cmd + [self.name])
+      unmounted = True
+    except subprocess.CalledProcessError:
+      try:
+        subprocess.check_call(["umount", self.name])
+        unmounted = True
+      except subprocess.CalledProcessError:
+        unmounted = False
+        print(f"WARNING: Failed to unmount {self.name}. Not removing temporary directory. Trying to remove a temporary directory that fails to unmount results in: OSError: [Errno 5] Input/output error")
+    if unmounted:
+      super().__exit__(exc, value, tb)
 
 def _prepare_soxi_udf(soxi_flags, spark_return_type, python_return_type):
   @pandas_udf(spark_return_type)
@@ -418,12 +433,15 @@ def _prepare_soxi_udf(soxi_flags, spark_return_type, python_return_type):
         cmd = f"soxi {soxi_flags} \"{audio_file}\""
         try:
           duration = subprocess.check_output(shlex.split(cmd), stderr=subprocess.DEVNULL, timeout=10) # 10 second timeout
+          # print("GALVEZ:value=")
+          # print(duration)
           duration = python_return_type(duration.rstrip(b'\n'))
         except subprocess.CalledProcessError:
           # WARNING: Assumes that your return type default constructor returns a "reasonable" value.
           # May return None instead?
           duration = python_return_type()
         except subprocess.TimeoutExpired:
+          print(f"Restarting on {audio_file}")
           # Call again. Sometimes gcsfuse just stalls, so we need restartability
           return get_soxi_info_udf(audio_file_series)
         durations.append(duration)
@@ -431,7 +449,7 @@ def _prepare_soxi_udf(soxi_flags, spark_return_type, python_return_type):
   return get_soxi_info_udf
 
 get_audio_seconds_udf = _prepare_soxi_udf("-D", DoubleType(), float)
-get_audio_sample_rate_udf = _prepare_soxi_udf("-r", DoubleType(), float)
+get_audio_sample_rate_udf = _prepare_soxi_udf("-r", StringType(), str)
 get_audio_annotations_udf = _prepare_soxi_udf("-a", BinaryType(), bytes)
 
 def prepare_create_audio_segments_udf(gs_bucket: str, output_dir: str):
@@ -444,18 +462,57 @@ def prepare_create_audio_segments_udf(gs_bucket: str, output_dir: str):
     with TemporaryMountDirectory(
             mount_cmd=["gcsfuse", "--implicit-dirs", gs_bucket.lstrip("gs://")],
             unmount_cmd=["fusermount", "-u"]) as temp_dir_name:
+      if not output_dir.startswith("gs://"):
+        posix_output_dir = output_dir
+      else:
+        posix_output_dir = re.sub(r'^{0}'.format(gs_bucket), temp_dir_name, output_dir)
       for audio_file_gcs_path, identifier, audio_document_id, start_ms_array, end_ms_array in zip(audio_file_gcs_paths, identifier_series, audio_document_id_series, start_ms_arrays, end_ms_arrays):
         chunk_paths.append([])
         audio_file_path = re.sub(r'^{0}'.format(gs_bucket), temp_dir_name, audio_file_gcs_path)
-        source = AudioSegment.from_file(audio_file_path)
-        this_file_output_dir = os.path.join(output_dir, identifier)
+        print(f"GALVEZ:audio_file_path={audio_file_path}")
+        try:
+          source = AudioSegment.from_file(audio_file_path, subprocess_timeout=100)
+        except subprocess.TimeoutExpired:
+          print("GALVEZ:timed out, need to retry")
+          return create_audio_segments_udf.func(audio_file_gcs_paths,
+                                                identifier_series,
+                                                audio_document_id_series,
+                                                start_ms_arrays,
+                                                end_ms_arrays)
+        except pydub.exceptions.CouldntDecodeError:
+          print(f"GALVEZ:problematic audio_file_path={audio_file_path}")
+          continue
+        identifier = identifier.replace('/', '_')
+        this_file_output_dir = os.path.join(posix_output_dir, identifier)
         os.makedirs(this_file_output_dir, exist_ok=True)
         base, _ = os.path.splitext(audio_document_id)
+        # We have to handle cases where audio_document_id contains a slash, like this one: collateral/gov.house.oversight.2007.03.19.iphone.mp3
+        # We could alternatively, but I worry about users of the dataset naively writing a glob pattern like "*/*.mp3", rather than "*/*/*.mp3".
+        # Furthermore there could be an arbitrary number of "/" characters. That is hard to handle programatically
+        base = base.replace('/', '_')
+        last_write_file_name = f"{base}-{(len(start_ms_array) - 1):04d}.wav"
+        already_done = timeout(os.path.exists, (os.path.join(this_file_output_dir, last_write_file_name),), timeout_duration=100)
+        if already_done:
+          pass
         for i, (start_ms, end_ms) in enumerate(zip(start_ms_array, end_ms_array)):
           # Flac encoding probably good
           write_file_name = f"{base}-{i:04d}.wav"
-          fh = source[start_ms:end_ms].export(os.path.join(output_dir, identifier, write_file_name))
-          fh.close()
+          if not already_done:
+            write_path = os.path.join(this_file_output_dir, write_file_name)
+            try:
+              fh = source[start_ms:end_ms].export(write_path, format="wav", subprocess_timeout=100)
+            except subprocess.TimeoutExpired:
+              print("GALVEZ:timed out 2, need to retry")
+              return create_audio_segments_udf.func(audio_file_gcs_paths,
+                                                    identifier_series,
+                                                    audio_document_id_series,
+                                                    start_ms_arrays,
+                                                    end_ms_arrays)
+            except pydub.exceptions.CouldntEncodeError:
+              print(f"GALVEZ: Couldn't encode {write_path} [{start_ms}:{end_ms}]")
+              continue
+            else:
+              fh.close()
           chunk_paths[-1].append(os.path.join(identifier, write_file_name))
       return pd.Series(chunk_paths)
   return create_audio_segments_udf
