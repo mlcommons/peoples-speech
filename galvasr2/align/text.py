@@ -229,8 +229,11 @@ def similarity(
                     + position_weight * position_weight * position_factor
                 )
     score = 0
-    for key in set(ca.keys()) & set(cb.keys()):
-        score += min(ca[key], cb[key])
+    small_table = ca if len(ca) < len(cb) else cb
+    large_table = cb if len(ca) < len(cb) else ca
+    for key in small_table:
+        if key in large_table:
+            score += min(ca[key], cb[key])
     return score / sum(ca.values())
 
 
