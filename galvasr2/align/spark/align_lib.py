@@ -57,7 +57,7 @@ def srt_to_text(srt_file_contents: pd.Series) -> pd.Series:
       return " ".join(line.content.replace("\n", " ") for line in srt.parse(content))
     except (srt.SRTParseError, srt.TimestampParseError) as exc:
       # Is this really the best way to log in a pandas UDF?
-      print("WARNING: trouble parsing content")
+      print("WARNING: trouble parsing srt file content")
       print(exc)
       return ""
   return srt_file_contents.apply(helper)

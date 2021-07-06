@@ -21,7 +21,7 @@ import pyspark.sql.types as T
 
 from galvasr2.align.spark.timeout import timeout
 
-def parse_ctm(ctm_buffer):
+def parse_ctm(ctm_buffer, silence_words: set):
   fh = io.StringIO(ctm_buffer)
   # utterance, channel, start time in sec, duration in sec, label
   # 1 A 2.560 0.016 COMMISSION
@@ -33,6 +33,9 @@ def parse_ctm(ctm_buffer):
     except ValueError:
       print("GALVEZ: problematic line: ", line)
       return []
+    if word in silence_words:
+      continue
+
     start_ms = int(float(start_s) * 1000)
     duration_ms = int(float(duration_s) * 1000)
     words.append(Fragment(start_ms=start_ms,
@@ -40,28 +43,35 @@ def parse_ctm(ctm_buffer):
                           word=word))
   return words
 
-def join_fragments(ctm_contents: List, max_length_ms: int) -> Dict:
-  fragments = []
-  start_ms = -1
-  transcript = []
-  for ctm_word_fragment in ctm_contents:
-    if start_ms == -1:
-      start_ms = ctm_word_fragment.start_ms
-    transcript.append(ctm_word_fragment.word)
-    if ctm_word_fragment.end_ms - start_ms > max_length_ms:
-      fragments.append({
-        "start": start_ms,
-        "end": ctm_word_fragment.end_ms,
-        "transcript": " ".join(transcript)})
-      start_ms = -1
-      transcript = []
-  # Add final straggler fragment, if it exists
-  if start_ms != -1:
-    fragments.append({
-      "start": start_ms,
-      "end": ctm_contents[-1].end_ms,
-      "transcript": " ".join(transcript)})
-  return fragments
+def join_fragments(ctm_contents: List, max_length_ms: int,
+                   max_silence_length_ms: int) -> Dict:
+    fragments = []
+    if len(ctm_contents) > 0:
+        start_ms = ctm_contents[0].start_ms
+        transcript = [ctm_contents[0].word]
+    for i in range(1, len(ctm_contents)):
+        current_word_fragment = ctm_contents[i]
+        previous_word_fragment = ctm_contents[i - 1]
+        silence_duration_ms = current_word_fragment.start_ms - previous_word_fragment.end_ms
+        if (current_word_fragment.end_ms - start_ms > max_length_ms or
+            silence_duration_ms > max_silence_length_ms):
+            fragments.append({
+                "start": start_ms,
+                "end": previous_word_fragment.end_ms,
+                "transcript": " ".join(transcript)})
+            start_ms = current_word_fragment.start_ms
+            transcript = []
+        transcript.append(current_word_fragment.word)
+    # Add final straggler fragment, if it exists
+    if start_ms != -1:
+        fragments.append({
+            "start": start_ms,
+            "end": ctm_contents[-1].end_ms,
+            "transcript": " ".join(transcript)})
+    for fragment in fragments:
+        assert fragment["end"] - fragment["start"] <= max_length_ms
+    return fragments
+
 
 def align(args, asr_output_fragments, transcript, alphabet):
   # asr_output, transcript, aligned = triple
@@ -390,17 +400,18 @@ def prepare_align_udf(dsalign_args, alphabet_path):
                   transcript_series: pd.Series,
                   ctm_content_series: pd.Series) -> pd.DataFrame:
     alphabet = Alphabet(alphabet_path)
+    silence_words = frozenset(["<unk>", "[laughter]", "[noise]"])
     result_dict = {"start_ms": [],
                    "end_ms": [],
                    "label": []}
     for name, audio_name, ctm_content, transcript in zip(name_series, audio_name_series,
                                                          ctm_content_series, transcript_series):
-      print(f"GALVEZ:name={name}")
-      print(f"GALVEZ:audio_name={audio_name}")
-      fragments = join_fragments(parse_ctm(ctm_content), 15_000)
+      # print(f"GALVEZ:name={name}")
+      # print(f"GALVEZ:audio_name={audio_name}")
+      fragments = join_fragments(parse_ctm(ctm_content, silence_words), 15_000, 3_000)
       # timeout after 200 seconds
       output = timeout(align, (args, fragments, transcript, alphabet),
-                       timeout_duration=200)
+                       timeout_duration=800)
       if output is None:
         print(f"GALVEZ: timed out for name={name} audio_name={audio_name}")
       if output is not None:
