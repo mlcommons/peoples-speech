@@ -1,0 +1,7 @@
+flask
+flask_cors
+python-configuration[yaml]
+smart_open[gcs]
+redis
+gsutil
+google-compute-engine

@@ -1,0 +1,6 @@
+exporter:
+    type: CloudExporter
+    endpoint: http://34.91.68.228
+
+verbose: True
+

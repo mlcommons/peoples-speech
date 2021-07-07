@@ -16,11 +16,11 @@ if [[ $PYTHON_ENV == 0 ]];
 then
 echo "Not in virtual environment"
 
-ACTIVATE=$LOCAL_DIRECTORY/environment/bin/activate
+ACTIVATE=/tmp/mlcommons-environment/bin/activate
 
 if [ ! -f $ACTIVATE ]; then
 echo "Virtual environment doesn't exist, making it..."
-python3 -m venv $LOCAL_DIRECTORY/environment
+python3 -m venv /tmp/mlcommons-environment
 python -m pip install --upgrade pip > /dev/null
 fi
 

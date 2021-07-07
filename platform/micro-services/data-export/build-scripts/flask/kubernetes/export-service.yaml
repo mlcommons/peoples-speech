@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: data-export
+  name: data-export
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: data-export
+  template:
+    metadata:
+      labels:
+        app: data-export
+    spec:
+      containers:
+      - image: gcr.io/the-peoples-speech/data-export:0.12
+        name: data-export
+        ports:
+        - containerPort: 5000
+          name: tcp-c-5000
+        env:
+        - name: "PORT"
+          value: "5000"
+        volumeMounts:
+          - mountPath: "/app/credentials"
+            name: gcloud-service-account-key
+            readOnly: true
+      volumes:
+        - name: gcloud-service-account-key
+          secret:
+            secretName: gcloud-service-account-key
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: data-export
+  name: data-export
+spec:
+  selector:
+    app: data-export
+  ports:
+    - port: 5000
+      targetPort: 5000
+      protocol: TCP
+      name: tcp-5000
+  type: LoadBalancer
+
