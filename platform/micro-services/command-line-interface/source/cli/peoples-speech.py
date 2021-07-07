@@ -3,13 +3,13 @@ import os
 
 from argparse import ArgumentParser
 
-import peoples_speech.data_book
-import peoples_speech.data_export
-import peoples_speech.task_manager
-
 import config
 
 import logging
+
+import peoples_speech.data_book
+import peoples_speech.data_export
+import peoples_speech.task_manager
 
 logger = logging.getLogger(__name__)
 
