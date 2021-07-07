@@ -1,0 +1,8 @@
+tensorflow
+numpy
+resampy
+python-configuration[yaml]
+google-cloud-storage
+pydub
+jsonlines
+smart_open[gcs]

@@ -300,6 +300,9 @@ def load_audio_and_text_dfs(spark, input_catalogue_path: str):
 
   # from IPython import embed; embed()
 
+  print("GALVEZ:json=", df.count())
+  print("GALVEZ:exploded=", filtered_exploded_df.count())
+
   text_df = filtered_exploded_df.select(
     filtered_exploded_df.identifier,
     filtered_exploded_df.exploded_files["name"].alias("text_document_id"),
