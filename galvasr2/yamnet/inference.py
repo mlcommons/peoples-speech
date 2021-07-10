@@ -5,15 +5,14 @@ from google.cloud import storage
 import numpy as np
 import resampy
 import tensorflow as tf
+import tensorflow_io as tfio
 import urllib.request
 import itertools
 import io
 import jsonlines
-from pydub import AudioSegment
 
-
-import yamnet.params as yamnet_params
-import yamnet.yamnet as yamnet_model
+import galvasr2.yamnet.params as yamnet_params
+import galvasr2.yamnet.yamnet as yamnet_model
 
 import os
 
@@ -27,14 +26,11 @@ logger = logging.getLogger(__name__)
 
 def main():
     config = parse_arguments()
-
     setup_logging(config)
-
     run_inference(config)
 
 def parse_arguments():
     parser = ArgumentParser("Run YAMNET on a set of audio files.")
-
     parser.add_argument("-i", "--input-path", default="gs://the-peoples-speech-west-europe/forced-aligner/cuda-forced-aligner/output_work_dir_5b/output_work_dir_5b/training_set", help="Path to yamnet dataset.")
     parser.add_argument("-o", "--output-path", default="results.jsonl", help="The path to save the results.")
     parser.add_argument("-c", "--config-file-path", default=".json", help="The path to the config file.")
@@ -51,112 +47,28 @@ def parse_arguments():
 def run_inference(config):
     model, classes, params = load_model(config)
 
-    dataset, filenames = get_dataset(config)
+    dataset = get_dataset(config)
 
-    run_model_on_dataset(model, classes, params, dataset, filenames, config)
+    run_model_on_dataset(model, classes, params, dataset, config)
 
 def get_dataset(config):
-
-    logger.debug("Getting file paths")
-    files, filenames = list_files(config["input_path"], config)
-
-    logger.debug("Making dataset")
-    ds = files.map(tf.io.read_file)
-    #ds = ds.map(tf.audio.decode_wav)
-    ds = ds.map(lambda file : tf.py_function(func=decode_mp3, inp=[file], Tout=tf.float32))
-    ds = ds.prefetch(buffer_size=tf.data.AUTOTUNE)
-
-    return ds, filenames
-
-def decode_mp3(mp3_tensor):
-    mp3_data = mp3_tensor.numpy()
-    mp3_file = io.BytesIO(mp3_data)
-    mp3_audio = AudioSegment.from_file(mp3_file, format="mp3")
-    logger.debug("duration: " + str(mp3_audio.duration_seconds) + ", channels: " +
-        str(mp3_audio.channels) + ", sampling_width: " + str(mp3_audio.sample_width) +
-        ", sampling rate: " + str(mp3_audio.frame_rate) + ", dbfs: " + str(mp3_audio.dBFS) )
-    mp3_audio = mp3_audio.set_channels(1)
-    mp3_audio = mp3_audio.set_sample_width(2)
-    seconds = mp3_audio.duration_seconds
-    max_duration = 600
-    if seconds > max_duration:
-        mp3_audio = mp3_audio[0:max_duration*1000]
-    array = mp3_audio.get_array_of_samples()
-    array = np.append(array, [int(mp3_audio.frame_rate)])
-
-    return array
-
-def list_files(path, config):
-    if not "max_files" in config:
-        filenames = tf.data.Dataset.list_files(path, "*/*.wav", shuffle=False)
-
-        return filenames, [filename.numpy().decode("utf-8") for filename in filenames]
-
-    return list_blobs(path, int(config["max_files"]))
-
-def list_blobs(path, max_files):
-    result = urlparse(path, allow_fragments=False)
-    logger.debug("Path: " + str(result))
-    files = list_blobs_with_prefix(result.netloc, result.path.lstrip("/"))
-
-    files = list(itertools.islice(files, max_files))
-
-    logger.debug("Found matching files under " + path + ": " + str(files))
-
-
-    filenames = [os.path.join("gs://" + result.netloc, filename) for filename in files]
-
-    return tf.data.Dataset.list_files(filenames, shuffle=False), filenames
-
-def list_blobs_with_prefix(bucket_name, prefix, delimiter=None):
-    """Lists all the blobs in the bucket that begin with the prefix.
-
-    This can be used to list all blobs in a "folder", e.g. "public/".
-
-    The delimiter argument can be used to restrict the results to only the
-    "files" in the given "folder". Without the delimiter, the entire tree under
-    the prefix is returned. For example, given these blobs:
-
-        a/1.txt
-        a/b/2.txt
-
-    If you specify prefix ='a/', without a delimiter, you'll get back:
-
-        a/1.txt
-        a/b/2.txt
-
-    However, if you specify prefix='a/' and delimiter='/', you'll get back
-    only the file directly under 'a/':
-
-        a/1.txt
-
-    As part of the response, you'll also get back a blobs.prefixes entity
-    that lists the "subfolders" under `a/`:
-
-        a/b/
-    """
-
-    storage_client = storage.Client()
-
-    # Note: Client.list_blobs requires at least package version 1.17.0.
-    blobs = storage_client.list_blobs(bucket_name, prefix=prefix, delimiter=delimiter)
-
-    for blob in blobs:
-        logger.debug("Got file: " + str(blob.name))
-        if is_audio(blob.name):
-            yield blob.name
-
-    if delimiter:
-        for prefix in blobs.prefixes:
-            yield prefix
-
-def is_audio(path):
-    base, extension = os.path.splitext(path)
-
-    if extension.strip() == ".mp3":
-        return True
-
-    return False
+    # Replace with a single file to start with?
+    files = tf.data.Dataset.list_files(
+        os.path.join(config["input_path"],
+                     "Our_Community_Cares_Camp_Public_Service_Announcement/Our_Community_Cares_Camp_Public_Service_Announcement.mp3"))
+    # files = tf.data.Dataset.list_files(os.path.join(config["input_path"], "**/*.mp3"))
+    def get_audio_and_rate_tensors(file_name):
+        io_tensor = tfio.audio.AudioIOTensor(file_name, dtype=tf.float32)
+        return (io_tensor.to_tensor(), io_tensor.rate)
+    ds = files.map(get_audio_and_rate_tensors)
+    # ds = files.map(tf.io.read_file)
+    # ds = ds.map(tfio.audio.decode_mp3)
+    def split_into_chunks(audio_tensor, sampling_rate):
+        audio_tensor  sampling_rate * config['seconds_per_chunk']
+        tf.split(, axis=0)
+    ds = ds.
+    ds = ds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+    return ds
 
 def load_model(config):
     logger.debug("Loading model...")
@@ -167,7 +79,7 @@ def load_model(config):
     yamnet = yamnet_model.yamnet_frames_model(params)
     yamnet.load_weights(weights)
 
-    yamnet_classes = yamnet_model.class_names(os.path.join(os.path.dirname(__file__), "yamnet", "yamnet_class_map.csv"))
+    yamnet_classes = yamnet_model.class_names(os.path.join(os.path.dirname(__file__), "yamnet_class_map.csv"))
 
     return yamnet, yamnet_classes, params
 
@@ -189,19 +101,18 @@ def download(url, path):
         urllib.request.urlretrieve(url, path)
     logger.debug("Download success")
 
-def run_model_on_dataset(yamnet, classes, params, dataset, filenames, config):
-
+def run_model_on_dataset(yamnet, classes, params, dataset, config):
     with jsonlines.open(config["output_path"], mode='w') as writer:
-
-        for batch, filename in zip(dataset, filenames):
-            logger.debug(filename)
+        for batch in dataset:
+            # How do we split the audio fwave forms?
             items = split_into_items(batch, config)
             logger.debug("chunks" + str(len(items)))
             for index, item in enumerate(items):
                 results = run_model_on_batch(yamnet, classes, params, item)
-                print_results(writer, filename, results, classes, index, config)
+                print_results(writer, results, classes, index, config)
 
 def split_into_items(pair, config):
+    # Ugh
     batch = pair[:-1]
     sr = int(pair[-1])
     chunk_size = int(float(config["seconds_per_chunk"]) * sr)
@@ -224,13 +135,13 @@ def split_into_items(pair, config):
 
     return items
 
-def print_results(writer, filename, results, yamnet_classes, index, config):
+def print_results(writer, results, yamnet_classes, index, config):
     top, prediction = results
     seconds = index * float(config["seconds_per_chunk"])
     print(str(int(seconds // 60)) + ":" + str(int(seconds) % 60) + '\n'.join('  {:12s}: {:.3f}'.format(yamnet_classes[i], prediction[i])
                     for i in top[0:1]))
 
-    result = { "path" : filename, "seconds" : seconds }
+    result = { "path" : "-", "seconds" : seconds }
 
     for i in top:
         result[yamnet_classes[i]] = float(prediction[i])
@@ -272,7 +183,7 @@ def config_path():
     if os.path.exists(home_config_path):
         return home_config_path
 
-    return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config", "default.yaml")
+    return os.path.join(os.path.dirname(__file__), "config", "default.yaml")
 
 def setup_logging(arguments):
 

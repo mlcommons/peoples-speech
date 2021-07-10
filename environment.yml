@@ -201,6 +201,7 @@ dependencies:
     - scipy==1.4.1
     - send2trash==1.5.0
     - six==1.15.0
+    - smart_open[gcs]
     - soupsieve==2.0.1
     - srt==3.4.1
     - sympy==1.6.1
@@ -210,6 +211,7 @@ dependencies:
     - tensorflow-gpu==2.2.0
     - tensorflow-datasets==3.2.1
     - tensorflow-estimator==2.2.0
+    - tensorflow-io==0.14.0
     - tensorflow-metadata==0.22.2
     - termcolor==1.1.0
     - terminado==0.8.3
