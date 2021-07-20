@@ -9,5 +9,14 @@ header:
     - '**/*.md'
     - 'LICENSE'
     - 'NOTICE'
+    - 'codelabs/**'
+    - 'docker/**'
+    - 'docs/**'
+    - 'ligvo/**'
+    - 'pip_package/**'
+    - 'platform/**'
+    - 'scripts/**'
+    - 'spark-events/**'
+    - 'third_party/**'
 
   comment: on-failure
