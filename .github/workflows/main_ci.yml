@@ -27,3 +27,5 @@ jobs:
     - name: Run Pylint
       run: | 
         python ./.github/workflows/lint.py --path ./galvasr2 --threshold -3
+    - name: Check License Header
+      uses: apache/skywalking-eyes@main 
