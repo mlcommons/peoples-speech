@@ -4,7 +4,7 @@
 # Apache 2.0
 #
 #
-'''
+"""
 This file is adapted from src/bin/latgen-faster-mapped.cc.
 
 Note that there is no **mapped** in the filename since we
@@ -15,7 +15,7 @@ there should not be any performance problem.
 
 You can write another `src/bin/latgen-faster.cc` if you are
 still worrying about the performance.
-'''
+"""
 #
 #
 
@@ -24,7 +24,7 @@ still worrying about the performance.
 
 import sys
 
-paths = '\n'.join(sys.path)
+paths = "\n".join(sys.path)
 print(f"GALV: {paths}")
 
 import kaldi_pybind as kaldi
@@ -32,12 +32,14 @@ from kaldi_pybind import fst
 
 
 def main():
-    usage = kaldi.StringArg('''\
+    usage = kaldi.StringArg(
+        """\
 Generate lattices, reading log-likelihoods as matrices
 
 Usage: latgen-faster [options]  fst-rxfilename loglikes-rspecifier \
 lattice-wspecifier [ words-wspecifier [alignments-wspecifier] ]
-''')
+"""
+    )
 
     allow_partial = kaldi.BoolArg(False)
     acoustic_scale = kaldi.FloatArg(0.1)
@@ -49,14 +51,21 @@ lattice-wspecifier [ words-wspecifier [alignments-wspecifier] ]
 
     config.Register(po)
 
-    po.Register('acoustic-scale', acoustic_scale,
-                'Scaling factor for acoustic likelihoods')
+    po.Register(
+        "acoustic-scale", acoustic_scale, "Scaling factor for acoustic likelihoods"
+    )
 
-    po.Register('word-symbol-table', word_syms_filename,
-                'Symbol table for words [for debug output]')
+    po.Register(
+        "word-symbol-table",
+        word_syms_filename,
+        "Symbol table for words [for debug output]",
+    )
 
-    po.Register('allow-partial', allow_partial,
-                'If true, produce output even if end state was not reached.')
+    po.Register(
+        "allow-partial",
+        allow_partial,
+        "If true, produce output even if end state was not reached.",
+    )
 
     po.Read(sys.argv)
 
@@ -107,12 +116,11 @@ lattice-wspecifier [ words-wspecifier [alignments-wspecifier] ]
 
     for key, value in loglike_reader:
         if value.NumRows() == 0:
-            print('zero length utterance: {}'.format(key))
+            print("zero length utterance: {}".format(key))
             num_fail += 1
             continue
 
-        decodable = kaldi.DecodableMatrixScaled(likes=value,
-                                                scale=acoustic_scale.value)
+        decodable = kaldi.DecodableMatrixScaled(likes=value, scale=acoustic_scale.value)
 
         is_succeeded, likelihood = kaldi.DecodeUtteranceLatticeFaster(
             decoder=decoder,
@@ -126,7 +134,8 @@ lattice-wspecifier [ words-wspecifier [alignments-wspecifier] ]
             alignments_writer=alignments_writer,
             words_writer=words_writer,
             compact_lattice_writer=compact_lattice_writer,
-            lattice_writer=lattice_writer)
+            lattice_writer=lattice_writer,
+        )
 
         if is_succeeded:
             tot_like += likelihood
@@ -135,11 +144,17 @@ lattice-wspecifier [ words-wspecifier [alignments-wspecifier] ]
         else:
             num_fail += 1
 
-    print('Done {num_success} utterances, failed for {num_fail}'.format(
-        num_success=num_success, num_fail=num_fail))
+    print(
+        "Done {num_success} utterances, failed for {num_fail}".format(
+            num_success=num_success, num_fail=num_fail
+        )
+    )
 
-    print('Overall log-likelihood per frame is {} over {} frames'.format(
-        tot_like / frame_count, frame_count))
+    print(
+        "Overall log-likelihood per frame is {} over {} frames".format(
+            tot_like / frame_count, frame_count
+        )
+    )
 
     if num_success != 0:
         sys.exit(0)
@@ -147,5 +162,5 @@ lattice-wspecifier [ words-wspecifier [alignments-wspecifier] ]
         sys.exit(1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

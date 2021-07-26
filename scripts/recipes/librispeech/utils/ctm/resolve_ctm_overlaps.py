@@ -29,8 +29,9 @@ logger.setLevel(logging.INFO)
 handler = logging.StreamHandler()
 handler.setLevel(logging.INFO)
 formatter = logging.Formatter(
-    '%(asctime)s [%(pathname)s:%(lineno)s - '
-    '%(funcName)s - %(levelname)s ] %(message)s')
+    "%(asctime)s [%(pathname)s:%(lineno)s - "
+    "%(funcName)s - %(levelname)s ] %(message)s"
+)
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
@@ -41,14 +42,14 @@ def get_args():
     usage = """ Python script to resolve overlaps in ctms.  May be used with
                 utils/data/subsegment_data_dir.sh. """
     parser = argparse.ArgumentParser(usage)
-    parser.add_argument('segments', type=argparse.FileType('r'),
-                        help='use segments to resolve overlaps')
-    parser.add_argument('ctm_in', type=argparse.FileType('r'),
-                        help='input_ctm_file')
-    parser.add_argument('ctm_out', type=argparse.FileType('w'),
-                        help='output_ctm_file')
-    parser.add_argument('--verbose', type=int, default=0,
-                        help="Higher value for more verbose logging.")
+    parser.add_argument(
+        "segments", type=argparse.FileType("r"), help="use segments to resolve overlaps"
+    )
+    parser.add_argument("ctm_in", type=argparse.FileType("r"), help="input_ctm_file")
+    parser.add_argument("ctm_out", type=argparse.FileType("w"), help="output_ctm_file")
+    parser.add_argument(
+        "--verbose", type=int, default=0, help="Higher value for more verbose logging."
+    )
     args = parser.parse_args()
 
     if args.verbose > 2:
@@ -74,8 +75,7 @@ def read_segments(segments_file):
         segments[parts[0]] = (parts[1], float(parts[2]), float(parts[3]))
         reco2utt[parts[1]].append(parts[0])
 
-    logger.info("Read %d lines from segments file %s",
-                num_lines, segments_file.name)
+    logger.info("Read %d lines from segments file %s", num_lines, segments_file.name)
     segments_file.close()
 
     return segments, reco2utt
@@ -115,8 +115,9 @@ def read_ctm(ctm_file, segments):
         if (reco, utt) not in ctms:
             ctms[(reco, utt)] = []
 
-        ctms[(reco, utt)].append([parts[0], parts[1], float(parts[2]),
-                                  float(parts[3])] + parts[4:])
+        ctms[(reco, utt)].append(
+            [parts[0], parts[1], float(parts[2]), float(parts[3])] + parts[4:]
+        )
 
     logger.info("Read %d lines from CTM %s", num_lines, ctm_file.name)
 
@@ -148,11 +149,12 @@ def resolve_overlaps(ctms, segments):
             ]
         segments - Dictionary containing the output of read_segments()
             { utterance_id: (recording_id, start_time, end_time) }
-        """
+    """
     total_ctm = []
     if len(ctms) == 0:
-        raise RuntimeError('CTMs for recording is empty. '
-                           'Something wrong with the input ctms')
+        raise RuntimeError(
+            "CTMs for recording is empty. " "Something wrong with the input ctms"
+        )
 
     # First column of first line in CTM for first utterance
     next_utt = ctms[0][0][0]
@@ -170,7 +172,9 @@ def resolve_overlaps(ctms, segments):
                 "Current utterance %s is not the same as the next "
                 "utterance %s in previous iteration.\n"
                 "CTM is not sorted by utterance-id?",
-                cur_utt, next_utt)
+                cur_utt,
+                next_utt,
+            )
             raise ValueError
 
         # Assumption here is that the segments are written in
@@ -181,7 +185,9 @@ def resolve_overlaps(ctms, segments):
             logger.error(
                 "Next utterance %s <= Current utterance %s. "
                 "CTM is not sorted by start-time of utterance-id.",
-                next_utt, cur_utt)
+                next_utt,
+                cur_utt,
+            )
             raise ValueError
 
         try:
@@ -195,8 +201,7 @@ def resolve_overlaps(ctms, segments):
             try:
                 overlap = segments[cur_utt][2] - segments[next_utt][1]
             except KeyError:
-                logger("Could not find utterance %s in segments",
-                       next_utt)
+                logger("Could not find utterance %s in segments", next_utt)
                 raise
 
             if overlap > 0 and segments[next_utt][2] <= segments[cur_utt][2]:
@@ -213,9 +218,12 @@ def resolve_overlaps(ctms, segments):
             # only upto the line before this.
             try:
                 index = next(
-                    (i for i, line in enumerate(ctm_for_cur_utt)
-                     if (line[2] + line[3] / 2.0
-                         > window_length - overlap / 2.0)))
+                    (
+                        i
+                        for i, line in enumerate(ctm_for_cur_utt)
+                        if (line[2] + line[3] / 2.0 > window_length - overlap / 2.0)
+                    )
+                )
             except StopIteration:
                 # It is possible for such a word to not exist, e.g the last
                 # word in the CTM is longer than overlap length and starts
@@ -232,8 +240,12 @@ def resolve_overlaps(ctms, segments):
             # the first half of the overlap region.
             try:
                 index = next(
-                    (i for i, line in enumerate(ctm_for_next_utt)
-                    if line[2] + line[3] / 2.0 > overlap / 2.0))
+                    (
+                        i
+                        for i, line in enumerate(ctm_for_next_utt)
+                        if line[2] + line[3] / 2.0 > overlap / 2.0
+                    )
+                )
             except StopIteration:
                 # This can happen if there is no word hypothesized after
                 # half the overlap region.
@@ -246,8 +258,11 @@ def resolve_overlaps(ctms, segments):
                 ctms[utt_index + 1] = ctm_for_next_utt[index:]
             # else leave the ctm as is.
         except:
-            logger.error("Could not resolve overlaps between CTMs for "
-                         "%s and %s", cur_utt, next_utt)
+            logger.error(
+                "Could not resolve overlaps between CTMs for " "%s and %s",
+                cur_utt,
+                next_utt,
+            )
             logger.error("Current CTM:")
             for line in ctm_for_cur_utt:
                 logger.error(ctm_line_to_string(line))
@@ -264,8 +279,9 @@ def resolve_overlaps(ctms, segments):
 
 def ctm_line_to_string(line):
     """Converts a line of CTM to string."""
-    return "{0} {1} {2} {3} {4}".format(line[0], line[1], line[2], line[3],
-                                        " ".join(line[4:]))
+    return "{0} {1} {2} {3} {4}".format(
+        line[0], line[1], line[2], line[3], " ".join(line[4:])
+    )
 
 
 def write_ctm(ctm_lines, out_file):
@@ -292,8 +308,7 @@ def run(args):
             ctms_for_reco = resolve_overlaps(ctms_for_reco, segments)
             write_ctm(ctms_for_reco, args.ctm_out)
         except Exception:
-            logger.error("Failed to process CTM for recording %s",
-                         reco)
+            logger.error("Failed to process CTM for recording %s", reco)
             raise
     args.ctm_out.close()
     logger.info("Wrote CTM for %d recordings.", len(ctms))
@@ -313,8 +328,7 @@ def main():
                 if f is not None:
                     f.close()
         except IOError:
-            logger.error("Could not close some files. "
-                         "Disk error or broken pipes?")
+            logger.error("Could not close some files. " "Disk error or broken pipes?")
             raise
         except UnboundLocalError:
             raise SystemExit(1)

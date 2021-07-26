@@ -10,13 +10,13 @@ class Alphabet(object):
         self._str_to_label = {}
         self._size = 0
         if config_file:
-            with open(config_file, 'r', encoding='utf-8') as fin:
+            with open(config_file, "r", encoding="utf-8") as fin:
                 for line in fin:
-                    if line[0:2] == '\\#':
-                        line = '#\n'
-                    elif line[0] == '#':
+                    if line[0:2] == "\\#":
+                        line = "#\n"
+                    elif line[0] == "#":
                         continue
-                    self._label_to_str[self._size] = line[:-1] # remove the line ending
+                    self._label_to_str[self._size] = line[:-1]  # remove the line ending
                     self._str_to_label[line[:-1]] = self._size
                     self._size += 1
 
@@ -27,13 +27,13 @@ class Alphabet(object):
         res = bytearray()
 
         # We start by writing the number of pairs in the buffer as uint16_t.
-        res += struct.pack('<H', self._size)
+        res += struct.pack("<H", self._size)
         for key, value in self._label_to_str.items():
-            value = value.encode('utf-8')
+            value = value.encode("utf-8")
             # struct.pack only takes fixed length strings/buffers, so we have to
             # construct the correct format string with the length of the encoded
             # label.
-            res += struct.pack('<HH{}s'.format(len(value)), key, len(value), value)
+            res += struct.pack("<HH{}s".format(len(value)), key, len(value), value)
         return bytes(res)
 
 
@@ -66,8 +66,8 @@ def create_bundle(
     scorer.reset_params(default_alpha, default_beta)
     scorer.load_lm(lm_path)
     # TODO: Why is this not working?
-    #err = scorer.load_lm(lm_path)
-    #if err != ds_ctcdecoder.DS_ERR_SCORER_NO_TRIE:
+    # err = scorer.load_lm(lm_path)
+    # if err != ds_ctcdecoder.DS_ERR_SCORER_NO_TRIE:
     #    print('Error loading language model file: 0x{:X}.'.format(err))
     #    print('See the error codes section in https://deepspeech.readthedocs.io for a description.')
     #    sys.exit(1)

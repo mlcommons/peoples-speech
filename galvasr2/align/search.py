@@ -3,14 +3,16 @@ from text import ngrams, similarity
 
 
 class FuzzySearch(object):
-    def __init__(self,
-                 text,
-                 max_candidates=10,
-                 candidate_threshold=0.92,
-                 match_score=100,
-                 mismatch_score=-100,
-                 gap_score=-100,
-                 char_similarities=None):
+    def __init__(
+        self,
+        text,
+        max_candidates=10,
+        candidate_threshold=0.92,
+        match_score=100,
+        mismatch_score=-100,
+        gap_score=-100,
+        char_similarities=None,
+    ):
         self.text = text
         self.max_candidates = max_candidates
         self.candidate_threshold = candidate_threshold
@@ -20,8 +22,8 @@ class FuzzySearch(object):
         self.char_similarities = char_similarities
         self.ngrams = {}
         # build inverted index of ngram to where it occurs
-       # character ngrams. Good.
-        for i, ngram in enumerate(ngrams(' ' + text + ' ', 3)):
+        # character ngrams. Good.
+        for i, ngram in enumerate(ngrams(" " + text + " ", 3)):
             if ngram in self.ngrams:
                 ngram_bucket = self.ngrams[ngram]
             else:
@@ -32,7 +34,7 @@ class FuzzySearch(object):
     def char_pair(a, b):
         if a > b:
             a, b = b, a
-        return '' + a + b
+        return "" + a + b
 
     def char_similarity(self, a, b):
         key = FuzzySearch.char_pair(a, b)
@@ -67,7 +69,12 @@ class FuzzySearch(object):
         substitutions = Counter()
         i, j = start_i, start_j
         while (j > 0 or i > 0) and f[i][j] != 0:
-            if i > 0 and j > 0 and f[i][j] == (f[i - 1][j - 1] + self.char_similarity(a[i - 1], b[j - 1])):
+            if (
+                i > 0
+                and j > 0
+                and f[i][j]
+                == (f[i - 1][j - 1] + self.char_similarity(a[i - 1], b[j - 1]))
+            ):
                 substitutions[FuzzySearch.char_pair(a[i - 1], b[j - 1])] += 1
                 i, j = i - 1, j - 1
             elif i > 0 and f[i][j] == (f[i - 1][j] + self.gap_score):
@@ -75,10 +82,12 @@ class FuzzySearch(object):
             elif j > 0 and f[i][j] == (f[i][j - 1] + self.gap_score):
                 j -= 1
             else:
-                raise Exception('Smith–Waterman failure')
+                raise Exception("Smith–Waterman failure")
         align_start = max(start, start + j - 1)
         align_end = min(end, start + start_j)
-        score = f[start_i][start_j] / (self.match_score * max(align_end - align_start, n))
+        score = f[start_i][start_j] / (
+            self.match_score * max(align_end - align_start, n)
+        )
         return align_start, align_end, score, substitutions
 
     def find_best(self, look_for, start=0, end=-1):
@@ -87,7 +96,7 @@ class FuzzySearch(object):
             return self.sw_align(look_for, start, end)
         window_size = len(look_for)
         windows = {}
-        for i, ngram in enumerate(ngrams(' ' + look_for + ' ', 3)):
+        for i, ngram in enumerate(ngrams(" " + look_for + " ", 3)):
             if ngram in self.ngrams:
                 ngram_bucket = self.ngrams[ngram]
                 for occurrence in ngram_bucket:
@@ -95,11 +104,13 @@ class FuzzySearch(object):
                         continue
                     window = occurrence // window_size
                     windows[window] = (windows[window] + 1) if window in windows else 1
-        candidate_windows = sorted(windows.keys(), key=lambda w: windows[w], reverse=True)
+        candidate_windows = sorted(
+            windows.keys(), key=lambda w: windows[w], reverse=True
+        )
         best = (-1, -1, 0, None)
         last_window_grams = 0.1
-        for window in candidate_windows[:self.max_candidates]:
-            ngram_factor = (windows[window] / last_window_grams)
+        for window in candidate_windows[: self.max_candidates]:
+            ngram_factor = windows[window] / last_window_grams
             if ngram_factor < self.candidate_threshold:
                 break
             last_window_grams = windows[window]

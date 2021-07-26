@@ -1,5 +1,3 @@
-
-
 from urllib.parse import urlparse
 from google.cloud import storage
 import numpy as np
@@ -25,6 +23,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 def main():
     config = parse_arguments()
 
@@ -32,14 +31,39 @@ def main():
 
     run_inference(config)
 
+
 def parse_arguments():
     parser = ArgumentParser("Run YAMNET on a set of audio files.")
 
-    parser.add_argument("-i", "--input-path", default="gs://the-peoples-speech-west-europe/forced-aligner/cuda-forced-aligner/output_work_dir_5b/output_work_dir_5b/training_set", help="Path to yamnet dataset.")
-    parser.add_argument("-o", "--output-path", default="results.jsonl", help="The path to save the results.")
-    parser.add_argument("-c", "--config-file-path", default=".json", help="The path to the config file.")
-    parser.add_argument("-v", "--verbose", default=False, action="store_true", help="Print out debug messages.")
-    parser.add_argument("-vi", "--verbose-info", default=False, action="store_true", help="Print out info messages.")
+    parser.add_argument(
+        "-i",
+        "--input-path",
+        default="gs://the-peoples-speech-west-europe/forced-aligner/cuda-forced-aligner/output_work_dir_5b/output_work_dir_5b/training_set",
+        help="Path to yamnet dataset.",
+    )
+    parser.add_argument(
+        "-o",
+        "--output-path",
+        default="results.jsonl",
+        help="The path to save the results.",
+    )
+    parser.add_argument(
+        "-c", "--config-file-path", default=".json", help="The path to the config file."
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        default=False,
+        action="store_true",
+        help="Print out debug messages.",
+    )
+    parser.add_argument(
+        "-vi",
+        "--verbose-info",
+        default=False,
+        action="store_true",
+        help="Print out info messages.",
+    )
 
     args = parser.parse_args()
     arguments = vars(args)
@@ -48,12 +72,14 @@ def parse_arguments():
 
     return config
 
+
 def run_inference(config):
     model, classes, params = load_model(config)
 
     dataset, filenames = get_dataset(config)
 
     run_model_on_dataset(model, classes, params, dataset, filenames, config)
+
 
 def get_dataset(config):
 
@@ -62,29 +88,42 @@ def get_dataset(config):
 
     logger.debug("Making dataset")
     ds = files.map(tf.io.read_file)
-    #ds = ds.map(tf.audio.decode_wav)
-    ds = ds.map(lambda file : tf.py_function(func=decode_mp3, inp=[file], Tout=tf.float32))
+    # ds = ds.map(tf.audio.decode_wav)
+    ds = ds.map(
+        lambda file: tf.py_function(func=decode_mp3, inp=[file], Tout=tf.float32)
+    )
     ds = ds.prefetch(buffer_size=tf.data.AUTOTUNE)
 
     return ds, filenames
+
 
 def decode_mp3(mp3_tensor):
     mp3_data = mp3_tensor.numpy()
     mp3_file = io.BytesIO(mp3_data)
     mp3_audio = AudioSegment.from_file(mp3_file, format="mp3")
-    logger.debug("duration: " + str(mp3_audio.duration_seconds) + ", channels: " +
-        str(mp3_audio.channels) + ", sampling_width: " + str(mp3_audio.sample_width) +
-        ", sampling rate: " + str(mp3_audio.frame_rate) + ", dbfs: " + str(mp3_audio.dBFS) )
+    logger.debug(
+        "duration: "
+        + str(mp3_audio.duration_seconds)
+        + ", channels: "
+        + str(mp3_audio.channels)
+        + ", sampling_width: "
+        + str(mp3_audio.sample_width)
+        + ", sampling rate: "
+        + str(mp3_audio.frame_rate)
+        + ", dbfs: "
+        + str(mp3_audio.dBFS)
+    )
     mp3_audio = mp3_audio.set_channels(1)
     mp3_audio = mp3_audio.set_sample_width(2)
     seconds = mp3_audio.duration_seconds
     max_duration = 600
     if seconds > max_duration:
-        mp3_audio = mp3_audio[0:max_duration*1000]
+        mp3_audio = mp3_audio[0 : max_duration * 1000]
     array = mp3_audio.get_array_of_samples()
     array = np.append(array, [int(mp3_audio.frame_rate)])
 
     return array
+
 
 def list_files(path, config):
     if not "max_files" in config:
@@ -93,6 +132,7 @@ def list_files(path, config):
         return filenames, [filename.numpy().decode("utf-8") for filename in filenames]
 
     return list_blobs(path, int(config["max_files"]))
+
 
 def list_blobs(path, max_files):
     result = urlparse(path, allow_fragments=False)
@@ -103,10 +143,10 @@ def list_blobs(path, max_files):
 
     logger.debug("Found matching files under " + path + ": " + str(files))
 
-
     filenames = [os.path.join("gs://" + result.netloc, filename) for filename in files]
 
     return tf.data.Dataset.list_files(filenames, shuffle=False), filenames
+
 
 def list_blobs_with_prefix(bucket_name, prefix, delimiter=None):
     """Lists all the blobs in the bucket that begin with the prefix.
@@ -150,6 +190,7 @@ def list_blobs_with_prefix(bucket_name, prefix, delimiter=None):
         for prefix in blobs.prefixes:
             yield prefix
 
+
 def is_audio(path):
     base, extension = os.path.splitext(path)
 
@@ -157,6 +198,7 @@ def is_audio(path):
         return True
 
     return False
+
 
 def load_model(config):
     logger.debug("Loading model...")
@@ -167,9 +209,12 @@ def load_model(config):
     yamnet = yamnet_model.yamnet_frames_model(params)
     yamnet.load_weights(weights)
 
-    yamnet_classes = yamnet_model.class_names(os.path.join(os.path.dirname(__file__), "yamnet", "yamnet_class_map.csv"))
+    yamnet_classes = yamnet_model.class_names(
+        os.path.join(os.path.dirname(__file__), "yamnet", "yamnet_class_map.csv")
+    )
 
     return yamnet, yamnet_classes, params
+
 
 def load_weights(config):
     download_path = "https://storage.googleapis.com/audioset/yamnet.h5"
@@ -180,6 +225,7 @@ def load_weights(config):
 
     return target_path
 
+
 def download(url, path):
     logger.debug("Downloading from " + url + " to " + path)
     directory = os.path.dirname(path)
@@ -189,9 +235,10 @@ def download(url, path):
         urllib.request.urlretrieve(url, path)
     logger.debug("Download success")
 
+
 def run_model_on_dataset(yamnet, classes, params, dataset, filenames, config):
 
-    with jsonlines.open(config["output_path"], mode='w') as writer:
+    with jsonlines.open(config["output_path"], mode="w") as writer:
 
         for batch, filename in zip(dataset, filenames):
             logger.debug(filename)
@@ -200,6 +247,7 @@ def run_model_on_dataset(yamnet, classes, params, dataset, filenames, config):
             for index, item in enumerate(items):
                 results = run_model_on_batch(yamnet, classes, params, item)
                 print_results(writer, filename, results, classes, index, config)
+
 
 def split_into_items(pair, config):
     batch = pair[:-1]
@@ -218,24 +266,33 @@ def split_into_items(pair, config):
 
     for chunk in range(chunks):
         start = chunk * chunk_size
-        end   = min((chunk+1) * chunk_size, sample_count)
+        end = min((chunk + 1) * chunk_size, sample_count)
 
         items.append((array[start:end], sr))
 
     return items
 
+
 def print_results(writer, filename, results, yamnet_classes, index, config):
     top, prediction = results
     seconds = index * float(config["seconds_per_chunk"])
-    print(str(int(seconds // 60)) + ":" + str(int(seconds) % 60) + '\n'.join('  {:12s}: {:.3f}'.format(yamnet_classes[i], prediction[i])
-                    for i in top[0:1]))
+    print(
+        str(int(seconds // 60))
+        + ":"
+        + str(int(seconds) % 60)
+        + "\n".join(
+            "  {:12s}: {:.3f}".format(yamnet_classes[i], prediction[i])
+            for i in top[0:1]
+        )
+    )
 
-    result = { "path" : filename, "seconds" : seconds }
+    result = {"path": filename, "seconds": seconds}
 
     for i in top:
         result[yamnet_classes[i]] = float(prediction[i])
 
     writer.write(result)
+
 
 def run_model_on_batch(yamnet, classes, params, pair):
 
@@ -259,6 +316,7 @@ def run_model_on_batch(yamnet, classes, params, pair):
 
     return top, prediction
 
+
 def setup_config(dictionary):
     return config.ConfigurationSet(
         config.config_from_env(prefix="MLCOMMONS"),
@@ -266,13 +324,19 @@ def setup_config(dictionary):
         config.config_from_dict(dictionary),
     )
 
+
 def config_path():
     home = os.path.expanduser("~")
     home_config_path = os.path.join(home, ".mlcommons", "config.yaml")
     if os.path.exists(home_config_path):
         return home_config_path
 
-    return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config", "default.yaml")
+    return os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+        "config",
+        "default.yaml",
+    )
+
 
 def setup_logging(arguments):
 
@@ -299,7 +363,5 @@ def setup_logging(arguments):
     logging.getLogger("numba.core.interpreter").setLevel(logging.CRITICAL)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
-
-

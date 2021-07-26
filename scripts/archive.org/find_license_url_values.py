@@ -89,28 +89,35 @@ from internetarchive.search import Search
 
 from tqdm import tqdm
 
+
 def grab_key_values(key):
-  s = ArchiveSession()
-  search = Search(s, '(mediatype:audio OR mediatype:movies) AND (closed_captioning:yes OR format:SubRip OR format:"Web Video Text Tracks")',
-                  fields=[key])
-  licenses = defaultdict(int)
-  for result in tqdm(search):
-    if key not in result:
-      print(f"No {key} result:", result)
-      continue
-    if isinstance(result[key], str):
-      licenses[result[key]] += 1
-    elif isinstance(result[key], list):
-      for licenseurl in result[key]:
-        licenses[licenseurl] += 1
-      else:
-        raise ValueError(f"Unexpected type for {key}: ", type(result[key]), result)
+    s = ArchiveSession()
+    search = Search(
+        s,
+        '(mediatype:audio OR mediatype:movies) AND (closed_captioning:yes OR format:SubRip OR format:"Web Video Text Tracks")',
+        fields=[key],
+    )
+    licenses = defaultdict(int)
+    for result in tqdm(search):
+        if key not in result:
+            print(f"No {key} result:", result)
+            continue
+        if isinstance(result[key], str):
+            licenses[result[key]] += 1
+        elif isinstance(result[key], list):
+            for licenseurl in result[key]:
+                licenses[licenseurl] += 1
+            else:
+                raise ValueError(
+                    f"Unexpected type for {key}: ", type(result[key]), result
+                )
 
-  print(f"Counts for key={key}")
-  print("\n".join(str(x) for x in sorted((v, k) for k, v in licenses.items())))
+    print(f"Counts for key={key}")
+    print("\n".join(str(x) for x in sorted((v, k) for k, v in licenses.items())))
 
-#grab_key_values("lcenseurl")
-#grab_key_values("license")
-#grab_key_values("licenseurl")
-#grab_key_values("rights")
+
+# grab_key_values("lcenseurl")
+# grab_key_values("license")
+# grab_key_values("licenseurl")
+# grab_key_values("rights")
 grab_key_values("possible-copyright-status")

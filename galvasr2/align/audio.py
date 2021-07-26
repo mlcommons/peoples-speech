@@ -14,10 +14,10 @@ DEFAULT_CHANNELS = 1
 DEFAULT_WIDTH = 2
 DEFAULT_FORMAT = (DEFAULT_RATE, DEFAULT_CHANNELS, DEFAULT_WIDTH)
 
-AUDIO_TYPE_NP = 'application/vnd.mozilla.np'
-AUDIO_TYPE_PCM = 'application/vnd.mozilla.pcm'
-AUDIO_TYPE_WAV = 'audio/wav'
-AUDIO_TYPE_OPUS = 'application/vnd.mozilla.opus'
+AUDIO_TYPE_NP = "application/vnd.mozilla.np"
+AUDIO_TYPE_PCM = "application/vnd.mozilla.pcm"
+AUDIO_TYPE_WAV = "audio/wav"
+AUDIO_TYPE_OPUS = "application/vnd.mozilla.opus"
 SERIALIZABLE_AUDIO_TYPES = [AUDIO_TYPE_WAV, AUDIO_TYPE_OPUS]
 
 OPUS_PCM_LEN_SIZE = 4
@@ -35,6 +35,7 @@ class Sample:
         audio (obj): Audio data represented as indicated by `audio_type`
         duration (float): Audio duration of the sample in seconds
     """
+
     def __init__(self, audio_type, raw_data, audio_format=None):
         """
         Creates a Sample from a raw audio representation.
@@ -54,18 +55,24 @@ class Sample:
         self.audio_type = audio_type
         self.audio_format = audio_format
         if audio_type in SERIALIZABLE_AUDIO_TYPES:
-            self.audio = raw_data if isinstance(raw_data, io.BytesIO) else io.BytesIO(raw_data)
+            self.audio = (
+                raw_data if isinstance(raw_data, io.BytesIO) else io.BytesIO(raw_data)
+            )
             self.duration = read_duration(audio_type, self.audio)
         else:
             self.audio = raw_data
             if self.audio_format is None:
-                raise ValueError('For audio type "{}" parameter "audio_format" is mandatory'.format(self.audio_type))
+                raise ValueError(
+                    'For audio type "{}" parameter "audio_format" is mandatory'.format(
+                        self.audio_type
+                    )
+                )
             if audio_type == AUDIO_TYPE_PCM:
                 self.duration = get_pcm_duration(len(self.audio), self.audio_format)
             elif audio_type == AUDIO_TYPE_NP:
                 self.duration = get_np_duration(len(self.audio), self.audio_format)
             else:
-                raise ValueError('Unsupported audio type: {}'.format(self.audio_type))
+                raise ValueError("Unsupported audio type: {}".format(self.audio_type))
 
     def change_audio_type(self, new_audio_type):
         """
@@ -75,7 +82,10 @@ class Sample:
         """
         if self.audio_type == new_audio_type:
             return
-        if new_audio_type == AUDIO_TYPE_PCM and self.audio_type in SERIALIZABLE_AUDIO_TYPES:
+        if (
+            new_audio_type == AUDIO_TYPE_PCM
+            and self.audio_type in SERIALIZABLE_AUDIO_TYPES
+        ):
             self.audio_format, audio = read_audio(self.audio_type, self.audio)
             self.audio.close()
             self.audio = audio
@@ -89,8 +99,11 @@ class Sample:
             audio_bytes.seek(0)
             self.audio = audio_bytes
         else:
-            raise RuntimeError('Changing audio representation type from "{}" to "{}" not supported'
-                               .format(self.audio_type, new_audio_type))
+            raise RuntimeError(
+                'Changing audio representation type from "{}" to "{}" not supported'.format(
+                    self.audio_type, new_audio_type
+                )
+            )
         self.audio_type = new_audio_type
 
 
@@ -98,6 +111,7 @@ def change_audio_types(samples, audio_type=AUDIO_TYPE_PCM, processes=None):
     def change_audio_type(sample):
         sample.change_audio_type(audio_type)
         return sample
+
     with LimitingPool(processes=processes) as pool:
         for current_sample in pool.map(change_audio_type, samples):
             yield current_sample
@@ -127,11 +141,15 @@ def get_np_duration(np_len, audio_format=DEFAULT_FORMAT):
     return np_len / audio_format[0]
 
 
-def convert_audio(src_audio_path, dst_audio_path, file_type=None, audio_format=DEFAULT_FORMAT):
+def convert_audio(
+    src_audio_path, dst_audio_path, file_type=None, audio_format=DEFAULT_FORMAT
+):
     sample_rate, channels, width = audio_format
     try:
         transformer = sox.Transformer()
-        transformer.set_output_format(file_type=file_type, rate=sample_rate, channels=channels, bits=width*8)
+        transformer.set_output_format(
+            file_type=file_type, rate=sample_rate, channels=channels, bits=width * 8
+        )
         transformer.build(src_audio_path, dst_audio_path)
     except sox.core.SoxError:
         return False
@@ -140,7 +158,7 @@ def convert_audio(src_audio_path, dst_audio_path, file_type=None, audio_format=D
 
 def verify_wav_file(wav_path):
     try:
-        with wave.open(wav_path, 'r') as wav_file:
+        with wave.open(wav_path, "r") as wav_file:
             if wav_file.getnframes() > 0:
                 return True
     except:
@@ -149,14 +167,16 @@ def verify_wav_file(wav_path):
 
 
 def ensure_wav_with_format(src_audio_path, audio_format=DEFAULT_FORMAT, tmp_dir=None):
-    if src_audio_path.endswith('.wav'):
-        with wave.open(src_audio_path, 'r') as src_audio_file:
+    if src_audio_path.endswith(".wav"):
+        with wave.open(src_audio_path, "r") as src_audio_file:
             if read_audio_format_from_wav_file(src_audio_file) == audio_format:
                 return src_audio_path, False
-    fd, tmp_file_path = tempfile.mkstemp(suffix='.wav', dir=tmp_dir)
+    fd, tmp_file_path = tempfile.mkstemp(suffix=".wav", dir=tmp_dir)
     os.close(fd)
     fd = None
-    if convert_audio(src_audio_path, tmp_file_path, file_type='wav', audio_format=audio_format):
+    if convert_audio(
+        src_audio_path, tmp_file_path, file_type="wav", audio_format=audio_format
+    ):
         return tmp_file_path, True
     os.remove(tmp_file_path)
     return None, False
@@ -178,22 +198,29 @@ class AudioFile:
         self.tmp_file_path = None
 
     def __enter__(self):
-        if self.audio_path.endswith('.wav'):
-            self.open_file = wave.open(self.audio_path, 'r')
+        if self.audio_path.endswith(".wav"):
+            self.open_file = wave.open(self.audio_path, "r")
             if read_audio_format_from_wav_file(self.open_file) == self.audio_format:
                 if self.as_path:
                     self.open_file.close()
                     return self.audio_path
                 return self.open_file
             self.open_file.close()
-        test, self.tmp_file_path = tempfile.mkstemp(suffix='.wav')
+        test, self.tmp_file_path = tempfile.mkstemp(suffix=".wav")
         os.close(test)
         test = None
-        if not convert_audio(self.audio_path, self.tmp_file_path, file_type='wav', audio_format=self.audio_format):
-            raise RuntimeError('Unable to convert "{}" to required format'.format(self.audio_path))
+        if not convert_audio(
+            self.audio_path,
+            self.tmp_file_path,
+            file_type="wav",
+            audio_format=self.audio_format,
+        ):
+            raise RuntimeError(
+                'Unable to convert "{}" to required format'.format(self.audio_path)
+            )
         if self.as_path:
             return self.tmp_file_path
-        self.open_file = wave.open(self.tmp_file_path, 'r')
+        self.open_file = wave.open(self.tmp_file_path, "r")
         return self.open_file
 
     def __exit__(self, *args):
@@ -211,35 +238,53 @@ def read_frames(wav_file, frame_duration_ms=30, yield_remainder=False):
     while True:
         try:
             data = wav_file.readframes(frame_size)
-            if not yield_remainder and get_pcm_duration(len(data), audio_format) * 1000 < frame_duration_ms:
+            if (
+                not yield_remainder
+                and get_pcm_duration(len(data), audio_format) * 1000 < frame_duration_ms
+            ):
                 break
             yield data
         except EOFError:
             break
 
 
-def read_frames_from_file(audio_path, audio_format=DEFAULT_FORMAT, frame_duration_ms=30, yield_remainder=False):
+def read_frames_from_file(
+    audio_path, audio_format=DEFAULT_FORMAT, frame_duration_ms=30, yield_remainder=False
+):
     with AudioFile(audio_path, audio_format=audio_format) as wav_file:
-        for frame in read_frames(wav_file, frame_duration_ms=frame_duration_ms, yield_remainder=yield_remainder):
+        for frame in read_frames(
+            wav_file,
+            frame_duration_ms=frame_duration_ms,
+            yield_remainder=yield_remainder,
+        ):
             yield frame
 
-AudioFormat = collections.namedtuple('AudioFormat', ['sample_rate', 'channels', 'sample_byte_width'])
+
+AudioFormat = collections.namedtuple(
+    "AudioFormat", ["sample_rate", "channels", "sample_byte_width"]
+)
 
 
-def vad_split(audio_frames,
-              audio_format=DEFAULT_FORMAT,
-              num_padding_frames=10,
-              threshold=0.5,
-              aggressiveness=3):
+def vad_split(
+    audio_frames,
+    audio_format=DEFAULT_FORMAT,
+    num_padding_frames=10,
+    threshold=0.5,
+    aggressiveness=3,
+):
     sample_rate, channels, width = audio_format
     if channels != 1:
-        raise ValueError('VAD-splitting requires mono samples')
+        raise ValueError("VAD-splitting requires mono samples")
     if width != 2:
-        raise ValueError('VAD-splitting requires 16 bit samples')
+        raise ValueError("VAD-splitting requires 16 bit samples")
     if sample_rate not in [8000, 16000, 32000, 48000]:
-        raise ValueError('VAD-splitting only supported for sample rates 8000, 16000, 32000, or 48000')
+        raise ValueError(
+            "VAD-splitting only supported for sample rates 8000, 16000, 32000, or 48000"
+        )
     if aggressiveness not in [0, 1, 2, 3]:
-        raise ValueError('VAD-splitting aggressiveness mode has to be one of 0, 1, 2, or 3')
+        raise ValueError(
+            "VAD-splitting aggressiveness mode has to be one of 0, 1, 2, or 3"
+        )
     ring_buffer = collections.deque(maxlen=num_padding_frames)
     triggered = False
     vad = Vad(int(aggressiveness))
@@ -249,7 +294,9 @@ def vad_split(audio_frames,
     for frame_index, frame in enumerate(audio_frames):
         frame_duration_ms = get_pcm_duration(len(frame), audio_format) * 1000
         if int(frame_duration_ms) not in [10, 20, 30]:
-            raise ValueError('VAD-splitting only supported for frame durations 10, 20, or 30 ms')
+            raise ValueError(
+                "VAD-splitting only supported for frame durations 10, 20, or 30 ms"
+            )
         is_speech = vad.is_speech(frame, sample_rate)
         if not triggered:
             ring_buffer.append((frame, is_speech))
@@ -265,23 +312,23 @@ def vad_split(audio_frames,
             num_unvoiced = len([f for f, speech in ring_buffer if not speech])
             if num_unvoiced > threshold * ring_buffer.maxlen:
                 triggered = False
-                yield b''.join(voiced_frames), \
-                      frame_duration_ms * max(0, frame_index - len(voiced_frames)), \
-                      frame_duration_ms * frame_index
+                yield b"".join(voiced_frames), frame_duration_ms * max(
+                    0, frame_index - len(voiced_frames)
+                ), frame_duration_ms * frame_index
                 ring_buffer.clear()
                 voiced_frames = []
     if len(voiced_frames) > 0:
-        yield b''.join(voiced_frames), \
-              frame_duration_ms * (frame_index - len(voiced_frames)), \
-              frame_duration_ms * (frame_index + 1)
+        yield b"".join(voiced_frames), frame_duration_ms * (
+            frame_index - len(voiced_frames)
+        ), frame_duration_ms * (frame_index + 1)
 
 
 def pack_number(n, num_bytes):
-    return n.to_bytes(num_bytes, 'big', signed=False)
+    return n.to_bytes(num_bytes, "big", signed=False)
 
 
 def unpack_number(data):
-    return int.from_bytes(data, 'big', signed=False)
+    return int.from_bytes(data, "big", signed=False)
 
 
 def get_opus_frame_size(rate):
@@ -292,6 +339,7 @@ def write_opus(opus_file, audio_format, audio_data):
     rate, channels, width = audio_format
     frame_size = get_opus_frame_size(rate)
     import opuslib
+
     encoder = opuslib.Encoder(rate, channels, opuslib.APPLICATION_AUDIO)
     chunk_size = frame_size * channels * width
     opus_file.write(pack_number(len(audio_data), OPUS_PCM_LEN_SIZE))
@@ -299,7 +347,7 @@ def write_opus(opus_file, audio_format, audio_data):
     opus_file.write(pack_number(channels, OPUS_CHANNELS_SIZE))
     opus_file.write(pack_number(width, OPUS_WIDTH_SIZE))
     for i in range(0, len(audio_data), chunk_size):
-        chunk = audio_data[i:i + chunk_size]
+        chunk = audio_data[i : i + chunk_size]
         # Preventing non-deterministic encoding results from uninitialized remainder of the encoder buffer
         if len(chunk) < chunk_size:
             chunk = chunk + bytearray(chunk_size - len(chunk))
@@ -322,6 +370,7 @@ def read_opus(opus_file):
     rate, channels, _ = audio_format
     frame_size = get_opus_frame_size(rate)
     import opuslib
+
     decoder = opuslib.Decoder(rate, channels)
     audio_data = bytearray()
     while len(audio_data) < pcm_buffer_size:
@@ -334,14 +383,14 @@ def read_opus(opus_file):
 
 
 def write_wav(wav_file, audio_format, pcm_data):
-    with wave.open(wav_file, 'wb') as wav_file_writer:
+    with wave.open(wav_file, "wb") as wav_file_writer:
         write_audio_format_to_wav_file(wav_file_writer, audio_format=audio_format)
         wav_file_writer.writeframes(pcm_data)
 
 
 def read_wav(wav_file):
     wav_file.seek(0)
-    with wave.open(wav_file, 'rb') as wav_file_reader:
+    with wave.open(wav_file, "rb") as wav_file_reader:
         audio_format = read_audio_format_from_wav_file(wav_file_reader)
         pcm_data = wav_file_reader.readframes(wav_file_reader.getnframes())
         os.close(wav_file)
@@ -353,7 +402,7 @@ def read_audio(audio_type, audio_file):
         return read_wav(audio_file)
     if audio_type == AUDIO_TYPE_OPUS:
         return read_opus(audio_file)
-    raise ValueError('Unsupported audio type: {}'.format(audio_type))
+    raise ValueError("Unsupported audio type: {}".format(audio_type))
 
 
 def write_audio(audio_type, audio_file, audio_format, pcm_data):
@@ -361,12 +410,12 @@ def write_audio(audio_type, audio_file, audio_format, pcm_data):
         return write_wav(audio_file, audio_format, pcm_data)
     if audio_type == AUDIO_TYPE_OPUS:
         return write_opus(audio_file, audio_format, pcm_data)
-    raise ValueError('Unsupported audio type: {}'.format(audio_type))
+    raise ValueError("Unsupported audio type: {}".format(audio_type))
 
 
 def read_wav_duration(wav_file):
     wav_file.seek(0)
-    with wave.open(wav_file, 'rb') as wav_file_reader:
+    with wave.open(wav_file, "rb") as wav_file_reader:
         return wav_file_reader.getnframes() / wav_file_reader.getframerate()
 
 
@@ -380,13 +429,13 @@ def read_duration(audio_type, audio_file):
         return read_wav_duration(audio_file)
     if audio_type == AUDIO_TYPE_OPUS:
         return read_opus_duration(audio_file)
-    raise ValueError('Unsupported audio type: {}'.format(audio_type))
+    raise ValueError("Unsupported audio type: {}".format(audio_type))
 
 
 def pcm_to_np(audio_format, pcm_data):
     _, channels, width = audio_format
     if width not in [1, 2, 4]:
-        raise ValueError('Unsupported sample width: {}'.format(width))
+        raise ValueError("Unsupported sample width: {}".format(width))
     dtype = [None, np.int8, np.int16, None, np.int32][width]
     samples = np.frombuffer(pcm_data, dtype=dtype)
     # We need to check wehther this is consistent with the lingvo pipeline.
