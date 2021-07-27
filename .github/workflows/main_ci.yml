@@ -55,7 +55,9 @@ jobs:
       - name: Install Black
         run: pip install black
       - name: Run black --check .
-        run: black --check .
+        run: | 
+          black --check ./galvasr2
+          black --check ./scripts
       - name: If needed, commit black changes to the pull request
         if: failure()
         run: |
