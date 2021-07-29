@@ -35,12 +35,10 @@ class DSAlignTest(unittest.TestCase):
         align = align_udf.func
         transcript_names = pd.Series(["BOS2015April7/BOS 2015April7.asr.srt"])
         audio_names = pd.Series(["BOS2015April7/BOS 2015April7.mp3"])
-        with open(os.path.join(find_runfiles(),
-                               "__main__/galvasr2/align/spark/test_data/BOS2015April7/BOS2015April7.asr.srt"), "rb") as fh:
+        with tf.io.gfile.GFile("gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS/snafuinfinityWalkOutStudents-CL19/WalkOutStudents-CL19.asr.srt") as fh:
             transcript_series = srt_to_text.func(fix_text_udf.func(pd.Series([fh.read()])))
-        with open(os.path.join(find_runfiles(),
-                               "__main__/galvasr2/align/spark/test_data/BOS2015April7/BOS2015April7-BOS_2015April7.mp3.ctm"), "rb") as fh:
-            ctm_content_series = fix_text_udf.func(pd.Series([fh.read()]))
+        with tf.io.gfile.GFile("gs://the-peoples-speech-west-europe/forced-aligner/cuda-forced-aligner/output_work_dir_5b/output_work_dir_5b/decoder_ctm_dir/snafuinfinityWalkOutStudents-CL19-WalkOutStudents-CL19.mp3.ctm", "rb") as fh:
+            ctm_content_series = fix_text_udf.func(pd.Series([fh.read()]))            
         profiler = cProfile.Profile()
         profiler.enable()
         blah = align(transcript_names, audio_names, transcript_series, ctm_content_series)

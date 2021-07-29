@@ -48,7 +48,7 @@ def sw_align(a, text, b_start, b_end, gap_score, match_score, mismatch_score):
                 start_i = i
                 start_j = j
     end_time = time.time()
-    print(f"sw_align_sped_up compute matrix={end_time - start_time}")
+    # print(f"sw_align_sped_up compute matrix={end_time - start_time}")
 
     start_time = time.time()
     substitutions = Counter()
@@ -70,5 +70,5 @@ def sw_align(a, text, b_start, b_end, gap_score, match_score, mismatch_score):
     cdef int align_end = min(b_end, b_start + start_j)
     cdef double final_score = f[start_i, start_j] / (match_score * max(align_end - align_start, n))
     end_time = time.time()
-    print(f"sw_align_sped_up backtrack={end_time - start_time}")
+    # print(f"sw_align_sped_up backtrack={end_time - start_time}")
     return align_start, align_end, final_score, substitutions

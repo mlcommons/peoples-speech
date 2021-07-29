@@ -46,8 +46,19 @@ class FuzzySearch(object):
         return self.match_score if a == b else self.mismatch_score
 
     def sw_align(self, a, start, end):
-        return sw_align_sped_up(a, self.text, start, end, self.gap_score,
-                                self.match_score, self.mismatch_score)
+        align_start, align_end, score, substitutions = \
+            sw_align_sped_up(a, self.text, start, end, self.gap_score,
+                             self.match_score, self.mismatch_score)
+        for new_start in range(align_start - 1, start - 1, -1):
+            if self.text[new_start] == ' ':
+                align_start = new_start + 1
+                break
+        for new_end in range(align_end, end):
+            if self.text[new_end] == ' ':
+                align_end = new_end
+                break
+
+        return align_start, align_end, score, substitutions
 
     # unused. This was the original implementation of sw_align(),
     # before I sped it up with cython. The cython implementation is
@@ -104,6 +115,7 @@ class FuzzySearch(object):
         end = len(self.text) if end < 0 else end
         if end - start < 2 * len(look_for):
             return self.sw_align(look_for, start, end)
+        # What happens in this case?
         window_size = len(look_for)
         windows = {}
         for i, ngram in enumerate(ngrams(" " + look_for + " ", 3)):
