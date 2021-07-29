@@ -19,7 +19,11 @@ import pyspark.sql.functions as F
 import pyspark.sql.types as T
 import tensorflow as tf
 
-from galvasr2.align.spark.align_lib import fix_text_udf, load_audio_id_text_id_mapping, load_transcripts, prepare_create_audio_segments_udf, TemporaryMountDirectory
+from galvasr2.align.spark.align_lib import (
+    fix_text_udf, load_audio_id_text_id_mapping, load_transcripts,
+    normalize_english_text_udf, prepare_create_audio_segments_udf,
+    TemporaryMountDirectory
+)
 from galvasr2.align.spark.dsalign_lib import prepare_align_udf
 import dsalign_main
 
@@ -79,6 +83,8 @@ def split_wav_scp(posix_wav_scp, work_dir, num_splits):
   
 
 def main(argv):
+  mem_bytes = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES')  # e.g. 4015976448
+  mem_gib = int((mem_bytes/(1024.**3)) * 0.9)
   spark = pyspark.sql.SparkSession.builder \
                         .master("local[*]")\
                         .config("spark.eventLog.enabled", "true")\
@@ -86,7 +92,7 @@ def main(argv):
                         .config("spark.sql.execution.arrow.pyspark.enabled", "true")\
                         .config("spark.driver.extraJavaOptions", "-Dio.netty.tryReflectionSetAccessible=true")\
                         .config("spark.executor.extraJavaOptions", "-Dio.netty.tryReflectionSetAccessible=true")\
-                        .config('spark.driver.memory', '310g')\
+                        .config('spark.driver.memory', f'{mem_gib}g')\
                         .config("spark.history.fs.logDirectory", "/spark-events")\
                         .config("spark.sql.execution.arrow.maxRecordsPerBatch", "1000")\
                         .getOrCreate()
@@ -186,25 +192,10 @@ def main(argv):
   # /opt/kaldi/egs/aspire/s5/exp/tdnn_7b_chain_online/graph_pp/phones/word_boundary.int
   # --word-boundary-rxfilename=/opt/kaldi/egs/aspire/s5/exp/tdnn_7b_chain_online/graph_pp/phones/word_boundary.int \
   if FLAGS.stage <= 2:
-    FAKE_WORDS = {"<eps>", "<unk>", "[laughter]", "[noise]", "<s>", "</s>", "#0"}
-    alphabet_set = set()
-    with open("/opt/kaldi/egs/aspire/s5/exp/tdnn_7b_chain_online/graph_pp/words.txt", "r") as fh:
-      for line in fh:
-        word = line.split(" ")[0]
-        if word not in FAKE_WORDS:
-          for character in word:
-            alphabet_set.add(character)
-      alphabet_set.add(" ")
-    alphabet_path = "/development/lingvo-source/alphabet.txt"
-    with open(alphabet_path, "w") as fh:
-      for character in sorted(alphabet_set):
-        fh.write(character)
-        fh.write("\n")
-
     # TODO: Add options to DSAlign here
-    dsalign_args = dsalign_main.parse_args("")
+    dsalign_args = dsalign_main.parse_args(["--output-wer", "--output-cer"]) # , "--output-sws", "--output-levenshtein"])
 
-    alphabet_normalized_path = "/development/lingvo-source/alphabet2.txt"
+    alphabet_normalized_path = "/development/lingvo-source/galvasr2/align/spark/alphabet2.txt"
     align_udf = prepare_align_udf(dsalign_args, alphabet_normalized_path)
 
     ctm_df = spark.read.format("binaryFile").option("pathGlobFilter", "*.ctm").load(ctm_out_dir)
@@ -215,9 +206,11 @@ def main(argv):
     downsampled_catalogue_df = ctm_df.drop("ctm_content")
 
     training_sample_rows = downsampled_catalogue_df.collect()
-    # training_sample_rows = training_sample_rows[:10]
     transcripts_df = load_transcripts(spark, FLAGS.input_gcs_path, training_sample_rows)
+    transcripts_df = transcripts_df.withColumn("transcript",
+                                               normalize_english_text_udf(transcripts_df.transcript))
     ctm_df = ctm_df.join(transcripts_df, ['identifier', 'text_document_id'])
+    ctm_df = ctm_df.repartition(960)
 
     # alignments_df = ctm_df.select(align_udf(F.concat(ctm_df.identifier, F.lit("/"), ctm_df.text_document_id),
     #                                         F.concat(ctm_df.identifier, F.lit("/"), ctm_df.audio_document_id),
@@ -230,17 +223,22 @@ def main(argv):
     alignments_df.printSchema()
     import sys; sys.stdout.flush()
 
-    alignments_df.write.mode("overwrite").format("json").save(os.path.join(FLAGS.work_dir, "alignments_json"))
+    alignments_df.write.mode("overwrite").format("json").save(os.path.join(FLAGS.work_dir, "alignments_json_new"))
+
+  assert False
 
   training_data_export_dir = os.path.join(FLAGS.work_dir, "training_data_export")
   if FLAGS.stage <= 3:
-    alignments_df = spark.read.json(os.path.join(FLAGS.work_dir, "alignments_json"))
+    alignments_df = spark.read.json(os.path.join(FLAGS.work_dir, "alignments_json_new"))
     # We would like the number of partitions to be some large multiple
     # of the number of executors. Not every audio file is the same
     # length, so this helps with load balancing.
     alignments_df = alignments_df.repartition(960)
+
+    # alignments_df = F.sum()
+
     create_audio_segments_udf = prepare_create_audio_segments_udf(gs_bucket=FLAGS.input_gcs_bucket,
-                                                                  output_dir=os.path.join(FLAGS.work_dir, "training_set_wav")
+                                                                  output_dir=os.path.join(FLAGS.work_dir, "training_set_new_flac")
     )
     audio_paths = F.concat(F.lit(FLAGS.input_gcs_path), F.lit("/"),
                            alignments_df.identifier, F.lit("/"),
@@ -256,11 +254,10 @@ def main(argv):
             alignments_df.alignments.label.alias('label'),
             alignments_df.output_paths,
             F.expr("transform(arrays_zip(alignments.end_ms, alignments.start_ms), x -> x.end_ms - x.start_ms)").alias('duration_ms')
-            # (alignments_df.alignments.end_ms - alignments_df.alignments.start_ms).alias('duration_ms'),
         ).alias('training_data')
     )
     # coalesce(1) seems to make the create_audio_segments_udf function run serially
-    output_df.write.mode("overwrite").json(os.path.join(FLAGS.work_dir, "dataset_manifest_wav"))
+    output_df.write.mode("overwrite").json(os.path.join(FLAGS.work_dir, "dataset_manifest_new_flac"))
 
 if __name__ == '__main__':
   app.run(main)
