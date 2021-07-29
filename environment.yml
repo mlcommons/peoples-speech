@@ -121,6 +121,7 @@ dependencies:
     - grpc-google-iam-v1==0.12.3
     - grpcio==1.30.0
     - grpcio-gcp==0.2.2
+    - gruut==1.2.2
     - gviz-api==1.9.0
     - h5py==2.10.0
     - hdfs==2.5.8
@@ -178,6 +179,7 @@ dependencies:
     - prompt-toolkit==3.0.5
     - protobuf==3.12.2
     - ptyprocess==0.6.0
+    - py4j==0.10.9
     - pyarrow==1.0.0
     - pyasn1==0.4.8
     - pyasn1-modules==0.2.8
