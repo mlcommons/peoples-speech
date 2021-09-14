@@ -31,8 +31,10 @@ py_binary(
            ],
     deps = [
          "//galvasr2/align:dsalign_import",
+         "//galvasr2:utils",
     ],
     data = [
+         "//galvasr2/spark:tar_spark_datasource",
     ],
     visibility = ["//visibility:public"],
 )

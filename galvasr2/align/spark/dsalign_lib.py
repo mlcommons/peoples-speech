@@ -168,12 +168,6 @@ def align(args, asr_output_fragments, transcript, alphabet):
   matched_fragments = split_match(fragments)
   matched_fragments = list(filter(lambda f: f is not None, matched_fragments))
 
-  print("BEFORE")
-  for i, mf in enumerate(matched_fragments):
-      if i in (10,11):
-          print(f"GALVEZ:{i}={mf}")
-  # print(f"GALVEZ:matched_fragments_length={len(matched_fragments)}")
-
   similarity_algos = {}
 
   def phrase_similarity(algo, a, b):
@@ -394,10 +388,6 @@ def align(args, asr_output_fragments, transcript, alphabet):
       # Should pause after each playtime.
   # with open(aligned, 'w', encoding='utf-8') as result_file:
   #   result_file.write(json.dumps(result_fragments, indent=4 if args.output_pretty else None, ensure_ascii=False))
-  print("AFTER")
-  for i, rf in enumerate(result_fragments):
-      if i in (10,11):
-          print(f"GALVEZ:{i}={rf}")
 
   num_result_fragments = len(result_fragments)
   num_dropped_fragments = len(fragments) - len(result_fragments)
@@ -413,7 +403,7 @@ def prepare_align_udf(dsalign_args, alphabet_path, max_length_ms, max_silence_le
                                     T.StructField("label", T.ArrayType(T.StringType())),
                                     T.StructField("cer", T.ArrayType(T.FloatType())),
                                     T.StructField("wer", T.ArrayType(T.FloatType())),
-                                    T.StructField("hypotheses", T.ArrayType(T.FloatType())),
+                                    T.StructField("hypotheses", T.ArrayType(T.StringType())),
                                     # T.StructField("sws", T.ArrayType(T.FloatType())),
                                     # T.StructField("levenshtein", T.ArrayType(T.FloatType())),
   ])
