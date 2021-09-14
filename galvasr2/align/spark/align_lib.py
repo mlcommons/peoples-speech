@@ -9,6 +9,7 @@ import json
 import shlex
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 from typing import List, Tuple
@@ -62,6 +63,7 @@ def DecodeToRawPipe(input_bytes, fmt):
 
 
 def EncodeFromRawPipe(input_bytes, fmt):
+  # cmd = f'ffmpeg -f s16le -ar 16k -ac 1 -i - -f {fmt} -'
   cmd = f'sox -t raw --channels 1 --rate 16000 --encoding signed --bits 16 - -t {fmt} -'
   p = subprocess.Popen(shlex.split(cmd),
                        stdin=subprocess.PIPE,
@@ -482,9 +484,14 @@ get_audio_seconds_udf = _prepare_soxi_udf("-D", DoubleType(), float)
 get_audio_sample_rate_udf = _prepare_soxi_udf("-r", StringType(), str)
 get_audio_annotations_udf = _prepare_soxi_udf("-a", BinaryType(), bytes)
 
+# Can I return an array type of struct types?
+AUDIO_SEGMENTS_RETURN_TYPE = T.StructType([T.StructField("audio_name", T.ArrayType(T.StringType())),
+                                           T.StructField("audio", T.ArrayType(T.BinaryType()))])
+@F.pandas_udf(AUDIO_SEGMENTS_RETURN_TYPE)
 def create_audio_segments_udf(audio_bytes_series: pd.Series, audio_type_series: pd.Series,
-                              audio_names_series: pd.Series, start_ms_array_series: pd.Series,
+                              audio_name_series: pd.Series, start_ms_array_series: pd.Series,
                               end_ms_array_series: pd.Series) -> pd.DataFrame:
+    output_array = []
     for audio_bytes, audio_type, audio_name, start_ms_array, end_ms_array in zip(
             audio_bytes_series, audio_type_series, audio_name_series,
             start_ms_array_series, end_ms_array_series):
@@ -496,10 +503,27 @@ def create_audio_segments_udf(audio_bytes_series: pd.Series, audio_type_series: 
             sample_width=2,
             channels=1
         )
+        segmented_audio = {"audio_name": [], "audio": []}
         for i, (start_ms, end_ms) in enumerate(zip(start_ms_array, end_ms_array)):        
             segment_flac_bytes = EncodeFromRawPipe(audio_segment[start_ms:end_ms].raw_data, "flac")
-        pass
-    pass
+            segmented_audio["audio"].append(segment_flac_bytes)
+        output_array.append(segmented_audio)
+    audio_segment_names_series = create_audio_segment_names_udf.func(audio_name_series, end_ms_array_series.transform(len))
+    assert len(output_array) == len(audio_segment_names_series)
+    for i, audio_segment_names in enumerate(audio_segment_names_series):
+        output_array[i]["audio_name"] = audio_segment_names
+    return pd.DataFrame(output_array)
+
+AUDIO_SEGMENT_NAMES_RETURN_TYPE = T.ArrayType(T.StringType())
+@F.pandas_udf(AUDIO_SEGMENT_NAMES_RETURN_TYPE)
+def create_audio_segment_names_udf(audio_name_series: pd.Series, num_aligned_utterances_series: pd.Series) -> pd.Series:
+    audio_segment_names = []
+    for audio_name, num_aligned_utterances in zip(audio_name_series,
+                                                  num_aligned_utterances_series):
+        audio_segment_names.append([])
+        for i in range(num_aligned_utterances):
+            audio_segment_names[-1].append(f"{audio_name}_{i}.flac")
+    return pd.Series(audio_segment_names)
 
 def prepare_filter_alignments_udf(cer_threshold: float, duration_ms_threshold: int):
     RETURN_TYPE = T.StructType([T.StructField("start_ms", T.ArrayType(T.LongType())),
@@ -514,6 +538,7 @@ def prepare_filter_alignments_udf(cer_threshold: float, duration_ms_threshold: i
                               wer_arrays: pd.Series) -> pd.DataFrame:
         for start_ms_array, end_ms_array, label_array, cer_array, cer_array in zip(start_ms_arrays, end_ms_arrays, label_arrays, cer_arrays, wer_arrays):
             pass
+
 
 def prepare_create_audio_segments_udf(gs_bucket: str, output_dir: str):
   RETURN_TYPE = ArrayType(StringType())
@@ -579,6 +604,34 @@ def prepare_create_audio_segments_udf(gs_bucket: str, output_dir: str):
           chunk_paths[-1].append(os.path.join(identifier, write_file_name))
       return pd.Series(chunk_paths)
   return create_audio_segments_udf
+
+def repartition_tar_files(tar_glob: str, output_dir: str, entries_per_split: int):
+  input_tar_paths = tf.io.gfile.glob(tar_glob)
+  tf.io.gfile.rmtree(output_dir)
+  output_tar_paths = []
+  current_output_tar_file_path = os.path.join(output_dir, 'shard-00000.tar')
+  current_output_tar_file = tarfile.open(fileobj=tf.io.gfile.GFile(current_output_tar_file_path, mode='wb'), mode='w')
+  written_entries_to_current_tar_file = 0
+  for input_tar_path in input_tar_paths:
+    print(f"GALVEZ:{input_tar_path}")
+    file_obj = tf.io.gfile.GFile(input_tar_path, mode='rb')
+    tar = tarfile.open(fileobj=file_obj, mode='r')
+    for tar_info in tar.getmembers():
+      value_fh = tar.extractfile(tar_info)
+      current_output_tar_file.addfile(tarinfo=tar_info, fileobj=value_fh)
+      written_entries_to_current_tar_file += 1
+      if written_entries_to_current_tar_file == entries_per_split:
+          current_output_tar_file.close()
+          output_tar_paths.append(current_output_tar_file_path)
+          current_output_tar_file_path = os.path.join(output_dir, f'shard-{len(output_tar_paths):05d}.tar')
+          current_output_tar_file = tarfile.open(fileobj=tf.io.gfile.GFile(current_output_tar_file_path, mode='wb'), mode='w')
+    tar.close() # TODO: Does this close file_obj as well?
+  current_output_tar_file.close()
+  if output_tar_paths[-1] != current_output_tar_file_path:
+    tf.io.gfile.remove(current_output_tar_file)
+  return output_tar_paths
+    
+    
 
 # (1, 300, Counter(),
 #  [{'start': 1513510,

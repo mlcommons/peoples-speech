@@ -25,8 +25,8 @@ class DefaultSource extends FileFormat with DataSourceRegister {
   override def inferSchema(
       sparkSession: SparkSession,
       options: Map[String, String],
-      files: Seq[FileStatus]): Option[StructType] = {
-    None
+    files: Seq[FileStatus]): Option[StructType] = {
+    Some(StructType(List(StructField("key", StringType), StructField("value", BinaryType))))
   }
 
   override def prepareWrite(
@@ -70,6 +70,10 @@ class DefaultSource extends FileFormat with DataSourceRegister {
     val broadcastedHadoopConf =
       sparkSession.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
 
+    System.out.println("GALVEZ")
+    System.out.println("data schema", dataSchema)
+    System.out.println("required schema", requiredSchema)
+
     (file: PartitionedFile) => {
       val conf = broadcastedHadoopConf.value.value
       val path = new Path(new URI(file.filePath))
@@ -77,10 +81,10 @@ class DefaultSource extends FileFormat with DataSourceRegister {
       val status = fs.getFileStatus(path)
 
       new Iterator[InternalRow] {
-        private val writer = new UnsafeRowWriter(requiredSchema.length)
+        // private val writer = new UnsafeRowWriter(requiredSchema.length)
         private val istream = new TarArchiveInputStream(fs.open(status.getPath))
         private val READ_BUFFER_SIZE = 4096
-        private val readBuffer = new Array[Byte](READ_BUFFER_SIZE)
+        // private val readBuffer = new Array[Byte](READ_BUFFER_SIZE)
         // becomes None if this tar file is empty
         private var nextEntry: Option[TarArchiveEntry] = Option(istream.getNextTarEntry())
 
@@ -92,14 +96,23 @@ class DefaultSource extends FileFormat with DataSourceRegister {
           if (!hasNext) {
             throw new java.util.NoSuchElementException("End of stream")
           }
+          val writer = new UnsafeRowWriter(requiredSchema.length)
           writer.resetRowWriter()
-          val entry = istream.getNextTarEntry()
-          writer.write(0, UTF8String.fromString(entry.getName()))
+          // System.out.println("READ", nextEntry.get.getName())
+          // System.out.println("READ UTF8", UTF8String.fromString(nextEntry.get.getName()))
+          writer.write(0, UTF8String.fromString(nextEntry.get.getName()))
 
-          var count: Int = 0
-          while ( { count = istream.read(readBuffer) ; count != -1 }) {
-            writer.write(1, readBuffer, 0, count);
+          // does this read only up to the next tar entry?
+          val readBuffer = new Array[Byte](nextEntry.get.getSize().toInt)
+          val count: Int = istream.read(readBuffer)
+          assert(count == nextEntry.get.getSize())
+          if (requiredSchema.length == 2) {
+            writer.write(1, readBuffer)
           }
+          // var count: Int = 0
+          // while ( { count = istream.read(readBuffer) ; count != -1 }) {
+          //   writer.write(1, readBuffer, 0, count);
+          // }
 
           nextEntry = Option(istream.getNextTarEntry())
 
@@ -121,11 +134,14 @@ class TarOutputWriter(val pathString: String,
 
   private val path = new Path(new URI(pathString))
   private val outputStream = new TarArchiveOutputStream(CodecStreams.createOutputStream(context, path))
+  outputStream.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX);
 
   override def write(row: InternalRow): Unit = {
     val key = row.getString(0)
     val value = row.getBinary(1)
+    // System.out.println("WRITE", key)
     val entry = new TarArchiveEntry(key)
+    entry.setSize(value.length)
     outputStream.putArchiveEntry(entry)
     outputStream.write(value)
     outputStream.closeArchiveEntry()
