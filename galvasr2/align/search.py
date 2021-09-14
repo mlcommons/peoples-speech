@@ -1,6 +1,7 @@
 from collections import Counter
 from text import ngrams, similarity
 
+from galvasr2.align.smith_waterman import sw_align as sw_align_sped_up
 
 class FuzzySearch(object):
     def __init__(self,
@@ -18,6 +19,7 @@ class FuzzySearch(object):
         self.mismatch_score = mismatch_score
         self.gap_score = gap_score
         self.char_similarities = char_similarities
+        assert self.char_similarities is None, "Custom character similarities not supported at this time"
         self.ngrams = {}
         # build inverted index of ngram to where it occurs
        # character ngrams. Good.
@@ -36,11 +38,30 @@ class FuzzySearch(object):
 
     def char_similarity(self, a, b):
         key = FuzzySearch.char_pair(a, b)
+        assert self.char_similarities is None, "Custom character similarities not supported at this time"
         if self.char_similarities and key in self.char_similarities:
             return self.char_similarities[key]
         return self.match_score if a == b else self.mismatch_score
 
     def sw_align(self, a, start, end):
+        align_start, align_end, score, substitutions = \
+            sw_align_sped_up(a, self.text, start, end, self.gap_score,
+                             self.match_score, self.mismatch_score)
+        for new_start in range(align_start - 1, start - 1, -1):
+            if self.text[new_start] == ' ':
+                align_start = new_start + 1
+                break
+        for new_end in range(align_end, end):
+            if self.text[new_end] == ' ':
+                align_end = new_end
+                break
+
+        return align_start, align_end, score, substitutions
+
+    # unused. This was the original implementation of sw_align(),
+    # before I sped it up with cython. The cython implementation is
+    # approximately 10 times faster.
+    def sw_align_old(self, a, start, end):
         b = self.text[start:end]
         n, m = len(a), len(b)
         # building scoring matrix
@@ -85,6 +106,7 @@ class FuzzySearch(object):
         end = len(self.text) if end < 0 else end
         if end - start < 2 * len(look_for):
             return self.sw_align(look_for, start, end)
+        # What happens in this case?
         window_size = len(look_for)
         windows = {}
         for i, ngram in enumerate(ngrams(' ' + look_for + ' ', 3)):

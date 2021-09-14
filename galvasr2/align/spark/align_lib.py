@@ -9,6 +9,7 @@ import json
 import shlex
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 from typing import List, Tuple
@@ -50,6 +51,29 @@ def DecodeToWavPipe(input_bytes, fmt):
   assert p.returncode == 0, err
   return out
 
+def DecodeToRawPipe(input_bytes, fmt):
+  cmd = f'sox -t {fmt} - -t raw --channels 1 --rate 16000 --encoding signed --bits 16 -'
+  p = subprocess.Popen(shlex.split(cmd),
+                       stdin=subprocess.PIPE,
+                       stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE)
+  out, err = p.communicate(input=input_bytes)
+  assert p.returncode == 0, err
+  return out
+
+
+def EncodeFromRawPipe(input_bytes, fmt):
+  # cmd = f'ffmpeg -f s16le -ar 16k -ac 1 -i - -f {fmt} -'
+  cmd = f'sox -t raw --channels 1 --rate 16000 --encoding signed --bits 16 - -t {fmt} -'
+  p = subprocess.Popen(shlex.split(cmd),
+                       stdin=subprocess.PIPE,
+                       stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE)
+  out, err = p.communicate(input=input_bytes)
+  assert p.returncode == 0, err
+  return out
+    
+
 @pandas_udf(StringType())
 def srt_to_text(srt_file_contents: pd.Series) -> pd.Series:
   def helper(content: str) -> str:
@@ -57,10 +81,29 @@ def srt_to_text(srt_file_contents: pd.Series) -> pd.Series:
       return " ".join(line.content.replace("\n", " ") for line in srt.parse(content))
     except (srt.SRTParseError, srt.TimestampParseError) as exc:
       # Is this really the best way to log in a pandas UDF?
-      print("WARNING: trouble parsing content")
+      print("WARNING: trouble parsing srt file content")
       print(exc)
       return ""
   return srt_file_contents.apply(helper)
+
+@pandas_udf(StringType())
+def normalize_english_text_udf(unnormalized_text_series: pd.Series) -> pd.Series:
+    from gruut.lang import get_tokenizer
+
+    tokenizer = get_tokenizer(
+        "en",
+        no_pos=True,
+        # use_number_converters=args.number_converters,
+        do_replace_currency=True,
+        exclude_non_words=False,
+    )
+    normalized_texts = []
+    for unnormalized_text in unnormalized_text_series:
+        normalized_text = " ".join(str(sentence.clean_text) for sentence in
+                                   tokenizer.tokenize(unnormalized_text))
+        normalized_texts.append(normalized_text)
+    return pd.Series(normalized_texts)
+
 
 @pandas_udf(StringType())
 def infer_language_udf(text_column: pd.Series) -> pd.Series:
@@ -104,22 +147,6 @@ def load_transcripts(spark, base_path: str, collected_text_document_rows: List[p
   text_document_ids = [os.path.join(base_path, row.identifier, fix_name(row.identifier, row.text_document_id))
                        for row in collected_text_document_rows]
   text_document_ids = [tid for tid in text_document_ids if tid not in missing_text_document_ids]
-  # text_document_ids = text_document_ids[:100]
-  # text_document_ids = text_document_ids[:100]
-  # existing_text_document_ids = []
-  # missing_text_document_ids = []
-  # def my_filter(tid):
-  #   if tf.io.gfile.exists(tid):
-  #     existing_text_document_ids.append(tid)
-  #   else:
-  #     missing_text_document_ids.append(tid)
-  # with ThreadPoolExecutor(16) as executor:
-  #   list(tqdm.tqdm(executor.map(my_filter, text_document_ids), total=len(text_document_ids)))
-  # assert len(text_document_ids) == len(existing_text_document_ids) + len(missing_text_document_ids)
-  # assert len(missing_text_document_ids) > 0
-  # with open("missing_files.json", "w") as fh:
-  #   json.dump(missing_text_document_ids, fh)
-  # text_document_ids = existing_text_document_ids
   srt_df = (spark.read.format("binaryFile")
             .load(text_document_ids))
   # Note the duplication with load_audio_files
@@ -324,15 +351,12 @@ def load_audio_and_text_dfs(spark, input_catalogue_path: str):
 
 # Three columns:
 # identifer, MP3 file name, transcript file name
-def load_audio_id_text_id_mapping(spark, input_catalogue_path: str, input_base_dir: str):
+def load_audio_id_text_id_mapping(spark, input_catalogue_path: str):
   audio_df, text_df = load_audio_and_text_dfs(spark, input_catalogue_path)
 
   joined_df = audio_df.join(text_df, "identifier")
   joined_df = joined_df.withColumn("levenshtein", F.levenshtein(joined_df.audio_document_id, joined_df.text_document_id))
   audio_to_text_mapping_df = joined_df.groupBy("identifier").applyInPandas(fuzzy_matching, schema=FUZZY_MATCHING_RETURN_TYPE)
-  # This is needed for the hours-per-license job. We should probably avoid adding one-off columsn inside this function.
-  licenses_df = df.select(df.identifier, df.metadata.licenseurl.alias('licenseurl'))
-  audio_to_text_mapping_df = audio_to_text_mapping_df.join(licenses_df, ['identifier'])
   return audio_to_text_mapping_df
 
 @pandas_udf(BooleanType())
@@ -460,6 +484,62 @@ get_audio_seconds_udf = _prepare_soxi_udf("-D", DoubleType(), float)
 get_audio_sample_rate_udf = _prepare_soxi_udf("-r", StringType(), str)
 get_audio_annotations_udf = _prepare_soxi_udf("-a", BinaryType(), bytes)
 
+# Can I return an array type of struct types?
+AUDIO_SEGMENTS_RETURN_TYPE = T.StructType([T.StructField("audio_name", T.ArrayType(T.StringType())),
+                                           T.StructField("audio", T.ArrayType(T.BinaryType()))])
+@F.pandas_udf(AUDIO_SEGMENTS_RETURN_TYPE)
+def create_audio_segments_udf(audio_bytes_series: pd.Series, audio_type_series: pd.Series,
+                              audio_name_series: pd.Series, start_ms_array_series: pd.Series,
+                              end_ms_array_series: pd.Series) -> pd.DataFrame:
+    output_array = []
+    for audio_bytes, audio_type, audio_name, start_ms_array, end_ms_array in zip(
+            audio_bytes_series, audio_type_series, audio_name_series,
+            start_ms_array_series, end_ms_array_series):
+        assert audio_type == 'mp3'
+        decoded_bytes = DecodeToRawPipe(audio_bytes, audio_type)
+        audio_segment = pydub.AudioSegment(
+            decoded_bytes, 
+            frame_rate=16_000,
+            sample_width=2,
+            channels=1
+        )
+        segmented_audio = {"audio_name": [], "audio": []}
+        for i, (start_ms, end_ms) in enumerate(zip(start_ms_array, end_ms_array)):        
+            segment_flac_bytes = EncodeFromRawPipe(audio_segment[start_ms:end_ms].raw_data, "flac")
+            segmented_audio["audio"].append(segment_flac_bytes)
+        output_array.append(segmented_audio)
+    audio_segment_names_series = create_audio_segment_names_udf.func(audio_name_series, end_ms_array_series.transform(len))
+    assert len(output_array) == len(audio_segment_names_series)
+    for i, audio_segment_names in enumerate(audio_segment_names_series):
+        output_array[i]["audio_name"] = audio_segment_names
+    return pd.DataFrame(output_array)
+
+AUDIO_SEGMENT_NAMES_RETURN_TYPE = T.ArrayType(T.StringType())
+@F.pandas_udf(AUDIO_SEGMENT_NAMES_RETURN_TYPE)
+def create_audio_segment_names_udf(audio_name_series: pd.Series, num_aligned_utterances_series: pd.Series) -> pd.Series:
+    audio_segment_names = []
+    for audio_name, num_aligned_utterances in zip(audio_name_series,
+                                                  num_aligned_utterances_series):
+        audio_segment_names.append([])
+        for i in range(num_aligned_utterances):
+            audio_segment_names[-1].append(f"{audio_name}_{i}.flac")
+    return pd.Series(audio_segment_names)
+
+def prepare_filter_alignments_udf(cer_threshold: float, duration_ms_threshold: int):
+    RETURN_TYPE = T.StructType([T.StructField("start_ms", T.ArrayType(T.LongType())),
+                                T.StructField("end_ms", T.ArrayType(T.LongType())),
+                                T.StructField("label", T.ArrayType(T.StringType())),
+                                T.StructField("cer", T.ArrayType(T.FloatType())),
+                                T.StructField("wer", T.ArrayType(T.FloatType())),
+    ])
+    @F.pandas_udf(RETURN_TYPE)
+    def filter_alignments_udf(start_ms_arrays: pd.Series, end_ms_arrays: pd.Series,
+                              label_arrays: pd.Series, cer_arrays: pd.Series,
+                              wer_arrays: pd.Series) -> pd.DataFrame:
+        for start_ms_array, end_ms_array, label_array, cer_array, cer_array in zip(start_ms_arrays, end_ms_arrays, label_arrays, cer_arrays, wer_arrays):
+            pass
+
+
 def prepare_create_audio_segments_udf(gs_bucket: str, output_dir: str):
   RETURN_TYPE = ArrayType(StringType())
   @pandas_udf(RETURN_TYPE)
@@ -504,11 +584,11 @@ def prepare_create_audio_segments_udf(gs_bucket: str, output_dir: str):
           pass
         for i, (start_ms, end_ms) in enumerate(zip(start_ms_array, end_ms_array)):
           # Flac encoding probably good
-          write_file_name = f"{base}-{i:04d}.wav"
+          write_file_name = f"{base}-{i:04d}.flac"
           if not already_done:
             write_path = os.path.join(this_file_output_dir, write_file_name)
             try:
-              fh = source[start_ms:end_ms].export(write_path, format="wav", subprocess_timeout=100)
+              fh = source[start_ms:end_ms].set_frame_rate(16_000).set_sample_width(2).set_channels(1).export(write_path, format="flac", subprocess_timeout=100)
             except subprocess.TimeoutExpired:
               print("GALVEZ:timed out 2, need to retry")
               return create_audio_segments_udf.func(audio_file_gcs_paths,
@@ -524,6 +604,34 @@ def prepare_create_audio_segments_udf(gs_bucket: str, output_dir: str):
           chunk_paths[-1].append(os.path.join(identifier, write_file_name))
       return pd.Series(chunk_paths)
   return create_audio_segments_udf
+
+def repartition_tar_files(tar_glob: str, output_dir: str, entries_per_split: int):
+  input_tar_paths = tf.io.gfile.glob(tar_glob)
+  tf.io.gfile.rmtree(output_dir)
+  output_tar_paths = []
+  current_output_tar_file_path = os.path.join(output_dir, 'shard-00000.tar')
+  current_output_tar_file = tarfile.open(fileobj=tf.io.gfile.GFile(current_output_tar_file_path, mode='wb'), mode='w')
+  written_entries_to_current_tar_file = 0
+  for input_tar_path in input_tar_paths:
+    print(f"GALVEZ:{input_tar_path}")
+    file_obj = tf.io.gfile.GFile(input_tar_path, mode='rb')
+    tar = tarfile.open(fileobj=file_obj, mode='r')
+    for tar_info in tar.getmembers():
+      value_fh = tar.extractfile(tar_info)
+      current_output_tar_file.addfile(tarinfo=tar_info, fileobj=value_fh)
+      written_entries_to_current_tar_file += 1
+      if written_entries_to_current_tar_file == entries_per_split:
+          current_output_tar_file.close()
+          output_tar_paths.append(current_output_tar_file_path)
+          current_output_tar_file_path = os.path.join(output_dir, f'shard-{len(output_tar_paths):05d}.tar')
+          current_output_tar_file = tarfile.open(fileobj=tf.io.gfile.GFile(current_output_tar_file_path, mode='wb'), mode='w')
+    tar.close() # TODO: Does this close file_obj as well?
+  current_output_tar_file.close()
+  if output_tar_paths[-1] != current_output_tar_file_path:
+    tf.io.gfile.remove(current_output_tar_file)
+  return output_tar_paths
+    
+    
 
 # (1, 300, Counter(),
 #  [{'start': 1513510,

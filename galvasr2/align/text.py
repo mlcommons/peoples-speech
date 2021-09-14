@@ -204,8 +204,11 @@ def similarity(a, b, direction=0, min_ngram_size=1, max_ngram_size=3, size_facto
             for ng, position_weight in weighted_ngrams(s, size, direction=direction):
                 c[ng] += size * size_factor + position_weight * position_weight * position_factor
     score = 0
-    for key in set(ca.keys()) & set(cb.keys()):
-        score += min(ca[key], cb[key])
+    small_table = ca if len(ca) < len(cb) else cb
+    large_table = cb if len(ca) < len(cb) else ca
+    for key in small_table:
+        if key in large_table:
+            score += min(ca[key], cb[key])
     return score / sum(ca.values())
 
 
