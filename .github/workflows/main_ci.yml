@@ -28,7 +28,7 @@ jobs:
         run: |
           python ./.github/workflows/lint.py --path ./galvasr2 --threshold -3
   # This workflow contains a single job called "build"
-  license:
+  """license:
     # The type of runner that the job will run on
     runs-on: ubuntu-latest
 
@@ -40,7 +40,7 @@ jobs:
       - name: Check License Header
         uses: apache/skywalking-eyes@main
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}"""
 
   black:
     # The type of runner that the job will run on
