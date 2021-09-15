@@ -12,15 +12,15 @@ import math
 import re
 import sys
 
-sys.path.insert(0, 'steps')
+sys.path.insert(0, "steps")
 
-logger = logging.getLogger('__name__')
+logger = logging.getLogger("__name__")
 logger.addHandler(logging.NullHandler())
 
 
 class IDFStats(object):
-    """Stores stats for computing inverse-document-frequencies.
-    """
+    """Stores stats for computing inverse-document-frequencies."""
+
     def __init__(self):
         self.num_docs_for_term = {}
         self.num_docs = 0
@@ -55,8 +55,7 @@ class IDFStats(object):
             return math.log((self.num_docs - n_t - 1) / (1.0 + n_t))
 
     def accumulate(self, term):
-        """Adds one count to the number of docs containing the term "term".
-        """
+        """Adds one count to the number of docs containing the term "term"."""
         self.num_docs_for_term[term] = self.num_docs_for_term.get(term, 0) + 1
         if len(term) == 1:
             self.num_docs += 1
@@ -70,11 +69,10 @@ class IDFStats(object):
             if num == 0:
                 continue
             assert isinstance(term, tuple)
-            print ("{term} {n}".format(term=" ".join(term), n=num),
-                   file=file_handle)
+            print("{term} {n}".format(term=" ".join(term), n=num), file=file_handle)
 
     def read(self, file_handle):
-        """Loads IDF stats from file. """
+        """Loads IDF stats from file."""
         for line in file_handle:
             parts = line.strip().split()
             term = tuple(parts[0:-1])
@@ -90,12 +88,14 @@ class TFStats(object):
     """Store stats for TF-IDF computation.
     A separate object of IDFStats is stored within this object.
     """
+
     def __init__(self):
         self.raw_counts = {}
         self.max_counts_for_term = {}
 
-    def get_term_frequency(self, term, doc, weighting_scheme="raw",
-                           normalization_factor=0.5):
+    def get_term_frequency(
+        self, term, doc, weighting_scheme="raw", normalization_factor=0.5
+    ):
         """Returns the term-frequency for (term, document) pair.
 
         The function applied on the raw term-frequencies f(t,d) when computing
@@ -114,19 +114,19 @@ class TFStats(object):
                 return 1 + math.log(self.raw_counts[(term, doc)])
             return 0
         if weighting_scheme == "normalized":
-            return (normalization_factor
-                    + (1 - normalization_factor)
-                    * self.raw_counts.get((term, doc), 0)
-                    / (1.0 + self.max_counts_for_term.get(term, 0)))
-        raise KeyError("Unknown tf-weighting-scheme {0}".format(
-            weighting_scheme))
+            return normalization_factor + (
+                1 - normalization_factor
+            ) * self.raw_counts.get((term, doc), 0) / (
+                1.0 + self.max_counts_for_term.get(term, 0)
+            )
+        raise KeyError("Unknown tf-weighting-scheme {0}".format(weighting_scheme))
 
     def accumulate(self, doc, text, ngram_order):
         """Accumulate raw stats from a document for upto the specified
         ngram-order."""
         for n in range(1, ngram_order + 1):
             for i in range(len(text)):
-                term = tuple(text[i:(i+n)])
+                term = tuple(text[i : (i + n)])
                 self.raw_counts.setdefault((term, doc), 0)
                 self.raw_counts[(term, doc)] += 1
 
@@ -151,9 +151,11 @@ class TFStats(object):
         lines = []
         for tup, counts in self.raw_counts.items():
             term, doc = tup
-            lines.append("{order} {term} {doc} {counts}".format(
-                order=len(term), term=" ".join(term),
-                doc=doc, counts=counts))
+            lines.append(
+                "{order} {term} {doc} {counts}".format(
+                    order=len(term), term=" ".join(term), doc=doc, counts=counts
+                )
+            )
         return "\n".join(lines)
 
     def read(self, file_handle, ngram_order=None, idf_stats=None):
@@ -168,7 +170,7 @@ class TFStats(object):
             assert len(parts) - 3 == order
             if ngram_order is not None and order > ngram_order:
                 continue
-            term = tuple(parts[1:(order+1)])
+            term = tuple(parts[1 : (order + 1)])
             doc = parts[-2]
             counts = float(parts[-1])
 
@@ -201,9 +203,13 @@ class TFIDF(object):
         """
         return self.tf_idf[(term, doc)]
 
-    def compute_similarity_scores(self, source_tfidf, source_docs=None,
-                                  do_length_normalization=False,
-                                  query_id=None):
+    def compute_similarity_scores(
+        self,
+        source_tfidf,
+        source_docs=None,
+        do_length_normalization=False,
+        query_id=None,
+    ):
         """Computes TF-IDF similarity score between each pair of query
         document contained in this object and the source documents
         in the source_tfidf object.
@@ -230,12 +236,13 @@ class TFIDF(object):
             num_terms_per_doc[doc] = num_terms_per_doc.get(doc, 0) + 1
 
             if query_id is not None and doc != query_id:
-                raise RuntimeError("TF-IDF contains document {0}, which is "
-                                   "not the required query {1}. \n"
-                                   "Something wrong in how this TF-IDF object "
-                                   "was created or a bug in the "
-                                   "calling script.".format(
-                                       doc, query_id))
+                raise RuntimeError(
+                    "TF-IDF contains document {0}, which is "
+                    "not the required query {1}. \n"
+                    "Something wrong in how this TF-IDF object "
+                    "was created or a bug in the "
+                    "calling script.".format(doc, query_id)
+                )
 
             if source_docs is not None:
                 for src_doc in source_docs:
@@ -246,17 +253,19 @@ class TFIDF(object):
                             "Could not find ({term}, {src}) in "
                             "source_tfidf. "
                             "Choosing a tf-idf value of 0.".format(
-                                term=term, src=src_doc))
+                                term=term, src=src_doc
+                            )
+                        )
                         src_value = 0
 
                     similarity_scores[(doc, src_doc)] = (
-                        similarity_scores.get((doc, src_doc), 0)
-                        + src_value * value)
+                        similarity_scores.get((doc, src_doc), 0) + src_value * value
+                    )
             else:
                 for src_tup, src_value in source_tfidf.tf_idf.items():
                     similarity_scores[(doc, src_doc)] = (
-                        similarity_scores.get((doc, src_doc), 0)
-                        + src_value * value)
+                        similarity_scores.get((doc, src_doc), 0) + src_value * value
+                    )
 
         if do_length_normalization:
             for doc_pair, value in similarity_scores.items():
@@ -265,8 +274,7 @@ class TFIDF(object):
 
         if logger.isEnabledFor(logging.DEBUG):
             for doc, count in num_terms_per_doc.items():
-                logger.debug(
-                    'Seen {0} terms in query document {1}'.format(count, doc))
+                logger.debug("Seen {0} terms in query document {1}".format(count, doc))
 
         return similarity_scores
 
@@ -278,10 +286,11 @@ class TFIDF(object):
         seen_footer = False
         line = tf_idf_file.readline()
         parts = line.strip().split()
-        if re.search('^<TFIDF>', line) is None:
+        if re.search("^<TFIDF>", line) is None:
             raise TypeError(
                 "Invalid format of TD-IDF object. "
-                "Missing header <TFIDF>; got {0}".format(line))
+                "Missing header <TFIDF>; got {0}".format(line)
+            )
         assert parts[0] == "<TFIDF>"
         if len(parts) > 1:
             # Read header; go to the rest of line
@@ -291,56 +300,68 @@ class TFIDF(object):
             line = tf_idf_file.readline()
         while line:
             parts = line.strip().split()
-            if re.search('</TFIDF>', line):
+            if re.search("</TFIDF>", line):
                 if len(parts) > 1:
                     raise TypeError(
                         "Expecting footer </TFIDF> "
-                        "to be on a separate line; got {0}".format(line))
+                        "to be on a separate line; got {0}".format(line)
+                    )
                 assert parts[0] == "</TFIDF>"
                 seen_footer = True
                 break
-            if re.search('<TFIDF>', line):
-                raise TypeError("Got unexpected header <TFIDF> in line "
-                                "{0}".format(line))
+            if re.search("<TFIDF>", line):
+                raise TypeError(
+                    "Got unexpected header <TFIDF> in line " "{0}".format(line)
+                )
 
             order = int(parts[0])
-            term = tuple(parts[1:(order + 1)])
+            term = tuple(parts[1 : (order + 1)])
             doc = parts[-2]
             tfidf = float(parts[-1])
 
             entry = (term, doc)
             if entry in self.tf_idf:
-                raise RuntimeError("Duplicate entry {0} found while reading "
-                                   "TFIDF object.".format(entry))
+                raise RuntimeError(
+                    "Duplicate entry {0} found while reading "
+                    "TFIDF object.".format(entry)
+                )
             self.tf_idf[entry] = tfidf
 
             line = tf_idf_file.readline()
         if not seen_footer:
             raise TypeError(
-                "Did not see footer </TFIDF> "
-                "in TFIDF object; got {0}".format(line))
+                "Did not see footer </TFIDF> " "in TFIDF object; got {0}".format(line)
+            )
 
         if len(self.tf_idf) == 0:
             raise RuntimeError(
-                "Read no TF-IDF values from file {0}".format(tf_idf_file.name))
+                "Read no TF-IDF values from file {0}".format(tf_idf_file.name)
+            )
 
     def write(self, tf_idf_file):
         """Writes TFIDF object to file."""
 
-        print ("<TFIDF>", file=tf_idf_file)
+        print("<TFIDF>", file=tf_idf_file)
         for tup, value in self.tf_idf.items():
             term, doc = tup
-            print("{order} {term} {doc} {tfidf}".format(
-                order=len(term), term=" ".join(term),
-                doc=doc, tfidf=value),
-                  file=tf_idf_file)
-        print ("</TFIDF>", file=tf_idf_file)
+            print(
+                "{order} {term} {doc} {tfidf}".format(
+                    order=len(term), term=" ".join(term), doc=doc, tfidf=value
+                ),
+                file=tf_idf_file,
+            )
+        print("</TFIDF>", file=tf_idf_file)
 
 
 def write_tfidf_from_stats(
-        tf_stats, idf_stats, tf_idf_file, tf_weighting_scheme="raw",
-        idf_weighting_scheme="log", tf_normalization_factor=0.5,
-        expected_document_id=None):
+    tf_stats,
+    idf_stats,
+    tf_idf_file,
+    tf_weighting_scheme="raw",
+    idf_weighting_scheme="log",
+    tf_normalization_factor=0.5,
+    expected_document_id=None,
+):
     """Writes TF-IDF values to file args.tf_idf_file.
     The format used is
     <ngram-order> <term> <document> <tfidf>.
@@ -363,45 +384,57 @@ def write_tfidf_from_stats(
     if idf_stats.num_docs == 0:
         raise RuntimeError("Supplied idf-stats object is empty.")
 
-    print ("<TFIDF>", file=tf_idf_file)
+    print("<TFIDF>", file=tf_idf_file)
     for tup in tf_stats.raw_counts:
         term, doc = tup
 
         if expected_document_id is not None and doc != expected_document_id:
-            raise RuntimeError("TFStats object contains stats with "
-                               "document {0}, "
-                               "which is not the specified "
-                               "document {1}.".format(doc,
-                                                      expected_document_id))
+            raise RuntimeError(
+                "TFStats object contains stats with "
+                "document {0}, "
+                "which is not the specified "
+                "document {1}.".format(doc, expected_document_id)
+            )
 
         tf_value = tf_stats.get_term_frequency(
-            term, doc,
+            term,
+            doc,
             weighting_scheme=tf_weighting_scheme,
-            normalization_factor=tf_normalization_factor)
+            normalization_factor=tf_normalization_factor,
+        )
 
         idf_value = idf_stats.get_inverse_document_frequency(
-            term, weighting_scheme=idf_weighting_scheme)
+            term, weighting_scheme=idf_weighting_scheme
+        )
 
-        print("{order} {term} {doc} {tfidf}".format(
-            order=len(term), term=" ".join(term),
-            doc=doc, tfidf=tf_value * idf_value),
-              file=tf_idf_file)
-    print ("</TFIDF>", file=tf_idf_file)
+        print(
+            "{order} {term} {doc} {tfidf}".format(
+                order=len(term),
+                term=" ".join(term),
+                doc=doc,
+                tfidf=tf_value * idf_value,
+            ),
+            file=tf_idf_file,
+        )
+    print("</TFIDF>", file=tf_idf_file)
 
 
 def read_key(fd):
-  """ [str] = read_key(fd)
-   Read the utterance-key from the opened ark/stream descriptor 'fd'.
-  """
-  str = ''
-  while 1:
-    char = fd.read(1)
-    if char == '' : break
-    if char == ' ' : break
-    str += char
-  str = str.strip()
-  if str == '': return None # end of file,
-  return str
+    """[str] = read_key(fd)
+    Read the utterance-key from the opened ark/stream descriptor 'fd'.
+    """
+    str = ""
+    while 1:
+        char = fd.read(1)
+        if char == "":
+            break
+        if char == " ":
+            break
+        str += char
+    str = str.strip()
+    if str == "":
+        return None  # end of file,
+    return str
 
 
 def read_tfidf_ark(file_handle):

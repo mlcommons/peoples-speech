@@ -12,11 +12,11 @@ class Alphabet(object):
         self._label_to_str = []
         self._str_to_label = {}
         self._size = 0
-        with codecs.open(config_file, 'r', 'utf-8') as fin:
+        with codecs.open(config_file, "r", "utf-8") as fin:
             for line in fin:
-                if line[0:2] == '\\#':
-                    line = '#\n'
-                elif line[0] == '#':
+                if line[0:2] == "\\#":
+                    line = "#\n"
+                elif line[0] == "#":
                     continue
                 self._label_to_str += line[:-1]  # remove the line ending
                 self._str_to_label[line[:-1]] = self._size
@@ -33,11 +33,11 @@ class Alphabet(object):
             return self._str_to_label[string]
         except KeyError as e:
             raise KeyError(
-                '''ERROR: Your transcripts contain characters which do not occur in data/alphabet.txt! Use util/check_characters.py to see what characters are in your {train,dev,test}.csv transcripts, and then add all these to data/alphabet.txt.'''
+                """ERROR: Your transcripts contain characters which do not occur in data/alphabet.txt! Use util/check_characters.py to see what characters are in your {train,dev,test}.csv transcripts, and then add all these to data/alphabet.txt."""
             ).with_traceback(e.__traceback__)
 
     def decode(self, labels):
-        res = ''
+        res = ""
         for label in labels:
             res += self.string_from_label(label)
         return res
@@ -50,20 +50,22 @@ class Alphabet(object):
 
 
 class TextCleaner(object):
-    def __init__(self, alphabet, to_lower=True, normalize_space=True, dashes_to_ws=True):
+    def __init__(
+        self, alphabet, to_lower=True, normalize_space=True, dashes_to_ws=True
+    ):
         self.alphabet = alphabet
         self.to_lower = to_lower
         self.normalize_space = normalize_space
         self.dashes_to_ws = dashes_to_ws
-        self.original_text = ''
-        self.clean_text = ''
+        self.original_text = ""
+        self.clean_text = ""
         self.positions = []
         self.meta = []
 
     def add_original_text(self, original_text, meta=None):
         if len(self.positions) > 0:
-            self.clean_text += ' '
-            self.original_text += ' '
+            self.clean_text += " "
+            self.original_text += " "
             self.positions.append(len(self.original_text) - 1)
             self.meta.append(None)
             ws = True
@@ -72,14 +74,14 @@ class TextCleaner(object):
         cleaned = []
         prepared_text = original_text.lower() if self.to_lower else original_text
         for position, c in enumerate(prepared_text):
-            if self.dashes_to_ws and c == '-' and not self.alphabet.has_label('-'):
-                c = ' '
+            if self.dashes_to_ws and c == "-" and not self.alphabet.has_label("-"):
+                c = " "
             if self.normalize_space and c.isspace():
                 if ws:
                     continue
                 else:
                     ws = True
-                    c = ' '
+                    c = " "
             if not self.alphabet.has_label(c):
                 continue
             if not c.isspace():
@@ -88,7 +90,7 @@ class TextCleaner(object):
             self.positions.append(len(self.original_text) + position)
             self.meta.append(meta)
         self.original_text += original_text
-        self.clean_text += ''.join(cleaned)
+        self.clean_text += "".join(cleaned)
 
     def get_original_offset(self, clean_offset):
         if clean_offset == len(self.positions):
@@ -99,7 +101,7 @@ class TextCleaner(object):
         if to_clean_offset is None:
             return self.meta[from_clean_offset]
         metas = []
-        for meta in self.meta[from_clean_offset:to_clean_offset + 1]:
+        for meta in self.meta[from_clean_offset : to_clean_offset + 1]:
             if meta is not None and meta not in metas:
                 metas.append(meta)
         return metas
@@ -123,10 +125,16 @@ class TextRange(object):
                 if pos > end:
                     end = pos
                 pos += step
-        return TextRange(text, start, end + 1) if start <= end else TextRange(text, position, position)
+        return (
+            TextRange(text, start, end + 1)
+            if start <= end
+            else TextRange(text, position, position)
+        )
 
     def neighbour_token(self, direction):
-        return TextRange.token_at(self.document, self.start - 2 if direction < 0 else self.end + 1)
+        return TextRange.token_at(
+            self.document, self.start - 2 if direction < 0 else self.end + 1
+        )
 
     def next_token(self):
         return self.neighbour_token(1)
@@ -135,18 +143,24 @@ class TextRange(object):
         return self.neighbour_token(-1)
 
     def get_text(self):
-        return self.document[self.start:self.end]
+        return self.document[self.start : self.end]
 
     def __add__(self, other):
         if not self.document == other.document:
             raise Exception("Unable to add token from other string")
-        return TextRange(self.document, min(self.start, other.start), max(self.end, other.end))
+        return TextRange(
+            self.document, min(self.start, other.start), max(self.end, other.end)
+        )
 
     def __eq__(self, other):
-        return self.document == other.document and self.start == other.start and self.end == other.end
+        return (
+            self.document == other.document
+            and self.start == other.start
+            and self.end == other.end
+        )
 
     def __len__(self):
-        return self.end-self.start
+        return self.end - self.start
 
 
 def ngrams(s, size):
@@ -162,7 +176,7 @@ def ngrams(s, size):
             yield s
         return
     for i in range(0, window + 1):
-        yield s[i:i + size]
+        yield s[i : i + size]
 
 
 def weighted_ngrams(s, size, direction=0):
@@ -180,7 +194,15 @@ def weighted_ngrams(s, size, direction=0):
     return enweight(ngrams(s, size), direction=direction)
 
 
-def similarity(a, b, direction=0, min_ngram_size=1, max_ngram_size=3, size_factor=1, position_factor=1):
+def similarity(
+    a,
+    b,
+    direction=0,
+    min_ngram_size=1,
+    max_ngram_size=3,
+    size_factor=1,
+    position_factor=1,
+):
     """
     Computes similarity value of two strings ranging from 0.0 (completely different) to 1.0 (completely equal).
     Counts intersection of weighted N-gram sets of both strings.
@@ -202,7 +224,10 @@ def similarity(a, b, direction=0, min_ngram_size=1, max_ngram_size=3, size_facto
     for s, c in [(a, ca), (b, cb)]:
         for size in range(min_ngram_size, max_ngram_size + 1):
             for ng, position_weight in weighted_ngrams(s, size, direction=direction):
-                c[ng] += size * size_factor + position_weight * position_weight * position_factor
+                c[ng] += (
+                    size * size_factor
+                    + position_weight * position_weight * position_factor
+                )
     score = 0
     for key in set(ca.keys()) & set(cb.keys()):
         score += min(ca[key], cb[key])
@@ -219,6 +244,7 @@ def similarity(a, b, direction=0, min_ngram_size=1, max_ngram_size=3, size_facto
 # version 1.0. This software is distributed without any warranty. For more
 # information, see <http://creativecommons.org/publicdomain/zero/1.0>
 
+
 def levenshtein(a, b):
     """
     Calculates the Levenshtein distance between a and b.
@@ -229,13 +255,13 @@ def levenshtein(a, b):
         a, b = b, a
         n, m = m, n
 
-    current = list(range(n+1))
-    for i in range(1, m+1):
-        previous, current = current, [i]+[0]*n
-        for j in range(1, n+1):
-            add, delete = previous[j]+1, current[j-1]+1
-            change = previous[j-1]
-            if a[j-1] != b[i-1]:
+    current = list(range(n + 1))
+    for i in range(1, m + 1):
+        previous, current = current, [i] + [0] * n
+        for j in range(1, n + 1):
+            add, delete = previous[j] + 1, current[j - 1] + 1
+            change = previous[j - 1]
+            if a[j - 1] != b[i - 1]:
                 change = change + 1
             current[j] = min(add, delete, change)
 

@@ -93,7 +93,9 @@ def save_dump_license_data(data_license, save_as: str = "csv"):
         Status of the file generation
     """
     if save_as == "csv":
-        data_license.write.mode("overwrite").format("csv").option("header", "true").save("cc_by_licenses.csv")
+        data_license.write.mode("overwrite").format("csv").option(
+            "header", "true"
+        ).save("cc_by_licenses.csv")
     elif save_as == "txt":
         data_license = data_license.withColumn(
             "credits", my_concat(*data_license.columns)
@@ -108,9 +110,7 @@ def save_dump_license_data(data_license, save_as: str = "csv"):
 
 def main(argv):
     spark = SparkSession.builder.appName("CC-BY-license").getOrCreate()
-    data_license = create_dump_license_data(
-        spark, FLAGS.input_catalogue_path
-    )
+    data_license = create_dump_license_data(spark, FLAGS.input_catalogue_path)
     save_dump_license_data(data_license, FLAGS.save_as)
 
 

@@ -34,15 +34,15 @@ def load_nbest(path):
     """
 
     nbest = defaultdict()
-    with open(path, 'r', encoding='utf-8') as f:
+    with open(path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             try:
-                key, hyp = line.split(' ', 1)
+                key, hyp = line.split(" ", 1)
             except ValueError:
                 key = line
-                hyp = ' '
-            key = key.rsplit('-', 1)[0]
+                hyp = " "
+            key = key.rsplit("-", 1)[0]
             if key not in nbest:
                 nbest[key] = [hyp]
             else:
@@ -63,7 +63,7 @@ def read_vocab(path):
 
     word2idx = {}
     idx2word = []
-    with open(path, 'r', encoding='utf-8') as f:
+    with open(path, "r", encoding="utf-8") as f:
         for line in f:
             word = line.split()
             assert len(word) == 2
@@ -91,24 +91,25 @@ def get_input_and_target(hyp, vocab):
         is expected to be in the vocabulary if there are out-of-vocabulary words.
     """
 
-    input_string = '<s> ' + hyp
-    output_string = hyp + ' <s>'
+    input_string = "<s> " + hyp
+    output_string = hyp + " <s>"
     input_ids, output_ids = [], []
     for word in input_string.split():
         try:
             input_ids.append(vocab[word.lower()])
         except KeyError:
-            input_ids.append(vocab['<unk>'])
+            input_ids.append(vocab["<unk>"])
     for word in output_string.split():
         try:
             output_ids.append(vocab[word.lower()])
         except KeyError:
-            output_ids.append(vocab['<unk>'])
+            output_ids.append(vocab["<unk>"])
     return input_ids, output_ids
 
 
-def compute_sentence_score(model, criterion, ntokens, data, target,
-                           model_type='LSTM', hidden=None):
+def compute_sentence_score(
+    model, criterion, ntokens, data, target, model_type="LSTM", hidden=None
+):
     r"""Compute neural language model score of a sentence.
 
     Args:
@@ -134,18 +135,18 @@ def compute_sentence_score(model, criterion, ntokens, data, target,
     data = torch.LongTensor(data).view(-1, 1).contiguous()
     target = torch.LongTensor(target).view(-1).contiguous()
     with torch.no_grad():
-        if model_type == 'Transformer':
+        if model_type == "Transformer":
             output = model(data)
         else:
             output, hidden = model(data, hidden)
         loss = criterion(output.view(-1, ntokens), target)
     sent_score = length * loss.item()
-    if model_type == 'Transformer':
+    if model_type == "Transformer":
         return sent_score
     return sent_score, hidden
 
 
-def compute_scores(nbest, model, criterion, ntokens, vocab, model_type='LSTM'):
+def compute_scores(nbest, model, criterion, ntokens, vocab, model_type="LSTM"):
     r"""Compute sentence scores of nbest lists from a neural language model.
 
     Args:
@@ -165,20 +166,21 @@ def compute_scores(nbest, model, criterion, ntokens, vocab, model_type='LSTM'):
     # Turn on evaluation mode which disables dropout.
     model.eval()
     nbest_and_scores = defaultdict(float)
-    if model_type != 'Transformer':
+    if model_type != "Transformer":
         hidden = model.init_hidden(1)
     for key in nbest.keys():
-        if model_type != 'Transformer':
+        if model_type != "Transformer":
             cached_hiddens = []
         for hyp in nbest[key]:
             x, target = get_input_and_target(hyp, vocab)
-            if model_type == 'Transformer':
-                score = compute_sentence_score(model, criterion, ntokens, x,
-                                               target, model_type)
+            if model_type == "Transformer":
+                score = compute_sentence_score(
+                    model, criterion, ntokens, x, target, model_type
+                )
             else:
-                score, new_hidden = compute_sentence_score(model, criterion,
-                                                           ntokens, x, target,
-                                                           model_type, hidden)
+                score, new_hidden = compute_sentence_score(
+                    model, criterion, ntokens, x, target, model_type, hidden
+                )
                 cached_hiddens.append(new_hidden)
             if key in nbest_and_scores:
                 nbest_and_scores[key].append((hyp, score))
@@ -194,7 +196,7 @@ def compute_scores(nbest, model, criterion, ntokens, vocab, model_type='LSTM'):
         # previous utterance is used for initialization. You can also use those
         # from the one best hypothesis or just average hidden states from all
         # hypotheses of the previous utterance.
-        if model_type != 'Transformer':
+        if model_type != "Transformer":
             hidden = cached_hiddens[0]
     return nbest_and_scores
 
@@ -213,38 +215,58 @@ def write_scores(nbest_and_scores, path):
         path (str):       A output file of nbest lists' scores in the above format.
     """
 
-    with open(path, 'w', encoding='utf-8') as f:
+    with open(path, "w", encoding="utf-8") as f:
         for key in nbest_and_scores.keys():
             for idx, (_, score) in enumerate(nbest_and_scores[key], 1):
-                current_key = '-'.join([key, str(idx)])
-                f.write('%s %.4f\n' % (current_key, score))
+                current_key = "-".join([key, str(idx)])
+                f.write("%s %.4f\n" % (current_key, score))
     print("Write to %s" % path)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Compute sentence scores of "
-                                     "nbest lists with a PyTorch trained "
-                                     "neural language model.")
-    parser.add_argument('--nbest-list', type=str, required=True,
-                        help="N-best hypotheses for rescoring")
-    parser.add_argument('--outfile', type=str, required=True,
-                        help="Output file with language model scores associated "
-                        "with each hypothesis")
-    parser.add_argument('--vocabulary', type=str, required=True,
-                        help="Vocabulary used for training")
-    parser.add_argument('--model-path', type=str, required=True,
-                        help="Path to a pretrained neural model.")
-    parser.add_argument('--model', type=str, default='LSTM',
-                        help='Network type. can be RNN, LSTM or Transformer.')
-    parser.add_argument('--emsize', type=int, default=200,
-                        help='size of word embeddings')
-    parser.add_argument('--nhid', type=int, default=200,
-                        help='number of hidden units per layer')
-    parser.add_argument('--nlayers', type=int, default=2,
-                        help='number of layers')
-    parser.add_argument('--nhead', type=int, default=2,
-                        help='the number of heads in the encoder/decoder of the '
-                        'transformer model')
+    parser = argparse.ArgumentParser(
+        description="Compute sentence scores of "
+        "nbest lists with a PyTorch trained "
+        "neural language model."
+    )
+    parser.add_argument(
+        "--nbest-list", type=str, required=True, help="N-best hypotheses for rescoring"
+    )
+    parser.add_argument(
+        "--outfile",
+        type=str,
+        required=True,
+        help="Output file with language model scores associated "
+        "with each hypothesis",
+    )
+    parser.add_argument(
+        "--vocabulary", type=str, required=True, help="Vocabulary used for training"
+    )
+    parser.add_argument(
+        "--model-path",
+        type=str,
+        required=True,
+        help="Path to a pretrained neural model.",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="LSTM",
+        help="Network type. can be RNN, LSTM or Transformer.",
+    )
+    parser.add_argument(
+        "--emsize", type=int, default=200, help="size of word embeddings"
+    )
+    parser.add_argument(
+        "--nhid", type=int, default=200, help="number of hidden units per layer"
+    )
+    parser.add_argument("--nlayers", type=int, default=2, help="number of layers")
+    parser.add_argument(
+        "--nhead",
+        type=int,
+        default=2,
+        help="the number of heads in the encoder/decoder of the " "transformer model",
+    )
     args = parser.parse_args()
     assert os.path.exists(args.nbest_list), "Nbest list path does not exists."
     assert os.path.exists(args.vocabulary), "Vocabulary path does not exists."
@@ -255,26 +277,35 @@ def main():
     ntokens = len(vocab)
     print("Load model and criterion")
     import model
-    if args.model == 'Transformer':
-        model = model.TransformerModel(ntokens, args.emsize, args.nhead,
-                                       args.nhid, args.nlayers,
-                                       activation="gelu", tie_weights=True)
+
+    if args.model == "Transformer":
+        model = model.TransformerModel(
+            ntokens,
+            args.emsize,
+            args.nhead,
+            args.nhid,
+            args.nlayers,
+            activation="gelu",
+            tie_weights=True,
+        )
     else:
-        model = model.RNNModel(args.model, ntokens, args.emsize, args.nhid,
-                               args.nlayers, tie_weights=True)
-    with open(args.model_path, 'rb') as f:
+        model = model.RNNModel(
+            args.model, ntokens, args.emsize, args.nhid, args.nlayers, tie_weights=True
+        )
+    with open(args.model_path, "rb") as f:
         model.load_state_dict(torch.load(f, map_location=lambda storage, loc: storage))
-        if args.model in ['RNN_TANH', 'RNN_RELU', 'LSTM', 'GRU']:
+        if args.model in ["RNN_TANH", "RNN_RELU", "LSTM", "GRU"]:
             model.rnn.flatten_parameters()
     criterion = nn.CrossEntropyLoss()
     print("Load nbest list")
     nbest = load_nbest(args.nbest_list)
     print("Compute sentence scores with a ", args.model, " model")
-    nbest_and_scores = compute_scores(nbest, model, criterion, ntokens, vocab,
-                                      model_type=args.model)
+    nbest_and_scores = compute_scores(
+        nbest, model, criterion, ntokens, vocab, model_type=args.model
+    )
     print("Write sentence scores out")
     write_scores(nbest_and_scores, args.outfile)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

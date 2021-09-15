@@ -4,8 +4,9 @@ import os
 import subprocess
 from collections import Counter
 
+
 def convert_and_filter_topk(output_dir, input_txt, top_k):
-    """ Convert to lowercase, count word occurrences and save top-k words to a file """
+    """Convert to lowercase, count word occurrences and save top-k words to a file"""
 
     counter = Counter()
     data_lower = output_dir + "." + "lower.txt.gz"
@@ -71,24 +72,36 @@ def convert_and_filter_topk(output_dir, input_txt, top_k):
     return data_lower, vocab_str
 
 
-def build_lm(output_dir, kenlm_bins, arpa_order, max_arpa_memory, arpa_prune, discount_fallback, binary_a_bits, binary_q_bits, binary_type, data_lower, vocab_str):
+def build_lm(
+    output_dir,
+    kenlm_bins,
+    arpa_order,
+    max_arpa_memory,
+    arpa_prune,
+    discount_fallback,
+    binary_a_bits,
+    binary_q_bits,
+    binary_type,
+    data_lower,
+    vocab_str,
+):
     print("\nCreating ARPA file ...")
     lm_path = output_dir + "." + "lm.arpa"
     subargs = [
-            os.path.join(kenlm_bins, "lmplz"),
-            "--order",
-            str(arpa_order),
-            "--temp_prefix",
-            output_dir,
-            "--memory",
-            max_arpa_memory,
-            "--text",
-            data_lower,
-            "--arpa",
-            lm_path,
-            "--prune",
-            *arpa_prune.split("|"),
-        ]
+        os.path.join(kenlm_bins, "lmplz"),
+        "--order",
+        str(arpa_order),
+        "--temp_prefix",
+        output_dir,
+        "--memory",
+        max_arpa_memory,
+        "--text",
+        data_lower,
+        "--arpa",
+        lm_path,
+        "--prune",
+        *arpa_prune.split("|"),
+    ]
     if discount_fallback:
         subargs += ["--discount_fallback"]
     subprocess.check_call(subargs)
