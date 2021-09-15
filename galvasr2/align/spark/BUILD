@@ -20,3 +20,13 @@ py_binary(
     srcs = ["download_missing_files.py",],
     visibility = ["//visibility:public"],
 )
+
+py_library(
+    name = "juan_lib",
+    srcs = [
+         "juan_lib.py",
+         "align_lib.py",
+         "schemas.py",
+         "timeout.py",
+    ]
+)
