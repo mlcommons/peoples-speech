@@ -26,7 +26,9 @@ from galvasr2.utils import find_runfiles
 class TarDataSourceTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        tar_jar = os.path.join(find_runfiles(), "__main__/galvasr2/spark/tar_spark_datasource.jar")
+        tar_jar = os.path.join(
+            find_runfiles(), "__main__/galvasr2/spark/tar_spark_datasource.jar"
+        )
         cls.spark_events_dir = tempfile.TemporaryDirectory("spark-events")
         conf = (
             pyspark.SparkConf()
@@ -60,16 +62,26 @@ class TarDataSourceTest(unittest.TestCase):
 
         tars_df = self.spark.read.format("tar").load(tar_path)
 
-        tars_df.write.format("json").mode("overwrite").save("/home/ext_dt_galvez_gmail_com/json_test")
+        tars_df.write.format("json").mode("overwrite").save(
+            "/home/ext_dt_galvez_gmail_com/json_test"
+        )
 
-        tars_df.select(tars_df.key).write.format("json").mode("overwrite").save("/home/ext_dt_galvez_gmail_com/json_test2")
+        tars_df.select(tars_df.key).write.format("json").mode("overwrite").save(
+            "/home/ext_dt_galvez_gmail_com/json_test2"
+        )
 
         a = tars_df.select(tars_df.key).head()
-        json_df = self.spark.read.format("json").load("/home/ext_dt_galvez_gmail_com/json_test")
+        json_df = self.spark.read.format("json").load(
+            "/home/ext_dt_galvez_gmail_com/json_test"
+        )
         b = json_df.select(json_df.key).head()
-        json2_df = self.spark.read.format("json").load("/home/ext_dt_galvez_gmail_com/json_test2")
+        json2_df = self.spark.read.format("json").load(
+            "/home/ext_dt_galvez_gmail_com/json_test2"
+        )
         c = json2_df.head()
-        from IPython import embed; embed()
+        from IPython import embed
+
+        embed()
 
 
 if __name__ == "__main__":

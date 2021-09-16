@@ -9,7 +9,7 @@ def find_runfiles():
     stub_filename = os.path.abspath(sys.argv[0])
     while True:
         # Found it?
-        module_space = stub_filename + '.runfiles'
+        module_space = stub_filename + ".runfiles"
         if os.path.isdir(module_space):
             break
 
@@ -19,6 +19,5 @@ def find_runfiles():
             module_space = matchobj.group(1)
             break
 
-        raise RuntimeError('Cannot find .runfiles directory for %s' %
-                           sys.argv[0])
+        raise RuntimeError("Cannot find .runfiles directory for %s" % sys.argv[0])
     return module_space
