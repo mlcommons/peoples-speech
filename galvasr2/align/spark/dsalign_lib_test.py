@@ -27,23 +27,35 @@ from galvasr2.utils import find_runfiles
 # gsutil cp "gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS/BOS2015April7/BOS 2015April7.asr.srt" galvasr2/align/spark/test_data/BOS2015April7/BOS\ 2015April7.asr.srt
 # gsutil cp gs://the-peoples-speech-west-europe/forced-aligner/cuda-forced-aligner/output_work_dir_5b/output_work_dir_5b/decoder_ctm_dir/BOS2015April7-BOS_2015April7.mp3.ctm galvasr2/align/spark/test_data/BOS2015April7/BOS2015April7-BOS_2015April7.mp3.ctm
 
+
 class DSAlignTest(unittest.TestCase):
     def test(self):
         dsalign_args = dsalign_main.parse_args("")
-        alphabet_path = os.path.join(find_runfiles(), "__main__/galvasr2/align/spark/alphabet2.txt")
+        alphabet_path = os.path.join(
+            find_runfiles(), "__main__/galvasr2/align/spark/alphabet2.txt"
+        )
         align_udf = prepare_align_udf(dsalign_args, alphabet_path)
         align = align_udf.func
         transcript_names = pd.Series(["BOS2015April7/BOS 2015April7.asr.srt"])
         audio_names = pd.Series(["BOS2015April7/BOS 2015April7.mp3"])
-        with tf.io.gfile.GFile("gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS/snafuinfinityWalkOutStudents-CL19/WalkOutStudents-CL19.asr.srt") as fh:
-            transcript_series = srt_to_text.func(fix_text_udf.func(pd.Series([fh.read()])))
-        with tf.io.gfile.GFile("gs://the-peoples-speech-west-europe/forced-aligner/cuda-forced-aligner/output_work_dir_5b/output_work_dir_5b/decoder_ctm_dir/snafuinfinityWalkOutStudents-CL19-WalkOutStudents-CL19.mp3.ctm", "rb") as fh:
-            ctm_content_series = fix_text_udf.func(pd.Series([fh.read()]))            
+        with tf.io.gfile.GFile(
+            "gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS/snafuinfinityWalkOutStudents-CL19/WalkOutStudents-CL19.asr.srt"
+        ) as fh:
+            transcript_series = srt_to_text.func(
+                fix_text_udf.func(pd.Series([fh.read()]))
+            )
+        with tf.io.gfile.GFile(
+            "gs://the-peoples-speech-west-europe/forced-aligner/cuda-forced-aligner/output_work_dir_5b/output_work_dir_5b/decoder_ctm_dir/snafuinfinityWalkOutStudents-CL19-WalkOutStudents-CL19.mp3.ctm",
+            "rb",
+        ) as fh:
+            ctm_content_series = fix_text_udf.func(pd.Series([fh.read()]))
         profiler = cProfile.Profile()
         profiler.enable()
-        blah = align(transcript_names, audio_names, transcript_series, ctm_content_series)
+        blah = align(
+            transcript_names, audio_names, transcript_series, ctm_content_series
+        )
         profiler.disable()
-        profiler.print_stats(sort='time')
+        profiler.print_stats(sort="time")
         print(blah)
 
 
@@ -95,5 +107,5 @@ class DSAlignTest(unittest.TestCase):
 # logs/cuda_aligner_5n.log:GALVEZ: timed out for name=BHSSENIORAWARDS2016CL19/BHS SENIOR AWARDS 2016-CL19.asr.srt audio_name=BHSSENIORAWARDS2016CL19/BHS SENIOR AWARDS 2016-CL19.mp3
 # logs/cuda_aligner_5n.log:GALVEZ: timed out for name=FinancialTaskForce103114CL10/Financial-Task-Force_103114-CL10.asr.srt audio_name=FinancialTaskForce103114CL10/Financial-Task-Force_103114-CL10.mp3
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()
