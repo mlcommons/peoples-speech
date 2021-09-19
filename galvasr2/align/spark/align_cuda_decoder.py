@@ -122,7 +122,7 @@ def main(argv):
         find_runfiles(), "__main__/galvasr2/spark/tar_spark_datasource.jar"
     )
     spark = (
-        pyspark.sql.SparkSession.builder.master(f"local[{os.cpu_count()}]")
+        pyspark.sql.SparkSession.builder.master(f"local[{os.cpu_count() - 1}]")
         .config("spark.eventLog.enabled", "true")
         .config("spark.eventLog.dir", "/spark-events")
         .config("spark.sql.execution.arrow.pyspark.enabled", "true")
@@ -323,8 +323,8 @@ def main(argv):
             os.path.join(FLAGS.work_dir, "alignments_json_jul_28")
         )
 
-    manifest_dir = os.path.join(FLAGS.work_dir, "dataset_manifest_jul_28_flac_new_join")
-    tars_dir = os.path.join(FLAGS.work_dir, "dataset_tars_jul_28_flac_new_join")
+    manifest_dir = os.path.join(FLAGS.work_dir, "dataset_manifest_jul_28_wav_new_join_no_space")
+    tars_dir = os.path.join(FLAGS.work_dir, "dataset_tars_jul_28_wav_new_join_no_space")
     if FLAGS.stage <= 3:
         alignments_df = spark.read.json(
             os.path.join(FLAGS.work_dir, "alignments_json_jul_28")
@@ -433,9 +433,11 @@ def main(argv):
 
         # Remove "/" so that, if someat untars the tar files, everything will be dumped into one directory
         # Remove "." becasue it has special meaning in webdataset format.
+        # Remove " " because kaldi keys may not contain " " (this is not striclty necessary, but convenient)
         name = F.concat(F.col("identifier"), F.lit("-"), F.col("audio_document_id"))
         name = F.regexp_replace(name, r"/", "_SLASH_")
         name = F.regexp_replace(name, r"\.", "_DOT_")
+        name = F.regexp_replace(name, r" ", "_SPACE_")
         # name = F.regexp_replace(F.concat(F.col("identifier"),
         #                                  F.lit("-"),
         #                                  F.col("audio_document_id")),
@@ -458,6 +460,7 @@ def main(argv):
                 name,
                 alignments_audio_df.alignments.start_ms,
                 alignments_audio_df.alignments.end_ms,
+                F.lit("wav")
             ),
         )
         a = alignments_audio_df.select(
@@ -472,7 +475,7 @@ def main(argv):
             F.struct(
                 alignments_audio_df.alignments.label.alias("label"),
                 create_audio_segment_names_udf(
-                    name, F.size(alignments_audio_df.alignments.start_ms)
+                    name, F.size(alignments_audio_df.alignments.start_ms), F.lit("wav")
                 ).alias("name"),
                 alignments_audio_df.alignments.duration_ms.alias("duration_ms"),
             ).alias("training_data"),
@@ -484,11 +487,11 @@ def main(argv):
 
     # repartitioned_tars_dir = os.path.join(FLAGS.work_dir, "repartitioned_dataset_tars_jul_28_flac")
     repartitioned_tars_dir = os.path.join(
-        FLAGS.work_dir, "repartitioned_dataset_tars_jul_28_flac_new_join"
+        FLAGS.work_dir, "repartitioned_dataset_tars_jul_28_wav_new_join_no_space"
     )
     # tars_dir = "gs://the-peoples-speech-west-europe/forced-aligner/cuda-forced-aligner/output_work_dir_5b/output_work_dir_5b/dataset_tars_jul_28_flac/part-15489-f81b022e-3089-4aa8-9661-361627f1031a-c000.tar"
     tmp_tars_dir = os.path.join(
-        FLAGS.work_dir, "repartitioned_dataset_tars_jul_28_tmp_dir2_new_join_flac"
+        FLAGS.work_dir, "repartitioned_dataset_tars_jul_28_tmp_dir2_new_join_wav_no_space"
     )
     if FLAGS.stage <= 4:
         # subprocess.check_call(["gsutil", "cp", os.path.join(manifest_dir, "*.json"), "-"])os.path.join(FLAGS.work_dir, "full_dataset_manifest_jul_28_flac.json")])
@@ -509,11 +512,9 @@ def main(argv):
         # print("GALVEZ:", tars_df.select(F.col("key")).collect())
         # import sys; sys.exit()
         tars_df = spark2.read.format("tar").load(tars_dir)  # .limit(100)
-        tars_df = tars_df.withColumn("uuid", F.monotonically_increasing_id())
         tars_df = tars_df.repartitionByRange(
-            1024, F.col("uuid")
-        )  # F.col("uuid"))  # F.monotonically_increasing_id())
-        tars_df = tars_df.drop(F.col("uuid"))
+            1024, F.col("key")
+        )
         # # May need to write this out to GCS, and then delete it, to prevent different behavior between runs.
         # # tars_df = tars_df.persist()
         tars_df.write.mode("overwrite").format("tar").save(tmp_tars_dir)
@@ -554,10 +555,10 @@ def main(argv):
         # repartition_tar_files(os.path.join(tars_dir, "*.tar"), repartitioned_tars_dir, utterances_per_shard)
 
     nemo_manifest_dir = os.path.join(
-        FLAGS.work_dir, "dataset_manifest_nemo_jul_28_flac_filtered_new_join"
+        FLAGS.work_dir, "dataset_manifest_nemo_jul_28_wav_filtered_new_join_no_space"
     )
     nemo_single_manifest_dir = os.path.join(
-        FLAGS.work_dir, "dataset_manifest_nemo_jul_28_flac_filtered_single_new_join"
+        FLAGS.work_dir, "dataset_manifest_nemo_jul_28_wav_filtered_single_new_join_no_space"
     )
 
     if FLAGS.stage <= 5:
@@ -594,10 +595,10 @@ def main(argv):
         )
 
     single_manifest_dir = os.path.join(
-        FLAGS.work_dir, "dataset_manifest_jul_28_flac_single_new_join"
+        FLAGS.work_dir, "dataset_manifest_jul_28_wav_single_new_join_no_space"
     )
     single_tar_dir = os.path.join(
-        FLAGS.work_dir, "dataset_tars_jul_28_flac_single_new_join"
+        FLAGS.work_dir, "dataset_tars_jul_28_wav_single_new_join_no_space"
     )
     # Create single tar file and single json file
     if FLAGS.stage <= 6:
@@ -606,8 +607,8 @@ def main(argv):
             single_manifest_dir
         )
 
-        tars_df = spark.read.format("tar").load(tmp_tars_dir)
-        tars_df.coalesce(1).write.format("tar").mode("overwrite").save(single_tar_dir)
+        # tars_df = spark.read.format("tar").load(tmp_tars_dir)
+        # tars_df.coalesce(1).write.format("tar").mode("overwrite").save(single_tar_dir)
 
 
 if __name__ == "__main__":
