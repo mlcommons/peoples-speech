@@ -648,14 +648,16 @@ def create_audio_segments_udf(
     audio_name_series: pd.Series,
     start_ms_array_series: pd.Series,
     end_ms_array_series: pd.Series,
+    output_audio_codec_series: pd.Series,
 ) -> pd.DataFrame:
     output_array = []
-    for audio_bytes, audio_type, audio_name, start_ms_array, end_ms_array in zip(
+    for audio_bytes, audio_type, audio_name, start_ms_array, end_ms_array, output_audio_codec in zip(
         audio_bytes_series,
         audio_type_series,
         audio_name_series,
         start_ms_array_series,
         end_ms_array_series,
+        output_audio_codec_series,
     ):
         assert audio_type == "mp3"
         decoded_bytes = DecodeToRawPipe(audio_bytes, audio_type)
@@ -665,12 +667,12 @@ def create_audio_segments_udf(
         segmented_audio = {"audio_name": [], "audio": []}
         for i, (start_ms, end_ms) in enumerate(zip(start_ms_array, end_ms_array)):
             segment_flac_bytes = EncodeFromRawPipe(
-                audio_segment[start_ms:end_ms].raw_data, "flac"
+                audio_segment[start_ms:end_ms].raw_data, output_audio_codec
             )
             segmented_audio["audio"].append(segment_flac_bytes)
         output_array.append(segmented_audio)
     audio_segment_names_series = create_audio_segment_names_udf.func(
-        audio_name_series, end_ms_array_series.transform(len)
+        audio_name_series, end_ms_array_series.transform(len), output_audio_codec_series
     )
     assert len(output_array) == len(audio_segment_names_series)
     for i, audio_segment_names in enumerate(audio_segment_names_series):
@@ -683,15 +685,16 @@ AUDIO_SEGMENT_NAMES_RETURN_TYPE = T.ArrayType(T.StringType())
 
 @F.pandas_udf(AUDIO_SEGMENT_NAMES_RETURN_TYPE)
 def create_audio_segment_names_udf(
-    audio_name_series: pd.Series, num_aligned_utterances_series: pd.Series
+    audio_name_series: pd.Series, num_aligned_utterances_series: pd.Series,
+    suffix_series: pd.Series,
 ) -> pd.Series:
     audio_segment_names = []
-    for audio_name, num_aligned_utterances in zip(
-        audio_name_series, num_aligned_utterances_series
+    for audio_name, num_aligned_utterances, suffix in zip(
+            audio_name_series, num_aligned_utterances_series, suffix_series,
     ):
         audio_segment_names.append([])
         for i in range(num_aligned_utterances):
-            audio_segment_names[-1].append(f"{audio_name}_{i}.flac")
+            audio_segment_names[-1].append(f"{audio_name}_{i}.{suffix}")
     return pd.Series(audio_segment_names)
 
 
