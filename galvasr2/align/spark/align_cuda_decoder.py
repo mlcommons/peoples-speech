@@ -323,7 +323,9 @@ def main(argv):
             os.path.join(FLAGS.work_dir, "alignments_json_jul_28")
         )
 
-    manifest_dir = os.path.join(FLAGS.work_dir, "dataset_manifest_jul_28_wav_new_join_no_space")
+    manifest_dir = os.path.join(
+        FLAGS.work_dir, "dataset_manifest_jul_28_wav_new_join_no_space"
+    )
     tars_dir = os.path.join(FLAGS.work_dir, "dataset_tars_jul_28_wav_new_join_no_space")
     if FLAGS.stage <= 3:
         alignments_df = spark.read.json(
@@ -460,7 +462,7 @@ def main(argv):
                 name,
                 alignments_audio_df.alignments.start_ms,
                 alignments_audio_df.alignments.end_ms,
-                F.lit("wav")
+                F.lit("wav"),
             ),
         )
         a = alignments_audio_df.select(
@@ -491,7 +493,8 @@ def main(argv):
     )
     # tars_dir = "gs://the-peoples-speech-west-europe/forced-aligner/cuda-forced-aligner/output_work_dir_5b/output_work_dir_5b/dataset_tars_jul_28_flac/part-15489-f81b022e-3089-4aa8-9661-361627f1031a-c000.tar"
     tmp_tars_dir = os.path.join(
-        FLAGS.work_dir, "repartitioned_dataset_tars_jul_28_tmp_dir2_new_join_wav_no_space"
+        FLAGS.work_dir,
+        "repartitioned_dataset_tars_jul_28_tmp_dir2_new_join_wav_no_space",
     )
     if FLAGS.stage <= 4:
         # subprocess.check_call(["gsutil", "cp", os.path.join(manifest_dir, "*.json"), "-"])os.path.join(FLAGS.work_dir, "full_dataset_manifest_jul_28_flac.json")])
@@ -512,9 +515,7 @@ def main(argv):
         # print("GALVEZ:", tars_df.select(F.col("key")).collect())
         # import sys; sys.exit()
         tars_df = spark2.read.format("tar").load(tars_dir)  # .limit(100)
-        tars_df = tars_df.repartitionByRange(
-            1024, F.col("key")
-        )
+        tars_df = tars_df.repartitionByRange(1024, F.col("key"))
         # # May need to write this out to GCS, and then delete it, to prevent different behavior between runs.
         # # tars_df = tars_df.persist()
         tars_df.write.mode("overwrite").format("tar").save(tmp_tars_dir)
@@ -558,7 +559,8 @@ def main(argv):
         FLAGS.work_dir, "dataset_manifest_nemo_jul_28_wav_filtered_new_join_no_space"
     )
     nemo_single_manifest_dir = os.path.join(
-        FLAGS.work_dir, "dataset_manifest_nemo_jul_28_wav_filtered_single_new_join_no_space"
+        FLAGS.work_dir,
+        "dataset_manifest_nemo_jul_28_wav_filtered_single_new_join_no_space",
     )
 
     if FLAGS.stage <= 5:

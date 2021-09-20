@@ -651,7 +651,14 @@ def create_audio_segments_udf(
     output_audio_codec_series: pd.Series,
 ) -> pd.DataFrame:
     output_array = []
-    for audio_bytes, audio_type, audio_name, start_ms_array, end_ms_array, output_audio_codec in zip(
+    for (
+        audio_bytes,
+        audio_type,
+        audio_name,
+        start_ms_array,
+        end_ms_array,
+        output_audio_codec,
+    ) in zip(
         audio_bytes_series,
         audio_type_series,
         audio_name_series,
@@ -685,12 +692,15 @@ AUDIO_SEGMENT_NAMES_RETURN_TYPE = T.ArrayType(T.StringType())
 
 @F.pandas_udf(AUDIO_SEGMENT_NAMES_RETURN_TYPE)
 def create_audio_segment_names_udf(
-    audio_name_series: pd.Series, num_aligned_utterances_series: pd.Series,
+    audio_name_series: pd.Series,
+    num_aligned_utterances_series: pd.Series,
     suffix_series: pd.Series,
 ) -> pd.Series:
     audio_segment_names = []
     for audio_name, num_aligned_utterances, suffix in zip(
-            audio_name_series, num_aligned_utterances_series, suffix_series,
+        audio_name_series,
+        num_aligned_utterances_series,
+        suffix_series,
     ):
         audio_segment_names.append([])
         for i in range(num_aligned_utterances):
