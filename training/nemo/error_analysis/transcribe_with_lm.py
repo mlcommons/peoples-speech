@@ -94,7 +94,6 @@ def main():
         batch_size=args.asr_batch_size,
         logprobs=True
     )
-    # asr_probs[i][j] := 
     asr_probs = [softmax(logits) for logits in asr_logits]
     vocab = asr_model.decoder.vocabulary
     scorer = Scorer(
@@ -118,7 +117,7 @@ def main():
     with open(args.transc_out_path, "w") as transc_file:
         for sample, transc in zip(samples, transcriptions):
             # Write transcription
-            sample["transcription"] = transc
+            sample["pred_text"] = transc
             transc_file.write(str_sample + "\n")
             # Track performance metrics
             char_scores += editdistance.eval(list(transc), list(sample["text"]))
