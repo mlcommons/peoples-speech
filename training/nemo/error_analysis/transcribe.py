@@ -180,17 +180,20 @@ def main():
                 with tarfile.open(audio_tarpath) as audio_tarfile:
                     audio_tarfile.extractall(path=TMP_DIR)
                     full_filepaths = glob.glob(os.path.join(TMP_DIR, "*"))
-                transcs = asr_model.transcribe(
-                    full_filepaths,
-                    batch_size=args.asr_batch_size,
-                    logprobs=False
-                )
+                # Transcribe audios in tarfile
+                with autocast():
+                    with torch.no_grad():
+                        transcs = asr_model.transcribe(
+                            full_filepaths,
+                            batch_size=args.asr_batch_size,
+                            logprobs=False
+                        )
                 for full_filepath, transc in zip(full_filepaths, transcs):
                     audio_filepath = os.path.basename(full_filepath)
                     filepath_to_transc[audio_filepath] = transc
-                transcriptions = [
-                    filepath_to_transc[s["audio_filepath"]] for s in samples
-                ]
+            transcriptions = [
+                filepath_to_transc[s["audio_filepath"]] for s in samples
+            ]
         else:
             with autocast():
                 with torch.no_grad():
