@@ -1,5 +1,7 @@
 import os
+import glob
 import json
+import tarfile
 import argparse
 import warnings
 import contextlib
@@ -13,6 +15,8 @@ import pytorch_lightning as pl
 from nemo.collections.asr.models import ASRModel
 from nemo.collections.asr.models.ctc_models import EncDecCTCModel
 
+TMP_DIR = os.path.join(os.getcwd(), "transcibe_tmp_dir")
+
 def softmax(x):
     e = np.exp(x - np.max(x))
     return e / e.sum(axis=-1).reshape([x.shape[0], 1])
@@ -23,21 +27,22 @@ def main():
     )
     parser.add_argument(
         "--manifest_path",
-        required=False,
+        required=True,
         type=str,
         help="Manifest file for the files to be transcribed"
     )
     parser.add_argument(
-        "--transc_out_path",
-        required=True,
+        "--tarfiles_glob",
+        required=False,
         type=str,
-        help="Path for the output transcriptions jsonl file"   
+        default=None,
+        help="If the audios are tarred, provide a glob pattern of the .tar paths"
     )
     parser.add_argument(
-        "--metrics_out_path",
+        "--out_dir",
         required=True,
         type=str,
-        help="Path for the output metrics file"   
+        help="Path for the output transcriptions and metrics"
     )
     parser.add_argument(
         "--pretrained_model",
@@ -88,6 +93,9 @@ def main():
         help="Beam search alpha parameter"
     )
     args = parser.parse_args()
+    transc_out_path = os.path.join(args.out_dir, "transc-manifest.jsonl")
+    metrics_out_path = os.path.join(args.out_dir, "transc-metrics.json")
+    args_out_path = os.path.join(args.out_dir, "cmd-args.json")
 
     # Verify LM transcription imports if needed
     if args.kenlm_model_path:
@@ -135,6 +143,10 @@ def main():
     def autocast():
         yield
     if args.kenlm_model_path:
+        if args.tarfiles_glob:
+            raise NotImplementedError(
+                "Transcription from .tar with LM not implemented"
+            )
         asr_logits = asr_model.transcribe(
             [s["audio_filepath"] for s in samples],
             batch_size=args.asr_batch_size,
@@ -157,20 +169,44 @@ def main():
         )
         transcriptions = [t[0][1] for t in transcriptions]
     else:
-        with autocast():
-            with torch.no_grad():
-                transcriptions = asr_model.transcribe(
-                    [s["audio_filepath"] for s in samples],
+        if args.tarfiles_glob:
+            filepath_to_transc = {}
+            audio_tarpaths = glob.glob(args.tarfiles_glob)
+            os.makedirs(TMP_DIR, exist_ok=True)
+            for audio_tarpath in audio_tarpaths:
+                tmp_dir_files = glob.glob(os.path.join(TMP_DIR, "*"))
+                for tmp_file in tmp_dir_files:
+                    os.remove(tmp_file)
+                with tarfile.open(audio_tarpath) as audio_tarfile:
+                    audio_tarfile.extractall(path=TMP_DIR)
+                    full_filepaths = glob.glob(os.path.join(TMP_DIR, "*"))
+                transcs = asr_model.transcribe(
+                    full_filepaths,
                     batch_size=args.asr_batch_size,
                     logprobs=False
                 )
+                for full_filepath, transc in zip(full_filepaths, transcs):
+                    audio_filepath = os.path.basename(full_filepath)
+                    filepath_to_transc[audio_filepath] = transc
+                transcriptions = [
+                    filepath_to_transc[s["audio_filepath"]] for s in samples
+                ]
+        else:
+            with autocast():
+                with torch.no_grad():
+                    transcriptions = asr_model.transcribe(
+                        [s["audio_filepath"] for s in samples],
+                        batch_size=args.asr_batch_size,
+                        logprobs=False
+                    )
 
     # Score and write transcriptions
     total_char_dist = 0
     total_chars = 0
     total_word_dist = 0
     total_words = 0
-    with open(args.transc_out_path, "w") as transc_file:
+    os.makedirs(args.out_dir)
+    with open(transc_out_path, "w") as transc_file:
         print("Writting scored transcriptions")
         for sample, transc in tqdm(zip(samples, transcriptions)):
             # Track performance metrics
@@ -188,13 +224,19 @@ def main():
             sample["wer"] = word_dist / n_words
             str_sample = json.dumps(sample)
             transc_file.write(str_sample + "\n")
-    with open(args.metrics_out_path, "w") as metrics_file:
+    with open(metrics_out_path, "w") as metrics_file:
         metrics = {
             "cer": 1.0 * total_char_dist / total_chars,
             "wer": 1.0 * total_word_dist / total_words
         }
         str_metrics = json.dumps(metrics, indent=1)
         metrics_file.write(str_metrics)
+    
+    # Write command line arguments
+    with open(args_out_path, "w") as args_file:
+        dict_args = vars(args)
+        str_args = json.dumps(dict_args, indent=1)
+        args_file.write(str_args)
 
 if __name__ == "__main__":
     main()
