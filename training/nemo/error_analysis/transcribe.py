@@ -1,10 +1,13 @@
 import os
 import glob
 import json
+import shutil
 import tarfile
 import argparse
 import warnings
 import contextlib
+from collections import ChainMap
+import torch.multiprocessing as mp
 
 import torch
 import numpy as np
@@ -20,6 +23,97 @@ TMP_DIR = os.path.join(os.getcwd(), "transcibe_tmp_dir")
 def softmax(x):
     e = np.exp(x - np.max(x))
     return e / e.sum(axis=-1).reshape([x.shape[0], 1])
+
+def load_and_transcribe(
+    audio_filepaths, pretrained_model, asr_batch_size, kenlm_model_path,
+    beam_width, beam_search_alpha, beam_search_beta, asr_ckpt_path, device,
+    asr_model, **kw
+    ):
+    # Verify LM transcription imports if needed
+    if kenlm_model_path:
+        try:
+            from ctc_decoders import Scorer, ctc_beam_search_decoder_batch
+        except ModuleNotFoundError:
+            raise ModuleNotFoundError(
+                "BeamSearchDecoderWithLM requires the installation of "
+                "ctc_decoders from NeMo/scripts/asr_language_modeling/ngram_lm/"
+                "install_beamsearch_decoders.sh"
+            )
+    else:
+        warnings.warn("No LM given, will do greedy decoding with ASR model")
+
+    # Load acustic model
+    if asr_model is None:
+        if asr_ckpt_path:
+            warnings.warn("Models loaded from a .ckpt run on CPU")
+            # TODO: Infer this kind of model in GPU
+            asr_model = EncDecCTCModel.load_from_checkpoint(
+                checkpoint_path=asr_ckpt_path,
+                map_location=device
+            )
+        else:
+            asr_model = ASRModel.from_pretrained(
+                model_name=pretrained_model,
+                map_location=device
+            )
+        trainer = pl.Trainer(gpus=int(device != "cpu"))
+        asr_model.set_trainer(trainer)
+        asr_model = asr_model.eval()
+
+    # Transcribe
+    @contextlib.contextmanager
+    def autocast():
+        yield
+    with autocast():
+        with torch.no_grad():
+            transcriptions = asr_model.transcribe(
+                audio_filepaths,
+                batch_size=asr_batch_size,
+                logprobs=kenlm_model_path is not None
+            )
+    if kenlm_model_path:
+        asr_probs = [softmax(logits) for logits in transcriptions]
+        vocab = asr_model.decoder.vocabulary
+        scorer = Scorer(
+            beam_search_alpha,
+            beam_search_beta,
+            model_path=kenlm_model_path,
+            vocabulary=vocab
+        )
+        transcriptions = ctc_beam_search_decoder_batch(
+            probs_split=asr_probs,
+            vocabulary=vocab,
+            beam_size=beam_width,
+            ext_scoring_func=scorer,
+            num_processes=max(os.cpu_count(), 1)
+        )
+        transcriptions = [t[0][1] for t in transcriptions]
+    return transcriptions, asr_model
+
+def _transcribe_on_device(chunk_args):
+    device = chunk_args["device"]
+    tarpaths_chunk = chunk_args["tarpaths_chunk"]
+    transc_args = chunk_args["transc_args"]
+    filepath_to_transc = {}
+    tmp_dir = os.path.join(TMP_DIR, device)
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    asr_model = None
+    for audio_tarpath in tarpaths_chunk:
+        # Extract audio files into tmp_dir
+        os.makedirs(tmp_dir, exist_ok=True)
+        with tarfile.open(audio_tarpath) as audio_tarfile:
+            audio_tarfile.extractall(path=tmp_dir)
+            full_filepaths = glob.glob(os.path.join(tmp_dir, "*"))
+        # Transcribe
+        transc_args["device"] = device
+        transc_args["audio_filepaths"] = full_filepaths
+        transc_args["asr_model"] = asr_model
+        transcs, asr_model = load_and_transcribe(**transc_args)
+        for full_filepath, transc in zip(full_filepaths, transcs):
+            audio_filepath = os.path.relpath(full_filepath, tmp_dir)
+            filepath_to_transc[audio_filepath] = transc
+        shutil.rmtree(tmp_dir)
+    return filepath_to_transc
 
 def main():
     parser = argparse.ArgumentParser(
@@ -93,43 +187,10 @@ def main():
         help="Beam search alpha parameter"
     )
     args = parser.parse_args()
+    os.makedirs(args.out_dir)
     transc_out_path = os.path.join(args.out_dir, "transc-manifest.jsonl")
     metrics_out_path = os.path.join(args.out_dir, "transc-metrics.json")
     args_out_path = os.path.join(args.out_dir, "cmd-args.json")
-
-    # Verify LM transcription imports if needed
-    if args.kenlm_model_path:
-        try:
-            from ctc_decoders import Scorer, ctc_beam_search_decoder_batch
-        except ModuleNotFoundError:
-            raise ModuleNotFoundError(
-                "BeamSearchDecoderWithLM requires the installation of "
-                "ctc_decoders from NeMo/scripts/asr_language_modeling/ngram_lm/"
-                "install_beamsearch_decoders.sh"
-            )
-    else:
-        warnings.warn("No LM given, will do greedy decoding with ASR model")
-
-    # Setup GPU
-    gpu_available = torch.cuda.is_available()
-    device = torch.device(f'cuda:{0}' if gpu_available else 'cpu')
-    
-    # Load acustic model
-    if args.asr_ckpt_path:
-        warnings.warn("Models loaded from a .ckpt run on CPU")
-        # TODO: Infer this kind of model in GPU
-        asr_model = EncDecCTCModel.load_from_checkpoint(
-            checkpoint_path=args.asr_ckpt_path,
-            map_location=device
-        )
-    else:
-        asr_model = ASRModel.from_pretrained(
-            model_name=args.pretrained_model,
-            map_location=device
-        )
-    trainer = pl.Trainer(gpus=int(gpu_available))
-    asr_model.set_trainer(trainer)
-    asr_model = asr_model.eval()
 
     # Read samples into CPU RAM
     samples = []
@@ -138,80 +199,52 @@ def main():
             sample = json.loads(str_sample)
             samples.append(sample)
     
-    # Transcribe
-    @contextlib.contextmanager
-    def autocast():
-        yield
-    if args.kenlm_model_path:
-        if args.tarfiles_glob:
-            raise NotImplementedError(
-                "Transcription from .tar with LM not implemented"
-            )
-        asr_logits = asr_model.transcribe(
-            [s["audio_filepath"] for s in samples],
-            batch_size=args.asr_batch_size,
-            logprobs=True
-        )
-        asr_probs = [softmax(logits) for logits in asr_logits]
-        vocab = asr_model.decoder.vocabulary
-        scorer = Scorer(
-            args.beam_search_alpha,
-            args.beam_search_beta,
-            model_path=args.kenlm_model_path,
-            vocabulary=vocab
-        )
-        transcriptions = ctc_beam_search_decoder_batch(
-            probs_split=asr_probs,
-            vocabulary=vocab,
-            beam_size=args.beam_width,
-            ext_scoring_func=scorer,
-            num_processes=max(os.cpu_count(), 1)
-        )
-        transcriptions = [t[0][1] for t in transcriptions]
+    if args.tarfiles_glob:
+        # Split the tarpaths accross the available GPUs
+        audio_tarpaths = glob.glob(args.tarfiles_glob)
+        n_gpus = torch.cuda.device_count()
+        print(f"Transcribing on {n_gpus} GPUs")
+        if n_gpus < 1:
+            # TODO: Enable tarfile transcription on CPU
+            raise NotImplementedError("Tarfile transcription on CPU not implemented")
+        n_tarpaths = len(audio_tarpaths)
+        chunk_size = int(np.ceil(n_tarpaths / n_gpus))
+        chunks = []
+        transc_args = vars(args)
+        for i in range(n_gpus):
+            tarpaths_chunk = audio_tarpaths[(i * chunk_size):((i+1) * chunk_size)]
+            chunks.append({
+                "device": f"cuda:{i}",
+                "tarpaths_chunk": tarpaths_chunk,
+                "transc_args": transc_args
+            })
+        spawn_ctx = mp.get_context("spawn")
+        with spawn_ctx.Pool(n_gpus) as pool:
+            filepath_to_transc_list = pool.map(_transcribe_on_device, chunks)
+        filepath_to_transc = ChainMap(*filepath_to_transc_list)
+        del filepath_to_transc_list
     else:
-        if args.tarfiles_glob:
-            filepath_to_transc = {}
-            audio_tarpaths = glob.glob(args.tarfiles_glob)
-            os.makedirs(TMP_DIR, exist_ok=True)
-            for audio_tarpath in audio_tarpaths:
-                tmp_dir_files = glob.glob(os.path.join(TMP_DIR, "*"))
-                for tmp_file in tmp_dir_files:
-                    os.remove(tmp_file)
-                with tarfile.open(audio_tarpath) as audio_tarfile:
-                    audio_tarfile.extractall(path=TMP_DIR)
-                    full_filepaths = glob.glob(os.path.join(TMP_DIR, "*"))
-                # Transcribe audios in tarfile
-                with autocast():
-                    with torch.no_grad():
-                        transcs = asr_model.transcribe(
-                            full_filepaths,
-                            batch_size=args.asr_batch_size,
-                            logprobs=False
-                        )
-                for full_filepath, transc in zip(full_filepaths, transcs):
-                    audio_filepath = os.path.basename(full_filepath)
-                    filepath_to_transc[audio_filepath] = transc
-            transcriptions = [
-                filepath_to_transc[s["audio_filepath"]] for s in samples
-            ]
-        else:
-            with autocast():
-                with torch.no_grad():
-                    transcriptions = asr_model.transcribe(
-                        [s["audio_filepath"] for s in samples],
-                        batch_size=args.asr_batch_size,
-                        logprobs=False
-                    )
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        transc_args = vars(args)
+        transc_args["device"] = device
+        transc_args["audio_filepaths"] = [s["audio_filepath"] for s in samples]
+        transcs, _ = load_and_transcribe(**transc_args)
+        filepath_to_transc = {}
+        for filepath, transc in zip(transc_args["audio_filepaths"], transcs):
+            filepath_to_transc[filepath] = transc
+        del transcs
 
     # Score and write transcriptions
     total_char_dist = 0
     total_chars = 0
     total_word_dist = 0
     total_words = 0
-    os.makedirs(args.out_dir)
     with open(transc_out_path, "w") as transc_file:
         print("Writting scored transcriptions")
-        for sample, transc in tqdm(zip(samples, transcriptions)):
+        for sample in tqdm(samples):
+            transc = filepath_to_transc.get(sample["audio_filepath"])
+            if transc is None:
+                continue
             # Track performance metrics
             char_dist = editdistance.eval(list(transc), list(sample["text"]))
             total_char_dist += char_dist
