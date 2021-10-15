@@ -6,13 +6,11 @@ from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 
-SEED = 41
-
 @hydra_runner(config_path="conf", config_name="config")
 def main(cfg):
     logging.info(f'Hydra config: {OmegaConf.to_yaml(cfg)}')
 
-    pl.utilities.seed.seed_everything(SEED)
+    pl.utilities.seed.seed_everything(cfg.seed)
 
     trainer = pl.Trainer(**cfg.trainer)
     exp_manager(trainer, cfg.get("exp_manager", None))

@@ -5,6 +5,7 @@ val_manifest_path=$4
 exp_name=$5
 init_ckpt_path=${6-null}
 init_ckpt_path=${init_ckpt_path//=/\\=}
+seed=${6-41}
 
 echo "GPU count: $gpu_count"
 echo "Manifest filepath: $manifest_path"
@@ -12,6 +13,7 @@ echo "Tarred audio paths: $tarred_audio_paths"
 echo "LibriSpeech dev clean manifest: $val_manifest_path"
 echo "Experiment name: $exp_name"
 echo "Load weights and schedule from : $init_ckpt_path"
+echo "Random seed for everything : $seed"
 
 echo "---------------"
 echo "Starting training"
@@ -34,4 +36,5 @@ python train_ctc_model.py \
     +model.use_cer=true \
     trainer.max_epochs=5 \
     trainer.val_check_interval=0.02 \
-    trainer.gpus=-1
+    trainer.gpus=-1 \
+    +seed=${seed}
