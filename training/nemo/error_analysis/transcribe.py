@@ -18,7 +18,7 @@ import pytorch_lightning as pl
 from nemo.collections.asr.models import ASRModel
 from nemo.collections.asr.models.ctc_models import EncDecCTCModel
 
-TMP_DIR = os.path.join(os.getcwd(), "transcibe_tmp_dir")
+TMP_DIR = os.path.join(os.getcwd(), "transcribe_tmp_dir")
 
 def softmax(x):
     e = np.exp(x - np.max(x))
@@ -133,6 +133,13 @@ def main():
         help="If the audios are tarred, provide a glob pattern of the .tar paths"
     )
     parser.add_argument(
+        "--audio_dir",
+        required=False,
+        type=str,
+        default=None,
+        help="If the audios are untarred, provide directory that contains audio paths"
+    )
+    parser.add_argument(
         "--out_dir",
         required=True,
         type=str,
@@ -227,11 +234,16 @@ def main():
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
         transc_args = vars(args)
         transc_args["device"] = device
-        transc_args["audio_filepaths"] = [s["audio_filepath"] for s in samples]
+        transc_args["audio_filepaths"] = [
+            os.path.join(args.audio_dir, s["audio_filepath"]) if args.audio_dir
+            else s["audio_filepath"]
+            for s in samples
+        ]
+        transc_args["asr_model"] = None
         transcs, _ = load_and_transcribe(**transc_args)
         filepath_to_transc = {}
-        for filepath, transc in zip(transc_args["audio_filepaths"], transcs):
-            filepath_to_transc[filepath] = transc
+        for sample, transc in zip(samples, transcs):
+            filepath_to_transc[sample["audio_filepath"]] = transc
         del transcs
 
     # Score and write transcriptions
