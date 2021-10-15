@@ -1,6 +1,7 @@
 import os
 import glob
 import json
+import errno
 import shutil
 import tarfile
 import argparse
@@ -98,12 +99,31 @@ def _transcribe_on_device(chunk_args):
     tmp_dir = os.path.join(TMP_DIR, device)
     shutil.rmtree(tmp_dir, ignore_errors=True)
     asr_model = None
-    for audio_tarpath in tarpaths_chunk:
+    for audio_tarpath in tqdm(tarpaths_chunk, desc="Tar files in chunk: "):
         # Extract audio files into tmp_dir
         os.makedirs(tmp_dir, exist_ok=True)
-        with tarfile.open(audio_tarpath) as audio_tarfile:
-            audio_tarfile.extractall(path=tmp_dir)
-            full_filepaths = glob.glob(os.path.join(tmp_dir, "*"))
+        try:
+            with tarfile.open(audio_tarpath) as audio_tarfile:
+                audio_tarfile.extractall(path=tmp_dir)
+                full_filepaths = glob.glob(os.path.join(tmp_dir, "*"))
+        except OSError as exc:
+            # Skip long-named audio files
+            if exc.errno == errno.ENAMETOOLONG:
+                with tarfile.open(audio_tarpath) as audio_tarfile:
+                    members = audio_tarfile.getmembers()
+                    healthy_members = [
+                        m for m in members
+                        if len(m.name) <= os.pathconf("/", "PC_NAME_MAX")
+                    ]
+                    audio_tarfile.extractall(path=tmp_dir, members=healthy_members)
+                    full_filepaths = glob.glob(os.path.join(tmp_dir, "*"))
+                    warnings.warn(
+                        f"Some audio files were dropped from {audio_tarpath} "
+                        "because they have long file names"
+                    )
+            else:
+                raise  # re-raise previously caught exception
+        
         # Transcribe
         transc_args["device"] = device
         transc_args["audio_filepaths"] = full_filepaths
