@@ -5,7 +5,7 @@ val_manifest_path=$4
 exp_name=$5
 init_ckpt_path=${6-null}
 init_ckpt_path=${init_ckpt_path//=/\\=}
-seed=${6-41}
+seed=${7-41}
 
 echo "GPU count: $gpu_count"
 echo "Manifest filepath: $manifest_path"
