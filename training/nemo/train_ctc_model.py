@@ -6,9 +6,10 @@ from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 
-@hydra_runner(config_path="conf", config_name="config")
+@hydra_runner(config_path=".")
 def main(cfg):
-    logging.info(f'Hydra config: {OmegaConf.to_yaml(cfg)}')
+    cfg.model.train_ds.batch_size = cfg.model.train_ds.batch_size // cfg.n_gpus
+    logging.info(f'Hydra config: {OmegaConf.to_yaml(cfg, resolve=True)}')
 
     pl.utilities.seed.seed_everything(cfg.seed)
 
