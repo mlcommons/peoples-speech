@@ -1,4 +1,5 @@
 import os
+import uuid
 import glob
 import json
 import errno
@@ -6,15 +7,16 @@ import shutil
 import tarfile
 import argparse
 import warnings
+import itertools
 import contextlib
 from collections import ChainMap
-import torch.multiprocessing as mp
 
 import torch
 import numpy as np
 import editdistance
 from tqdm import tqdm
 import pytorch_lightning as pl
+import torch.multiprocessing as mp
 
 from nemo.collections.asr.models import ASRModel
 from nemo.collections.asr.models.ctc_models import EncDecCTCModel
@@ -25,25 +27,11 @@ def softmax(x):
     e = np.exp(x - np.max(x))
     return e / e.sum(axis=-1).reshape([x.shape[0], 1])
 
-def load_and_transcribe(
-    audio_filepaths, pretrained_model, asr_batch_size, kenlm_model_path,
-    beam_width, beam_search_alpha, beam_search_beta, asr_ckpt_path, device,
-    asr_model, **kw
+def _asr_on_filepaths(
+    audio_filepaths, audio_dir, pretrained_model, asr_batch_size, asr_ckpt_path,
+    device, asr_model, logprobs, **kw
     ):
-    # Verify LM transcription imports if needed
-    if kenlm_model_path:
-        try:
-            from ctc_decoders import Scorer, ctc_beam_search_decoder_batch
-        except ModuleNotFoundError:
-            raise ModuleNotFoundError(
-                "BeamSearchDecoderWithLM requires the installation of "
-                "ctc_decoders from NeMo/scripts/asr_language_modeling/ngram_lm/"
-                "install_beamsearch_decoders.sh"
-            )
-    else:
-        warnings.warn("No LM given, will do greedy decoding with ASR model")
-
-    # Load acustic model
+    # Load acustic model
     if asr_model is None:
         if asr_ckpt_path:
             warnings.warn("Models loaded from a .ckpt run on CPU")
@@ -62,50 +50,38 @@ def load_and_transcribe(
         asr_model = asr_model.eval()
 
     # Transcribe
+    if audio_dir:
+        full_filepaths = [os.path.join(audio_dir, p) for p in audio_filepaths]
+    else:
+        full_filepaths = audio_filepaths
     @contextlib.contextmanager
     def autocast():
         yield
     with autocast():
         with torch.no_grad():
-            transcriptions = asr_model.transcribe(
-                audio_filepaths,
+            preds = asr_model.transcribe(
+                full_filepaths,
                 batch_size=asr_batch_size,
-                logprobs=kenlm_model_path is not None
+                logprobs=logprobs
             )
-    if kenlm_model_path:
-        asr_probs = [softmax(logits) for logits in transcriptions]
-        vocab = asr_model.decoder.vocabulary
-        scorer = Scorer(
-            beam_search_alpha,
-            beam_search_beta,
-            model_path=kenlm_model_path,
-            vocabulary=vocab
-        )
-        transcriptions = ctc_beam_search_decoder_batch(
-            probs_split=asr_probs,
-            vocabulary=vocab,
-            beam_size=beam_width,
-            ext_scoring_func=scorer,
-            num_processes=max(os.cpu_count(), 1)
-        )
-        transcriptions = [t[0][1] for t in transcriptions]
-    return transcriptions, asr_model
+    filepath_to_pred = {}
+    for filepath, pred in zip(audio_filepaths, preds):
+        filepath_to_pred[filepath] = pred
+    return filepath_to_pred, asr_model
 
-def _transcribe_on_device(chunk_args):
-    device = chunk_args["device"]
+def _asr_on_tarpaths_chunk(chunk_args):
     tarpaths_chunk = chunk_args["tarpaths_chunk"]
     transc_args = chunk_args["transc_args"]
-    filepath_to_transc = {}
-    tmp_dir = os.path.join(TMP_DIR, device)
-    shutil.rmtree(tmp_dir, ignore_errors=True)
+    device = transc_args["device"]
+    tmp_dir = TMP_DIR + "_" + str(uuid.uuid1())
     asr_model = None
+    filepath_to_pred = {}
     for audio_tarpath in tqdm(tarpaths_chunk, desc="Tar files in chunk: "):
         # Extract audio files into tmp_dir
-        os.makedirs(tmp_dir, exist_ok=True)
+        os.makedirs(tmp_dir)
         try:
             with tarfile.open(audio_tarpath) as audio_tarfile:
                 audio_tarfile.extractall(path=tmp_dir)
-                full_filepaths = glob.glob(os.path.join(tmp_dir, "*"))
         except OSError as exc:
             # Skip long-named audio files
             if exc.errno == errno.ENAMETOOLONG:
@@ -116,24 +92,94 @@ def _transcribe_on_device(chunk_args):
                         if len(m.name) <= os.pathconf("/", "PC_NAME_MAX")
                     ]
                     audio_tarfile.extractall(path=tmp_dir, members=healthy_members)
-                    full_filepaths = glob.glob(os.path.join(tmp_dir, "*"))
                     warnings.warn(
                         f"Some audio files were dropped from {audio_tarpath} "
                         "because they have long file names"
                     )
             else:
                 raise  # re-raise previously caught exception
-        
+        audio_filepaths = os.listdir(tmp_dir)
+
         # Transcribe
         transc_args["device"] = device
-        transc_args["audio_filepaths"] = full_filepaths
+        transc_args["audio_filepaths"] = audio_filepaths
+        transc_args["audio_dir"] = tmp_dir
         transc_args["asr_model"] = asr_model
-        transcs, asr_model = load_and_transcribe(**transc_args)
-        for full_filepath, transc in zip(full_filepaths, transcs):
-            audio_filepath = os.path.relpath(full_filepath, tmp_dir)
-            filepath_to_transc[audio_filepath] = transc
+        local_filepath_to_pred, asr_model = _asr_on_filepaths(**transc_args)
+        filepath_to_pred.update(local_filepath_to_pred)
         shutil.rmtree(tmp_dir)
+        os.rmdir(tmp_dir)
+    return filepath_to_pred
+
+def _decode_with_lm(
+    filepath_to_logprobs, kenlm_model_path, vocab, beam_width, beam_search_alpha,
+    beam_search_beta
+    ):
+    filepaths = list(filepath_to_logprobs.keys())
+    asr_logprobs = [filepath_to_logprobs[p] for p in filepaths]
+    from ctc_decoders import Scorer, ctc_beam_search_decoder_batch
+    scorer = Scorer(
+        beam_search_alpha,
+        beam_search_beta,
+        model_path=kenlm_model_path,
+        vocabulary=vocab
+    )
+    asr_probs = [softmax(logits) for logits in asr_logprobs]
+    transcriptions = ctc_beam_search_decoder_batch(
+        probs_split=asr_probs,
+        vocabulary=vocab,
+        beam_size=beam_width,
+        ext_scoring_func=scorer,
+        num_processes=max(os.cpu_count(), 1)
+    )
+    transcriptions = [t[0][1] for t in transcriptions]
+    filepath_to_transc = {}
+    for filepath, transc in zip(filepaths, transcriptions):
+        filepath_to_transc[filepath] = transc
     return filepath_to_transc
+
+def _score_and_write_transcriptions(samples, filepath_to_transc, out_dir, args):
+    transc_out_path = os.path.join(out_dir, "transc-manifest.jsonl")
+    metrics_out_path = os.path.join(out_dir, "transc-metrics.json")
+    args_out_path = os.path.join(out_dir, "cmd-args.json")
+    total_char_dist = 0
+    total_chars = 0
+    total_word_dist = 0
+    total_words = 0
+    with open(transc_out_path, "w") as transc_file:
+        print("Writting scored transcriptions")
+        for sample in tqdm(samples):
+            transc = filepath_to_transc.get(sample["audio_filepath"])
+            if transc is None:
+                continue
+            # Track performance metrics
+            char_dist = editdistance.eval(list(transc), list(sample["text"]))
+            total_char_dist += char_dist
+            n_chars = len(sample["text"])
+            total_chars += n_chars
+            word_dist = editdistance.eval(transc.split(), sample["text"].split())
+            total_word_dist += word_dist
+            n_words = len(sample["text"].split())
+            total_words += n_words
+            # Write transcription
+            sample["pred_text"] = transc
+            sample["cer"] = char_dist / n_chars
+            sample["wer"] = word_dist / n_words
+            str_sample = json.dumps(sample)
+            transc_file.write(str_sample + "\n")
+    with open(metrics_out_path, "w") as metrics_file:
+        metrics = {
+            "cer": 1.0 * total_char_dist / total_chars,
+            "wer": 1.0 * total_word_dist / total_words
+        }
+        str_metrics = json.dumps(metrics, indent=1)
+        metrics_file.write(str_metrics)
+    
+    # Write command line arguments
+    with open(args_out_path, "w") as args_file:
+        str_args = json.dumps(args, indent=1)
+        args_file.write(str_args)
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -200,24 +246,35 @@ def main():
         help="Beam width for beam search"
     )
     parser.add_argument(
-        "--beam_search_alpha",
+        "--beam_search_alphas",
         required=False,
-        type=float,
-        default=1.0,
+        type=str,
+        default="1.0",
         help="Beam search alpha parameter"
     )
     parser.add_argument(
-        "--beam_search_beta",
+        "--beam_search_betas",
         required=False,
-        type=float,
-        default=1.0,
+        type=str,
+        default="1.0",
         help="Beam search alpha parameter"
     )
     args = parser.parse_args()
+
+    # Verify LM decoders installation if necessary
+    if args.kenlm_model_path:
+        try:
+            from ctc_decoders import Scorer, ctc_beam_search_decoder_batch
+        except ModuleNotFoundError:
+            raise ModuleNotFoundError(
+                "BeamSearchDecoderWithLM requires the installation of "
+                "ctc_decoders from NeMo/scripts/asr_language_modeling/ngram_lm/"
+                "install_beamsearch_decoders.sh"
+            )
+    else:
+        warnings.warn("No LM given, will do greedy decoding with ASR model")
+
     os.makedirs(args.out_dir)
-    transc_out_path = os.path.join(args.out_dir, "transc-manifest.jsonl")
-    metrics_out_path = os.path.join(args.out_dir, "transc-metrics.json")
-    args_out_path = os.path.join(args.out_dir, "cmd-args.json")
 
     # Read samples into CPU RAM
     samples = []
@@ -226,6 +283,10 @@ def main():
             sample = json.loads(str_sample)
             samples.append(sample)
     
+    # Get ASR transcription or logprobs
+    transc_args = vars(args)
+    transc_args["asr_model"] = None
+    transc_args["logprobs"] = args.kenlm_model_path is not None
     if args.tarfiles_glob:
         # Split the tarpaths accross the available GPUs
         audio_tarpaths = glob.glob(args.tarfiles_glob)
@@ -237,74 +298,66 @@ def main():
         n_tarpaths = len(audio_tarpaths)
         chunk_size = int(np.ceil(n_tarpaths / n_gpus))
         chunks = []
-        transc_args = vars(args)
         for i in range(n_gpus):
             tarpaths_chunk = audio_tarpaths[(i * chunk_size):((i+1) * chunk_size)]
+            transc_args["device"] = f"cuda:{i}"
             chunks.append({
-                "device": f"cuda:{i}",
                 "tarpaths_chunk": tarpaths_chunk,
                 "transc_args": transc_args
             })
         spawn_ctx = mp.get_context("spawn")
         with spawn_ctx.Pool(n_gpus) as pool:
-            filepath_to_transc_list = pool.map(_transcribe_on_device, chunks)
-        filepath_to_transc = ChainMap(*filepath_to_transc_list)
-        del filepath_to_transc_list
+            filepath_to_pred_list = pool.map(_asr_on_tarpaths_chunk, chunks)
+        filepath_to_pred = ChainMap(*filepath_to_pred_list)
+        del filepath_to_pred_list
     else:
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
         transc_args = vars(args)
         transc_args["device"] = device
-        transc_args["audio_filepaths"] = [
-            os.path.join(args.audio_dir, s["audio_filepath"]) if args.audio_dir
-            else s["audio_filepath"]
-            for s in samples
-        ]
+        transc_args["audio_filepaths"] = [s["audio_filepath"] for s in samples]
+        transc_args["audio_dir"] = args.audio_dir
         transc_args["asr_model"] = None
-        transcs, _ = load_and_transcribe(**transc_args)
-        filepath_to_transc = {}
-        for sample, transc in zip(samples, transcs):
-            filepath_to_transc[sample["audio_filepath"]] = transc
-        del transcs
+        filepath_to_pred, asr_model = _asr_on_filepaths(**transc_args)
 
-    # Score and write transcriptions
-    total_char_dist = 0
-    total_chars = 0
-    total_word_dist = 0
-    total_words = 0
-    with open(transc_out_path, "w") as transc_file:
-        print("Writting scored transcriptions")
-        for sample in tqdm(samples):
-            transc = filepath_to_transc.get(sample["audio_filepath"])
-            if transc is None:
-                continue
-            # Track performance metrics
-            char_dist = editdistance.eval(list(transc), list(sample["text"]))
-            total_char_dist += char_dist
-            n_chars = len(sample["text"])
-            total_chars += n_chars
-            word_dist = editdistance.eval(transc.split(), sample["text"].split())
-            total_word_dist += word_dist
-            n_words = len(sample["text"].split())
-            total_words += n_words
-            # Write transcription
-            sample["pred_text"] = transc
-            sample["cer"] = char_dist / n_chars
-            sample["wer"] = word_dist / n_words
-            str_sample = json.dumps(sample)
-            transc_file.write(str_sample + "\n")
-    with open(metrics_out_path, "w") as metrics_file:
-        metrics = {
-            "cer": 1.0 * total_char_dist / total_chars,
-            "wer": 1.0 * total_word_dist / total_words
-        }
-        str_metrics = json.dumps(metrics, indent=1)
-        metrics_file.write(str_metrics)
-    
-    # Write command line arguments
-    with open(args_out_path, "w") as args_file:
-        dict_args = vars(args)
-        str_args = json.dumps(dict_args, indent=1)
-        args_file.write(str_args)
+    if not transc_args["logprobs"]:
+        _score_and_write_transcriptions(
+            samples=samples,
+            filepath_to_transc=filepath_to_pred,
+            out_dir=args.out_dir,
+            args=vars(args)
+        )
+    else:
+        if args.beam_search_alphas is None or args.beam_search_betas is None:
+            raise ValueError(
+                "Requested LM transcription but either `beam_search_alphas` or "
+                "`beam_search_betas` is not set"
+            )
+        beam_search_alphas = [float(a) for a in args.beam_search_alphas.split(",")]
+        beam_search_betas = [float(b) for b in args.beam_search_betas.split(",")]
+        grid = itertools.product(beam_search_alphas, beam_search_betas)
+        for beam_search_alpha, beam_search_beta in grid:
+            filepath_to_transc = _decode_with_lm(
+                filepath_to_logprobs=filepath_to_pred,
+                kenlm_model_path=args.kenlm_model_path,
+                vocab=asr_model.decoder.vocabulary,
+                beam_width=args.beam_width,
+                beam_search_alpha=beam_search_alpha,
+                beam_search_beta=beam_search_beta
+            )
+            grid_item_id = f"a={beam_search_alpha}_b={beam_search_beta}"
+            out_dir = os.path.join(args.out_dir, grid_item_id)
+            local_args = vars(args)
+            local_args.update({
+                "beam_search_alpha": beam_search_alpha,
+                "beam_search_beta": beam_search_beta
+            })
+            os.makedirs(out_dir)
+            _score_and_write_transcriptions(
+                samples=samples,
+                filepath_to_transc=filepath_to_transc,
+                out_dir=out_dir,
+                args=local_args               
+            )
 
 if __name__ == "__main__":
     main()
