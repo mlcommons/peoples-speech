@@ -90,9 +90,9 @@ model:
 
   spec_augment:
     _target_: nemo.collections.asr.modules.SpectrogramAugmentation
-    freq_masks: 2 # set to zero to disable it
+    freq_masks: 0 # set to zero to disable it
     # you may use lower time_masks for smaller models to have a faster convergence
-    time_masks: 10 # set to zero to disable it
+    time_masks: 0 # set to zero to disable it
     freq_width: 27
     time_width: 0.05
 
@@ -142,7 +142,7 @@ model:
     # less necessity for weight_decay as we already have large augmentations with SpecAug
     # you may need weight_decay for large models, stable AMP training, small datasets, or when lower augmentations are used
     # weight decay of 0.0 with lr of 2.0 also works fine
-    weight_decay: 1e-3
+    weight_decay: 0.0
 
     # scheduler setup
     sched:
