@@ -32,7 +32,6 @@ model:
   sample_rate: 16000
   log_prediction: false # enables logging sample predictions in the output during training
   ctc_reduction: 'mean_batch'
-  use_cer: true
 
   train_ds:
     manifest_filepath: ???
