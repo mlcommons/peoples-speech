@@ -15,7 +15,7 @@ def main(cfg):
 
     trainer = pl.Trainer(**cfg.trainer)
     exp_manager(trainer, cfg.get("exp_manager", None))
-    if cfg.model.tokenizer:
+    if "tokenizer" in cfg.model:
         asr_model = EncDecCTCModelBPE(cfg=cfg.model, trainer=trainer)
     else:
         asr_model = EncDecCTCModel(cfg=cfg.model, trainer=trainer)
