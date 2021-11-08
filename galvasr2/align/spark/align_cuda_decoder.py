@@ -9,6 +9,7 @@ import subprocess
 import logging
 import os
 import re
+import sys
 from typing import Dict, List, Tuple
 
 from absl import app
@@ -23,6 +24,7 @@ from galvasr2.align.spark.align_lib import (
     create_audio_segments_udf,
     create_audio_segment_names_udf,
     fix_text_udf,
+    load_audio_and_text_dfs,
     load_audio_id_text_id_mapping,
     load_transcripts,
     normalize_english_text_udf,
@@ -31,6 +33,7 @@ from galvasr2.align.spark.align_lib import (
     TemporaryMountDirectory,
 )
 from galvasr2.align.spark.dsalign_lib import prepare_align_udf
+from galvasr2.align.spark.schemas import ARCHIVE_ORG_SCHEMA
 from galvasr2.utils import find_runfiles
 import dsalign_main
 
@@ -58,21 +61,52 @@ flags.DEFINE_string(
     "/development/lingvo-source/output_work_dir_3h",
     "Input directory. Exact format of this is a bit undefined right now and will likely change.",
 )
+flags.DEFINE_string(
+    "alignments_work_dir",
+    "/development/lingvo-source/output_work_dir_3h",
+    ""
+)
 flags.DEFINE_float(
     "max_cer",
-    20.0,
+    20.0, # 36.0,
     "Aligned utterances whose CER between alignment transcript and groundtruth transcript is hgiher than max_cer will be removed.",
+)
+flags.DEFINE_float(
+    "min_cer",
+    0.0,
+    "Aligned utterances whose CER between alignment transcript and groundtruth transcript is <= min_cer will be removed.",
 )
 flags.DEFINE_integer(
     "max_duration_ms",
-    16_700,
+    16_700, # 20_000,
     "Aligned utterances longer than max_duration_ms in length (in milliseconds) will be removed",
+)
+flags.DEFINE_integer(
+    "min_duration_ms",
+    1_000,
+    "Aligned utterances shorter than min_duration_ms in length (in milliseconds) will be removed",
 )
 flags.DEFINE_integer(
     "number_of_shards",
     1024,
     "Aligned utterances longer than max_duration_ms in length (in milliseconds) will be removed",
 )
+
+flags.DEFINE_string(
+    "license_filter",
+    "",
+    ""
+)
+
+
+# def is_cc_by(column):
+#     regexp = r"(http|https)://creativecommons.org/licenses/by/(1[.]0|2[.]0|2[.]5|3[.]0|4[.]0)"
+#     return column.rlike(regexp)
+
+
+def is_cc_by_sa(column):
+    regexp = r"(http|https)://creativecommons.org/licenses/by-sa/(1[.]0|2[.]0|2[.]5|3[.]0|4[.]0)"
+    return column.rlike(regexp)
 
 
 def create_wav_scp(
@@ -145,6 +179,12 @@ def main(argv):
     logging.getLogger("py4j").setLevel(logging.ERROR)
 
     catalogue_df = load_audio_id_text_id_mapping(spark, FLAGS.input_catalogue)
+
+    _, licenseurl_df = load_audio_and_text_dfs(spark, FLAGS.input_catalogue)
+    licenseurl_df = licenseurl_df.select([F.col("identifier"),
+                                          F.col("text_document_id"),
+                                          F.col("licenseurl")])
+
     # Kaldi's wav.scp format does not support space characters in the key field of a wav.scp file
     # We write the transcript to a file called "{kaldi_normalized_uttid}.ctm", so we also need to change all instances of "/" to "_"
     catalogue_df = catalogue_df.withColumn(
@@ -247,21 +287,7 @@ def main(argv):
                 executor.submit(run_gpu, shard, i)
             executor.shutdown(wait=True)
 
-    # 281 /usr/bin/sox "/root/the-peoples-speech-west-europe-bucket/archive_org/Mar_7_2021/CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS/horror_express_ipod/horror_express.mp3" -t wav --channels 1 --rate 8000 --encoding signed --bits 16 - |
-    # 282 /usr/bin/sox "/root/the-peoples-speech-west-europe-bucket/archive_org/Mar_7_2021/CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS/horror_express_ipod/horror_express.mp3" -t wav --channels 1 --rate 8000 --encoding signed --bits 16 - |
-    # 281 /usr/bin/sox "/development/lingvo-source/horror_express.mp3" -t wav --channels 1 --rate 8000 --encoding signed --bits 16 - |
-    # 282 /usr/bin/sox "/development/lingvo-source/horror_express.mp3" -t wav --channels 1 --rate 8000 --encoding signed --bits 16 - |
-
-    # WARNING (batched-wav-nnet3-cuda3[5.5]:Read():feat/wave-reader.h:197) Exception caught in WaveHolder::Read(). kaldi::KaldiFatalError
-    # WARNING (batched-wav-nnet3-cuda3[5.5]:EnsureObjectLoaded():util/kaldi-table-inl.h:317) Failed to load object from '/usr/bin/sox /root/the-peoples-speech-west-europe-bucket/archive_org/Mar_7_2021/CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS/16628CC20161007COW/16628 CC-2016-1007-COW.mp3 -t wav --channels 1 --rate 8000 --encoding signed --bits 16 - |'
-    # WARNING (batched-wav-nnet3-cuda3[5.5]:Close():kaldi-io.cc:515) Pipe /usr/bin/sox /root/the-peoples-speech-west-europe-bucket/archive_org/Mar_7_2021/CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS/16628CC20161007COW/16628 CC-2016-1007-COW.mp3 -t wav --channels 1 --rate 8000 --encoding signed --bits 16 - | had nonzero return status 512
-
-    # --verbose=10 \
-    # subprocess.check_call(shlex.split(cmd))
-    # audio_df = load_audio_files(spark, training_sample_rows, FLAGS.input_dir)
-    # /opt/kaldi/egs/aspire/s5/exp/tdnn_7b_chain_online/graph_pp/phones/word_boundary.int
-    # /opt/kaldi/egs/aspire/s5/exp/tdnn_7b_chain_online/graph_pp/phones/word_boundary.int
-    # --word-boundary-rxfilename=/opt/kaldi/egs/aspire/s5/exp/tdnn_7b_chain_online/graph_pp/phones/word_boundary.int \
+    alignments_dir = os.path.join(FLAGS.alignments_work_dir, "alignments_json_jul_28")
     if FLAGS.stage <= 2:
         # TODO: Add options to DSAlign here
         dsalign_args = dsalign_main.parse_args(
@@ -315,20 +341,43 @@ def main(argv):
         ).drop("ctm_content")
         print("GALVEZ:schema")
         alignments_df.printSchema()
-        import sys
 
         sys.stdout.flush()
 
         alignments_df.write.mode("overwrite").format("json").save(
-            os.path.join(FLAGS.work_dir, "alignments_json_jul_28")
+            alignments_dir
         )
 
-    manifest_dir = os.path.join(FLAGS.work_dir, "dataset_manifest_jul_28_wav_new_join_no_space")
-    tars_dir = os.path.join(FLAGS.work_dir, "dataset_tars_jul_28_wav_new_join_no_space")
+    manifest_dir = os.path.join(FLAGS.work_dir, "dataset_manifest")
+    tars_dir = os.path.join(FLAGS.work_dir, "dataset_tars")
     if FLAGS.stage <= 3:
-        alignments_df = spark.read.json(
-            os.path.join(FLAGS.work_dir, "alignments_json_jul_28")
-        )
+        duplicate_data_path = "gs://the-peoples-speech-west-europe/forced-aligner/data_deduplication/data_deduplication_v2_lines.json"
+        duplicates_df = spark.read.format("json").load(duplicate_data_path)
+
+        alignments_df = spark.read.json(alignments_dir)
+
+        alignments_df = alignments_df.join(duplicates_df,
+                                           on=(alignments_df.identifier == duplicates_df.identifier) &
+                                           (alignments_df.text_document_id == duplicates_df.text_document_id),
+                                           how="anti")
+
+        if FLAGS.license_filter == "":
+            pass
+        else:
+            if FLAGS.license_filter == "Not CC-BY-SA":
+                filtered_licenseurl_df = licenseurl_df.filter(~is_cc_by_sa(F.col("licenseurl")))
+            elif FLAGS.license_filter == "CC-BY-SA":
+                filtered_licenseurl_df = licenseurl_df.filter(is_cc_by_sa(F.col("licenseurl")))
+            else:
+                raise Exception("Unknown license_filter provided.")
+            filtered_licenseurl_df = filtered_licenseurl_df.drop("licenseurl")
+
+            alignments_df = alignments_df.join(filtered_licenseurl_df,
+                                               on=(alignments_df.identifier == filtered_licenseurl_df.identifier) &
+                                               (alignments_df.text_document_id == filtered_licenseurl_df.text_document_id),
+                                               how="inner")
+            alignments_df = alignments_df.drop(filtered_licenseurl_df.identifier).drop(filtered_licenseurl_df.text_document_id)
+
         # We would like the number of partitions to be some large multiple
         # of the number of executors. Not every audio file is the same
         # length, so this helps with load balancing.
@@ -362,12 +411,20 @@ def main(argv):
                 )
             ),
         )
+
+        alignments_df = alignments_df.drop("duration_ms")
+
         alignments_df = alignments_df.withColumn(
             "alignments",
             F.filter(
                 alignments_df.alignments,
-                lambda alignment: (alignment.duration_ms < FLAGS.max_duration_ms)
-                & (alignment.cer < FLAGS.max_cer),
+                # Need to select this filter such that total number of
+                # hours is 31,400
+                lambda alignment:
+                (alignment.duration_ms < FLAGS.max_duration_ms)
+                & (alignment.duration_ms >= FLAGS.min_duration_ms)
+                & (alignment.cer < FLAGS.max_cer)
+                & (alignment.cer >= FLAGS.min_cer),
             ),
         )
         alignments_df = alignments_df.withColumn(
@@ -378,7 +435,7 @@ def main(argv):
                 alignments_df.alignments.label,
                 alignments_df.alignments.start_ms,
                 alignments_df.alignments.wer,
-                alignments_df.duration_ms,
+                alignments_df.alignments.duration_ms,
             ).cast(
                 T.StructType(
                     [
@@ -402,6 +459,7 @@ def main(argv):
             / 60.0
         ).collect()
         print("GALVEZ:total number of hours=", abc)
+        sys.stdout.flush()
 
         alignments_df = alignments_df.select(
             alignments_df.identifier,
@@ -434,10 +492,17 @@ def main(argv):
         # Remove "/" so that, if someat untars the tar files, everything will be dumped into one directory
         # Remove "." becasue it has special meaning in webdataset format.
         # Remove " " because kaldi keys may not contain " " (this is not striclty necessary, but convenient)
-        name = F.concat(F.col("identifier"), F.lit("-"), F.col("audio_document_id"))
-        name = F.regexp_replace(name, r"/", "_SLASH_")
+        name = F.concat(F.col("identifier"), F.lit("/"), F.col("audio_document_id"))
+        # name = F.regexp_replace(name, r"/", "_SLASH_")
         name = F.regexp_replace(name, r"\.", "_DOT_")
         name = F.regexp_replace(name, r" ", "_SPACE_")
+        # glob.glob("**/*.flac")
+
+        pdf = df.select(name).collect()
+        for name in pdf.name:
+            assert len(name) < 4096
+            for chunk in "/".split(name):
+                assert len(chunk) < 256
         # name = F.regexp_replace(F.concat(F.col("identifier"),
         #                                  F.lit("-"),
         #                                  F.col("audio_document_id")),
@@ -460,7 +525,7 @@ def main(argv):
                 name,
                 alignments_audio_df.alignments.start_ms,
                 alignments_audio_df.alignments.end_ms,
-                F.lit("wav")
+                F.lit("flac")
             ),
         )
         a = alignments_audio_df.select(
@@ -475,7 +540,8 @@ def main(argv):
             F.struct(
                 alignments_audio_df.alignments.label.alias("label"),
                 create_audio_segment_names_udf(
-                    name, F.size(alignments_audio_df.alignments.start_ms), F.lit("wav")
+                    # Is F.size right here?
+                    name, F.size(alignments_audio_df.alignments.start_ms), F.lit("flac")
                 ).alias("name"),
                 alignments_audio_df.alignments.duration_ms.alias("duration_ms"),
             ).alias("training_data"),
@@ -485,20 +551,13 @@ def main(argv):
         # coalesce(1) seems to make the create_audio_segments_udf function run serially
         output_df.write.mode("overwrite").json(manifest_dir)
 
-    # repartitioned_tars_dir = os.path.join(FLAGS.work_dir, "repartitioned_dataset_tars_jul_28_flac")
     repartitioned_tars_dir = os.path.join(
-        FLAGS.work_dir, "repartitioned_dataset_tars_jul_28_wav_new_join_no_space"
+        FLAGS.work_dir, "repartitioned_dataset_tars"
     )
-    # tars_dir = "gs://the-peoples-speech-west-europe/forced-aligner/cuda-forced-aligner/output_work_dir_5b/output_work_dir_5b/dataset_tars_jul_28_flac/part-15489-f81b022e-3089-4aa8-9661-361627f1031a-c000.tar"
     tmp_tars_dir = os.path.join(
-        FLAGS.work_dir, "repartitioned_dataset_tars_jul_28_tmp_dir2_new_join_wav_no_space"
+        FLAGS.work_dir, "repartitioned_dataset_tmp_dir"
     )
     if FLAGS.stage <= 4:
-        # subprocess.check_call(["gsutil", "cp", os.path.join(manifest_dir, "*.json"), "-"])os.path.join(FLAGS.work_dir, "full_dataset_manifest_jul_28_flac.json")])
-        # f"gsutil cp {os.path.join(tars_dir, '*.tar')} - | tarp split -c 1000 -o 'output-%09d.tar'"
-        # gsutil cat gs://the-peoples-speech-west-europe/forced-aligner/cuda-forced-aligner/output_work_dir_5b/output_work_dir_5b/dataset_tars_jul_28_flac/part-14454-ebcc9e96-afbc-4ef5-84af-3489fc3fa7b8-c000.tar gs://the-peoples-speech-west-europe/forced-aligner/cuda-forced-aligner/output_work_dir_5b/output_work_dir_5b/dataset_tars_jul_28_flac/part-14465-ebcc9e96-afbc-4ef5-84af-3489fc3fa7b8-c000.tar | tar -t | less
-
-        # # subprocess.check_call(f"gsutil cp {os.path.join(manifest_dir, '*.json')} - | gsutil cp - {os.path.join(FLAGS.work_dir, 'full_dataset_manifest_jul_28_flac.json')}", shell=True)
         tars_df = spark.read.format("tar").load(tars_dir)  # .limit(100)
         number_of_rows = tars_df.count()
 
@@ -506,14 +565,14 @@ def main(argv):
         spark2.conf.set(
             "spark.sql.execution.rangeExchange.sampleSizePerPartition", number_of_rows
         )
-        spark2.conf.set("spark.sql.files.minPartitionNum", 1024)
+        spark2.conf.set("spark.sql.files.minPartitionNum", FLAGS.number_of_shards)
         # tars_df = spark2.read.format("tar").load(tars_dir)#.limit(100)
 
         # print("GALVEZ:", tars_df.select(F.col("key")).collect())
         # import sys; sys.exit()
         tars_df = spark2.read.format("tar").load(tars_dir)  # .limit(100)
         tars_df = tars_df.repartitionByRange(
-            1024, F.col("key")
+            FLAGS.number_of_shards, F.col("key")
         )
         # # May need to write this out to GCS, and then delete it, to prevent different behavior between runs.
         # # tars_df = tars_df.persist()
@@ -521,32 +580,31 @@ def main(argv):
         tars_df = spark2.read.format("tar").load(
             tmp_tars_dir
         )  # .repartitionByRange()  # coalesce(1024)
-        counts_df = (
-            tars_df.withColumn("partitionId", F.spark_partition_id())
-            .groupBy("partitionId")
-            .count()
-        )
-        num_rows_to_keep = counts_df.select(F.min(F.col("count"))).collect()[0][0]
-        # Consider doing this in java
-        def drop_final_rows(rows):
-            # for _, row in zip(range(num_rows_to_keep), rows):
-            #     yield row
-            for _ in range(num_rows_to_keep):
-                yield next(rows)
-            for _ in rows:
-                pass
-            return
+        # counts_df = (
+        #     tars_df.withColumn("partitionId", F.spark_partition_id())
+        #     .groupBy("partitionId")
+        #     .count()
+        # )
+        # num_rows_to_keep = counts_df.select(F.min(F.col("count"))).collect()[0][0]
+        # # Consider doing this in java
+        # def drop_final_rows(rows):
+        #     for _ in range(num_rows_to_keep):
+        #         yield next(rows)
+        #     for _ in rows:
+        #         pass
+        #     return
 
-        print("GALVEZ:before=", tars_df.rdd.getNumPartitions())
-        # , preservesPartitioning=True
-        tars_df = spark2.createDataFrame(
-            tars_df.rdd.mapPartitions(drop_final_rows), schema=tars_df.schema
-        )
-        print("GALVEZ:after=", tars_df.rdd.getNumPartitions())
-        import sys
+        # print("GALVEZ:before=", tars_df.rdd.getNumPartitions())
+        # # , preservesPartitioning=True
+        # tars_df = spark2.createDataFrame(
+        #     tars_df.rdd.mapPartitions(drop_final_rows), schema=tars_df.schema
+        # )
+        # print("GALVEZ:after=", tars_df.rdd.getNumPartitions())
+        # import sys
 
-        sys.stdout.flush()
-        tars_df.write.mode("overwrite").format("tar").save(repartitioned_tars_dir)
+        # sys.stdout.flush()
+        # # Don't actually write this out right now. It doesn't benefit us unless we are doing nemo training in a specific mode.
+        # tars_df.write.mode("overwrite").format("tar").save(repartitioned_tars_dir)
 
         # manifest_df = spark2.read.json(manifest_dir)
         # number_of_utterances = manifest_df.select(F.explode(F.col("training_data.name"))).count()
@@ -555,10 +613,10 @@ def main(argv):
         # repartition_tar_files(os.path.join(tars_dir, "*.tar"), repartitioned_tars_dir, utterances_per_shard)
 
     nemo_manifest_dir = os.path.join(
-        FLAGS.work_dir, "dataset_manifest_nemo_jul_28_wav_filtered_new_join_no_space"
+        FLAGS.work_dir, "dataset_manifest_nemo"
     )
     nemo_single_manifest_dir = os.path.join(
-        FLAGS.work_dir, "dataset_manifest_nemo_jul_28_wav_filtered_single_new_join_no_space"
+        FLAGS.work_dir, "dataset_manifest_nemo_single"
     )
 
     if FLAGS.stage <= 5:
@@ -578,12 +636,13 @@ def main(argv):
             (F.col("col.duration_ms").cast(T.DoubleType()) / 1000.0).alias("duration"),
             F.lit(-1).alias("shard_id"),
         )
-        tars_df = spark.read.format("tar").load(repartitioned_tars_dir)
-        tars_df = tars_df.select(tars_df.key)
-        nemo_df = F.broadcast(nemo_df)
-        nemo_df = nemo_df.join(tars_df, F.col("audio_filepath") == F.col("key")).drop(
-            F.col("key")
-        )
+        if False:
+            tars_df = spark.read.format("tar").load(repartitioned_tars_dir)
+            tars_df = tars_df.select(tars_df.key)
+            nemo_df = F.broadcast(nemo_df)
+            nemo_df = nemo_df.join(tars_df, F.col("audio_filepath") == F.col("key")).drop(
+                F.col("key")
+            )
 
         # TODO: Join against tar files that have been made to contain the
         # same number of files to filter out removed files
@@ -595,10 +654,10 @@ def main(argv):
         )
 
     single_manifest_dir = os.path.join(
-        FLAGS.work_dir, "dataset_manifest_jul_28_wav_single_new_join_no_space"
+        FLAGS.work_dir, "dataset_manifest_single"
     )
     single_tar_dir = os.path.join(
-        FLAGS.work_dir, "dataset_tars_jul_28_wav_single_new_join_no_space"
+        FLAGS.work_dir, "dataset_tars_single"
     )
     # Create single tar file and single json file
     if FLAGS.stage <= 6:
@@ -607,8 +666,10 @@ def main(argv):
             single_manifest_dir
         )
 
-        # tars_df = spark.read.format("tar").load(tmp_tars_dir)
-        # tars_df.coalesce(1).write.format("tar").mode("overwrite").save(single_tar_dir)
+        tars_df = spark.read.format("tar").load(tmp_tars_dir)
+        tars_df.coalesce(1).write.format("tar").mode("overwrite").save(single_tar_dir)
+
+    
 
 
 if __name__ == "__main__":
