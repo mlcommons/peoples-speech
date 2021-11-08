@@ -60,16 +60,27 @@ class FuzzySearch(object):
             self.match_score,
             self.mismatch_score,
         )
+        new_align_start = None
         for new_start in range(align_start - 1, start - 1, -1):
             if self.text[new_start] == " ":
-                align_start = new_start + 1
+                new_align_start = new_start + 1
                 break
+        if start == 0 and new_align_start is None:
+            new_align_start = start
+        elif new_align_start is None:
+            new_align_start = align_start
+
+        new_align_end = None
         for new_end in range(align_end, end):
             if self.text[new_end] == " ":
-                align_end = new_end
+                new_align_end = new_end
                 break
+        if end == len(self.text) and new_align_end is None:
+            new_align_end = end
+        else:
+            new_align_end = align_end
 
-        return align_start, align_end, score, substitutions
+        return new_align_start, new_align_end, score, substitutions
 
     # unused. This was the original implementation of sw_align(),
     # before I sped it up with cython. The cython implementation is
