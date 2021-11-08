@@ -3,11 +3,11 @@ from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
 from absl import app
 from absl import flags
-from align.spark.schemas import ARCHIVE_ORG_SCHEMA
+from galvasr2.align.spark.schemas import ARCHIVE_ORG_SCHEMA
 
 flags.DEFINE_string(
     "input_catalogue_path",
-    "gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/EXPANDED_LICENSES_FILTERED_ACCESS.jsonl.gz",
+    "gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS.jsonl.gz",
     "Ubication of the path with the licence metadata",
 )
 flags.DEFINE_string("save_as", "csv", "Format to save the file")
@@ -61,7 +61,7 @@ def create_dump_license_data(
     columns = [
         data_license.metadata.licenseurl,
         data_license.metadata.creator,
-        data_license.metadata.title,
+        data_license.identifier,
         data_license.metadata.credits,
     ]
     data_license = data_license.select(columns)
@@ -69,7 +69,6 @@ def create_dump_license_data(
     data_license = (
         data_license.withColumnRenamed("metadata.licenseurl", "licenseurl")
         .withColumnRenamed("metadata.creator", "creator")
-        .withColumnRenamed("metadata.title", "title")
         .withColumnRenamed("metadata.credits", "credits")
     )
     ##There only 4 register without license at the moment. Without information in the rest of the data

@@ -102,8 +102,13 @@ py_test(
            "event_listener.py",
            "schemas.py",
            "timeout.py",
-           ], # +
-           # glob(["../align/*.py"]),
+           ],
+    deps = [
+         "//galvasr2:utils",
+    ],
+    data = [
+         "//galvasr2/spark:tar_spark_datasource",
+    ],
     visibility = ["//visibility:public"],
 )
 
