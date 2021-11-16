@@ -66,12 +66,7 @@ def main():
          open(output_manifest_path, "w") as output_manifest:
         for str_audio_data in input_manifest:
             # Parse manifest line
-            dict_audio_data = json.loads(str_audio_data)
-            audio_data = data_classes.AudioData(
-                identifier=dict_audio_data["identifier"],
-                audio_document_id=dict_audio_data["audio_document_id"],
-                text_document_id=dict_audio_data["text_document_id"]
-            )
+            audio_data = data_classes.AudioData.from_json_str(str_audio_data)
             audio_name = get_audio_name(
                 identifier=audio_data.identifier,
                 audio_document_id=audio_data.audio_document_id
@@ -80,17 +75,11 @@ def main():
             # Assert that files for this line exist
             assert audio_data.audio_document_id.endswith("." + AUDIO_FORMAT), \
                 f"Found non-{AUDIO_FORMAT} audio_document_id: {str_audio_data}"
-            if "filename" in dict_audio_data:
-                audio_path = os.path.join(
-                    args.audio_dir,
-                    dict_audio_data["filename"]
-                )
-            else:
-                audio_path = AUDIO_PATH.format(
-                    audio_dir=args.audio_dir,
-                    identifier=audio_data.identifier,
-                    audio_document_id=audio_data.audio_document_id
-                )
+            audio_path = AUDIO_PATH.format(
+                audio_dir=args.audio_dir,
+                identifier=audio_data.identifier,
+                audio_document_id=audio_data.audio_document_id
+            )
             assert os.path.exists(audio_path), \
                 f"Audio file not found: {audio_path}"
             subrip_path = SUBRIP_PATH.format(
