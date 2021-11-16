@@ -86,5 +86,6 @@ def main():
         print(f"Dev set totals {dev_hours_str}h")
         test_hours_str = "{:.2f}".format(total_test_ms / (1000 * 3600))
         print(f"Test set totals {test_hours_str}h")
+
 if __name__ == "__main__":
     main()
