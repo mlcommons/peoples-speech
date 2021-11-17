@@ -1,4 +1,4 @@
-
+import os
 import json
 from typing import Dict, List
 from dataclasses import dataclass, field
@@ -8,6 +8,18 @@ class TrainingSample():
     duration_ms: int
     label: str
     name: str
+
+    def to_nemo_line(self, audio_dir=None) -> str:
+        if audio_dir is None:
+            audio_filepath = self.name
+        else:
+            audio_filepath = os.path.join(audio_dir, self.name)
+        as_nemo_dict = {
+            "duration": self.duration_ms / 1000,
+            "text": self.label,
+            "audio_filepath": audio_filepath
+        }
+        return json.dumps(as_nemo_dict)
 @dataclass
 class TrainingData():
     samples: List[TrainingSample] = field(default_factory=list)
@@ -33,6 +45,13 @@ class TrainingData():
             as_dict["label"].append(sample.label)
             as_dict["name"].append(sample.name)
         return as_dict
+    
+    def to_nemo_lines(self, audio_dir=None) -> List[str]:
+        nemo_lines = []
+        for sample in self.samples:
+            nemo_line = sample.to_nemo_line(audio_dir=audio_dir)
+            nemo_lines.append(nemo_line)
+        return nemo_lines
 
 @dataclass
 class AudioData():
@@ -83,3 +102,6 @@ class AudioData():
             "text_document_id": self.text_document_id,
             "training_data": self.training_data.to_dict()
         }
+    
+    def to_nemo_lines(self) -> List[str]:
+        return self.training_data.to_nemo_lines()
