@@ -4,28 +4,35 @@ from typing import Dict, List
 from dataclasses import dataclass, field
 
 @dataclass
+class TrainingSample():
+    duration_ms: int
+    label: str
+    name: str
+@dataclass
 class TrainingData():
-    duration_ms: List[int] = field(default_factory=list)
-    label: List[str] = field(default_factory=list)
-    name: List[str] = field(default_factory=list)
+    samples: List[TrainingSample] = field(default_factory=list)
 
     def append_data(self, duration_ms: int, label: str, name: str):
-        self.duration_ms.append(duration_ms)
-        self.label.append(label)
-        self.name.append(name)
+        new_sample = TrainingSample(
+            duration_ms=duration_ms,
+            label=label,
+            name=name
+        )
+        self.samples.append(new_sample)
 
     def get_total_duration_ms(self) -> float:
         total_duration_ms = 0
-        for duration_ms in self.duration_ms:
-            total_duration_ms += duration_ms
+        for sample in self.samples:
+            total_duration_ms += sample.duration_ms
         return total_duration_ms
 
     def to_dict(self) -> Dict:
-        return {
-            "duration_ms": self.duration_ms,
-            "label": self.label,
-            "name": self.name
-        }
+        as_dict = {"duration_ms": [], "label": [], "name": []}
+        for sample in self.samples:
+            as_dict["duration_ms"].append(sample.duration_ms)
+            as_dict["label"].append(sample.label)
+            as_dict["name"].append(sample.name)
+        return as_dict
 
 @dataclass
 class AudioData():
