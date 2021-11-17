@@ -103,5 +103,5 @@ class AudioData():
             "training_data": self.training_data.to_dict()
         }
     
-    def to_nemo_lines(self) -> List[str]:
-        return self.training_data.to_nemo_lines()
+    def to_nemo_lines(self, audio_dir=None) -> List[str]:
+        return self.training_data.to_nemo_lines(audio_dir=audio_dir)
