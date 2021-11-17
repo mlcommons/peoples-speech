@@ -46,6 +46,23 @@ class TrainingData():
             as_dict["name"].append(sample.name)
         return as_dict
     
+    @classmethod
+    def from_dict(cls, as_dict: dict):
+        if "duration_ms" not in as_dict \
+            or "label" not in as_dict \
+            or "name" not in as_dict:
+            raise ValueError("Dict representation needs keys ['duration_ms', 'label', 'name']")
+        else:
+            training_data = TrainingData()
+            zipped_dict = zip(as_dict["duration_ms"], as_dict["label"], as_dict["name"])
+            for duration_ms, label, name in zipped_dict:
+                training_data.append_data(
+                    duration_ms=duration_ms,
+                    label=label,
+                    name=name
+                )
+            return training_data
+    
     def to_nemo_lines(self, audio_dir=None) -> List[str]:
         nemo_lines = []
         for sample in self.samples:
@@ -63,14 +80,11 @@ class AudioData():
     @classmethod
     def from_json_str(cls, json_str: str):
         audio_data_args = json.loads(json_str)
-        try:
-            training_data = TrainingData(
-                duration_ms=audio_data_args["training_data"]["duration_ms"],
-                label=audio_data_args["training_data"]["label"],
-                name=audio_data_args["training_data"]["name"]
-            )
-        except:
+        training_data_dict = audio_data_args.get("training_data")
+        if training_data_dict is None:
             training_data = None
+        else:
+            training_data = TrainingData.from_dict(training_data_dict)
         if training_data is None:
             return AudioData(
                 identifier=audio_data_args["identifier"],
