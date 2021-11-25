@@ -1,5 +1,4 @@
 import os
-import re
 import json
 import argparse
 from tqdm import tqdm
@@ -9,7 +8,6 @@ from pydub import AudioSegment
 
 from test_set import data_classes
 from test_set import text_preprocessing
-# from galvasr2.align.spark.align_lib import get_audio_segment_name
 
 AUDIO_PATH = "{audio_dir}/{identifier}/{audio_document_id}"
 AUDIO_SEGMENT_PATH = "{audio_dir}/{identifier}/{audio_segment_name}"
@@ -17,6 +15,7 @@ SUBRIP_PATH = "{subrip_dir}/{identifier}/{text_document_id}"
 OUTPUT_MANIFEST_PATH = "{out_dir}/manifest.jsonl"
 OUTPUT_AUDIO_DIR = "{out_dir}/training-audio"
 AUDIO_FORMAT = "flac"
+SENTENCE_END_CHARS = set(["!", ".", "?"])
 
 def get_audio_name(audio_document_id):
     # Remove "." because it has special meaning in webdataset format
@@ -100,9 +99,10 @@ def main():
             start_ms = 0
             sentence_idx = 0
             for subtitle in tqdm(subtitles):
-                stripped_text = subtitle.content.strip()
-                ends_with_dot = stripped_text.endswith(".")
-                clean_text = text_preprocessing.clean_text(stripped_text)
+                unquoted_text = subtitle.content.replace("\"", "")
+                stripped_unquoted_text = unquoted_text.strip()
+                sentence_end = stripped_unquoted_text[-1] in SENTENCE_END_CHARS
+                clean_text = text_preprocessing.clean_text(stripped_unquoted_text)
                 if len(clean_text) == 0:
                     continue
                 if current_sentence is None:
@@ -110,7 +110,7 @@ def main():
                     current_sentence = clean_text
                 else:
                     current_sentence += " " + clean_text
-                if ends_with_dot:
+                if sentence_end:
                     end_ms = round(subtitle.end.total_seconds() * 1000)
                     audio_segment = full_audio[start_ms:end_ms]
                     audio_segment_name = get_audio_segment_name(
