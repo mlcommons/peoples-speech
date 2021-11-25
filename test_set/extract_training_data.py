@@ -8,6 +8,7 @@ import srt
 from pydub import AudioSegment
 
 from test_set import data_classes
+from test_set import text_preprocessing
 # from galvasr2.align.spark.align_lib import get_audio_segment_name
 
 AUDIO_PATH = "{audio_dir}/{identifier}/{audio_document_id}"
@@ -17,12 +18,11 @@ OUTPUT_MANIFEST_PATH = "{out_dir}/manifest.jsonl"
 OUTPUT_AUDIO_DIR = "{out_dir}/training-audio"
 AUDIO_FORMAT = "flac"
 
-def get_audio_name(identifier, audio_document_id):
-    # Remove "." becasue it has special meaning in webdataset format
+def get_audio_name(audio_document_id):
+    # Remove "." because it has special meaning in webdataset format
     # Remove " " because kaldi keys may not contain " "
-    name = os.path.join(identifier, audio_document_id)
     # name = name.replace("/", "_SLASH_")
-    name = name.replace(".", "_DOT_")
+    name = audio_document_id.replace(".", "_DOT_")
     name = name.replace(" ", "_SPACE_")
     return name
 
@@ -67,10 +67,7 @@ def main():
         for str_audio_data in input_manifest:
             # Parse manifest line
             audio_data = data_classes.AudioData.from_json_str(str_audio_data)
-            audio_name = get_audio_name(
-                identifier=audio_data.identifier,
-                audio_document_id=audio_data.audio_document_id
-            )
+            audio_name = get_audio_name(audio_data.audio_document_id)
             
             # Assert that files for this line exist
             assert audio_data.audio_document_id.endswith("." + AUDIO_FORMAT), \
@@ -103,14 +100,17 @@ def main():
             start_ms = 0
             sentence_idx = 0
             for subtitle in tqdm(subtitles):
-                if len(subtitle.content) == 0:
+                stripped_text = subtitle.content.strip()
+                ends_with_dot = stripped_text.endswith(".")
+                clean_text = text_preprocessing.clean_text(stripped_text)
+                if len(clean_text) == 0:
                     continue
                 if current_sentence is None:
                     start_ms = round(subtitle.start.total_seconds() * 1000)
-                    current_sentence = subtitle.content.strip()
+                    current_sentence = clean_text
                 else:
-                    current_sentence += " " + subtitle.content.strip()
-                if current_sentence.endswith("."):
+                    current_sentence += " " + clean_text
+                if ends_with_dot:
                     end_ms = round(subtitle.end.total_seconds() * 1000)
                     audio_segment = full_audio[start_ms:end_ms]
                     audio_segment_name = get_audio_segment_name(
@@ -129,8 +129,7 @@ def main():
                     )
                     os.makedirs(os.path.dirname(audio_segment_path), exist_ok=True)
                     audio_segment.export(audio_segment_path, format=AUDIO_FORMAT)
-                    current_sentence = re.sub(r"\n+", " ", current_sentence)
-                    current_sentence = re.sub(r" +", " ", current_sentence)
+                    current_sentence = text_preprocessing.clean_text(current_sentence)
                     audio_data.append_training_data(
                         duration_ms=end_ms - start_ms,
                         label=current_sentence,
