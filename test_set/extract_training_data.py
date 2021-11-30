@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import argparse
 from tqdm import tqdm
@@ -9,6 +10,9 @@ from pydub import AudioSegment
 from test_set import data_classes
 from test_set import text_preprocessing
 
+MIN_WORDS = 3
+MIN_DURATION = 3
+INDISTINCT_REGEX = "\(.*(indistinct|inaudible|muffled).*\)"
 AUDIO_PATH = "{audio_dir}/{identifier}/{audio_document_id}"
 AUDIO_SEGMENT_PATH = "{audio_dir}/{identifier}/{audio_segment_name}"
 SUBRIP_PATH = "{subrip_dir}/{identifier}/{text_document_id}"
@@ -60,6 +64,7 @@ def main():
     args = parser.parse_args()
     output_manifest_path = OUTPUT_MANIFEST_PATH.format(out_dir=args.out_dir)
     output_audio_dir = OUTPUT_AUDIO_DIR.format(out_dir=args.out_dir)
+    total_training_hours = 0
     os.makedirs(output_audio_dir)
     with open(args.manifest_path, "r") as input_manifest, \
          open(output_manifest_path, "w") as output_manifest:
@@ -96,9 +101,14 @@ def main():
             
             # Write sentences as training data
             current_sentence = None
+            has_indistinct = False
             start_ms = 0
             sentence_idx = 0
             for subtitle in tqdm(subtitles):
+                bool(re.findall(INDISTINCT_REGEX, subtitle.content))
+                has_indistinct = \
+                    has_indistinct \
+                    or re.findall(INDISTINCT_REGEX, subtitle.content)
                 unquoted_text = subtitle.content.replace("\"", "")
                 stripped_unquoted_text = unquoted_text.strip()
                 sentence_end = stripped_unquoted_text[-1] in SENTENCE_END_CHARS
@@ -112,33 +122,43 @@ def main():
                     current_sentence += " " + clean_text
                 if sentence_end:
                     end_ms = round(subtitle.end.total_seconds() * 1000)
-                    audio_segment = full_audio[start_ms:end_ms]
-                    audio_segment_name = get_audio_segment_name(
-                        audio_name=audio_name,
-                        index=sentence_idx,
-                        suffix=AUDIO_FORMAT
-                    )
-                    audio_segment_path = AUDIO_SEGMENT_PATH.format(
-                        audio_dir=output_audio_dir,
-                        identifier=audio_data.identifier,
-                        audio_segment_name=audio_segment_name
-                    )
-                    audio_segment_relpath = os.path.relpath(
-                        audio_segment_path,
-                        output_audio_dir
-                    )
-                    os.makedirs(os.path.dirname(audio_segment_path), exist_ok=True)
-                    audio_segment.export(audio_segment_path, format=AUDIO_FORMAT)
-                    current_sentence = text_preprocessing.clean_text(current_sentence)
-                    audio_data.append_training_data(
-                        duration_ms=end_ms - start_ms,
-                        label=current_sentence,
-                        name=audio_segment_relpath
-                    )
+                    numbers = re.findall('[0-9]+', current_sentence)
+                    duration = (end_ms - start_ms) / 1000
+                    n_words = len(current_sentence.split(" "))
+                    if not numbers \
+                       and duration >= MIN_DURATION \
+                       and n_words >= MIN_WORDS \
+                       and not has_indistinct:
+                        audio_segment = full_audio[start_ms:end_ms]
+                        audio_segment_name = get_audio_segment_name(
+                            audio_name=audio_name,
+                            index=sentence_idx,
+                            suffix=AUDIO_FORMAT
+                        )
+                        audio_segment_path = AUDIO_SEGMENT_PATH.format(
+                            audio_dir=output_audio_dir,
+                            identifier=audio_data.identifier,
+                            audio_segment_name=audio_segment_name
+                        )
+                        audio_segment_relpath = os.path.relpath(
+                            audio_segment_path,
+                            output_audio_dir
+                        )
+                        os.makedirs(os.path.dirname(audio_segment_path), exist_ok=True)
+                        audio_segment.export(audio_segment_path, format=AUDIO_FORMAT)
+                        audio_data.append_training_data(
+                            duration_ms=end_ms - start_ms,
+                            label=current_sentence,
+                            name=audio_segment_relpath
+                        )
+                        sentence_idx += 1
+                        total_training_hours += duration / 3600
                     current_sentence = None
-                    sentence_idx += 1
+                    has_indistinct = False
             str_audio_data = json.dumps(audio_data.to_dict())
             output_manifest.write(str_audio_data + "\n")
+    print(f"Processed {total_training_hours}h of training data")
+        
 
 if __name__ == "__main__":
     main()
