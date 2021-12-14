@@ -7,7 +7,7 @@
 [submodule "third_party/pydub"]
 	path = third_party/pydub
 	url = https://github.com/galv/pydub.git
-[submodule "training/nemo/NeMo"]
-	path = training/nemo/NeMo
+[submodule "third_party/NeMo"]
+	path = third_party/NeMo
 	url = https://github.com/JFCeron/NeMo.git
 	branch = the-peoples-speech
