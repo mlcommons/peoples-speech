@@ -45,6 +45,9 @@ class TrainingData():
             as_dict["label"].append(sample.label)
             as_dict["name"].append(sample.name)
         return as_dict
+
+    def __len__(self):
+        return len(self.samples)
     
     @classmethod
     def from_dict(cls, as_dict: dict):
