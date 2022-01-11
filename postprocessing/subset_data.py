@@ -21,7 +21,7 @@ def main():
         "--dataset_manifest",
         required=True,
         type=str,
-        help="NeMo-style manifest of the large dataset"
+        help="TPS-style manifest of the large dataset"
     )
     parser.add_argument(
         "--subset_rel_size",
