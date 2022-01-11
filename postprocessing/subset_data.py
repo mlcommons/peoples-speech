@@ -7,6 +7,8 @@ import tarfile
 import argparse
 from tqdm import tqdm
 
+from postprocessing.data_classes import AudioData, TrainingData
+
 def main():
     parser = argparse.ArgumentParser(
         description="Subset a tarred local dataset"
@@ -21,7 +23,7 @@ def main():
         "--dataset_manifest",
         required=True,
         type=str,
-        help="NeMo-style manifest of the large dataset"
+        help="TPS-style manifest of the large dataset"
     )
     parser.add_argument(
         "--subset_rel_size",
@@ -73,10 +75,26 @@ def main():
     subset_manifest_path = os.path.join(args.output_dir, "manifest.jsonl")
     with open(args.dataset_manifest, "r") as full_manifest, \
          open(subset_manifest_path, "w") as subset_manifest:
-        for str_sample in tqdm(full_manifest):
-            sample = json.loads(str_sample)
-            if sample["audio_filepath"] in keeper_names:
-                subset_manifest.write(str_sample)
+        for json_str in tqdm(full_manifest):
+            audio_data = AudioData.from_json_str(json_str)
+            subset_training_data = TrainingData()
+            for training_sample in audio_data.training_data:
+                if training_sample.name in keeper_names:
+                    subset_training_data.append_data(
+                        duration_ms=training_sample.duration_ms,
+                        label=training_sample.label,
+                        name=training_sample.name
+                    )
+            if len(subset_training_data) > 0:
+                subset_audio_data = AudioData(
+                    audio_document_id=audio_data.audio_document_id,
+                    text_document_id=audio_data.text_document_id,
+                    identifier=audio_data.identifier,
+                    training_data=subset_training_data
+                )
+                subset_audio_data_dict = subset_audio_data.to_dict()
+                subset_audio_data_str = json.dumps(subset_audio_data_dict)
+                subset_manifest.write(subset_audio_data_str + "\n")
 
 if __name__ == "__main__":
     main()
