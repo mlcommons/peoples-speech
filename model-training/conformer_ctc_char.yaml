@@ -152,7 +152,7 @@ trainer:
 
 
 exp_manager:
-  exp_dir: trained-models
+  exp_dir: ???
   name: ${name}
   create_tensorboard_logger: true
   create_checkpoint_callback: true
