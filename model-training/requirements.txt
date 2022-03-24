@@ -1,4 +1,0 @@
-pytorch-lightning==1.4.5
-omegaconf==2.1.1
-hydra-core==1.1.1
-numba==0.54.1
