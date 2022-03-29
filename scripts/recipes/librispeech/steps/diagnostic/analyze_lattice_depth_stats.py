@@ -50,7 +50,7 @@ try:
     f.close()
 except:
     sys.exit(
-        u"analyze_lattice_depth_stats.py: error opening or reading {0}/phones.txt".format(
+        "analyze_lattice_depth_stats.py: error opening or reading {0}/phones.txt".format(
             args.lang
         )
     )
@@ -66,7 +66,7 @@ try:
     # open lang/phones/silence.csl-- while there are many ways of obtaining the
     # silence/nonsilence phones, we read this because it's present in graph
     # directories as well as lang directories.
-    filename = u"{0}/phones/silence.csl".format(args.lang)
+    filename = "{0}/phones/silence.csl".format(args.lang)
     f = open(filename, "r")
     line = f.readline()
     for silence_phone in line.split(":"):
@@ -74,7 +74,7 @@ try:
     f.close()
 except Exception as e:
     sys.exit(
-        u"analyze_lattice_depth_stats.py: error processing {0}/phones/silence.csl: {1}".format(
+        "analyze_lattice_depth_stats.py: error processing {0}/phones/silence.csl: {1}".format(
             args.lang, str(e)
         )
     )
@@ -101,7 +101,7 @@ while True:
     a = line.split()
     if len(a) != 3:
         sys.exit(
-            u"analyze_lattice_depth_stats.py: reading stdin, could not interpret line: "
+            "analyze_lattice_depth_stats.py: reading stdin, could not interpret line: "
             + line
         )
     try:
@@ -116,14 +116,14 @@ while True:
         phone_depth_counts[universal_phone][depth] += count
     except Exception as e:
         sys.exit(
-            u"analyze_lattice_depth_stats.py: unexpected phone {0} "
-            u"seen (lang directory mismatch?): line is {1}, error is {2}".format(
+            "analyze_lattice_depth_stats.py: unexpected phone {0} "
+            "seen (lang directory mismatch?): line is {1}, error is {2}".format(
                 phone, line, str(e)
             )
         )
 
 if total_frames == 0:
-    sys.exit(u"analyze_lattice_depth_stats.py: read no input")
+    sys.exit("analyze_lattice_depth_stats.py: read no input")
 
 
 # If depth_to_count is a map from depth-in-frames to count,
@@ -154,8 +154,8 @@ def GetMean(depth_to_count):
 
 
 print(
-    u"The total amount of data analyzed assuming 100 frames per second "
-    u"is {0} hours".format("%.1f" % (total_frames / 360000.0))
+    "The total amount of data analyzed assuming 100 frames per second "
+    "is {0} hours".format("%.1f" % (total_frames / 360000.0))
 )
 
 # the next block prints lines like (to give some examples):
@@ -184,14 +184,14 @@ for phone, depths in sorted(
             phone_text = phone_int2text[phone]
         except:
             sys.exit(
-                u"analyze_lattice_depth_stats.py: phone {0} is not covered on phones.txt "
-                u"(lang/alignment mismatch?)".format(phone)
+                "analyze_lattice_depth_stats.py: phone {0} is not covered on phones.txt "
+                "(lang/alignment mismatch?)".format(phone)
             )
-        preamble = u"Phone {phone_text} accounts for {percent}% of frames, with".format(
+        preamble = "Phone {phone_text} accounts for {percent}% of frames, with".format(
             phone_text=phone_text, percent="%.1f" % frequency_percentage
         )
     elif phone == 0:
-        preamble = u"Nonsilence phones as a group account for {percent}% of frames, with".format(
+        preamble = "Nonsilence phones as a group account for {percent}% of frames, with".format(
             percent="%.1f" % frequency_percentage
         )
     else:
@@ -199,7 +199,7 @@ for phone, depths in sorted(
         preamble = "Overall,"
 
     print(
-        u"{preamble} lattice depth (10,50,90-percentile)=({p10},{p50},{p90}) and mean={mean}".format(
+        "{preamble} lattice depth (10,50,90-percentile)=({p10},{p50},{p90}) and mean={mean}".format(
             preamble=preamble,
             p10=depth_percentile_10,
             p50=depth_percentile_50,
