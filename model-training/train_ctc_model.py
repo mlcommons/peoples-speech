@@ -8,7 +8,9 @@ from nemo.utils.exp_manager import exp_manager
 
 @hydra_runner(config_path=".")
 def main(cfg):
-    cfg.model.train_ds.batch_size = cfg.model.train_ds.batch_size // cfg.n_gpus
+    if cfg.n_gpus > 0:
+        cfg.model.train_ds.batch_size //= cfg.n_gpus
+
     logging.info(f'Hydra config: {OmegaConf.to_yaml(cfg, resolve=True)}')
 
     pl.utilities.seed.seed_everything(cfg.seed)

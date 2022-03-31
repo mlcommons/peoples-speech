@@ -813,7 +813,7 @@ def parse_rir_list(rir_set_para_array, smoothing_weight, sampling_rate=None):
     return rir_list
 
 
-def almost_equal(value_1, value_2, accuracy=10 ** -8):
+def almost_equal(value_1, value_2, accuracy=10**-8):
     """This function checks if the inputs are approximately equal assuming they are floats."""
     return abs(value_1 - value_2) < accuracy
 

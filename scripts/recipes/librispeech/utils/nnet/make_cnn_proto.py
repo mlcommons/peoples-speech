@@ -163,24 +163,30 @@ outputdim_of_cnn = o.num_filters2 * num_patch2
 
 convolution_proto = ""
 
-convolution_proto += "<ConvolutionalComponent> <InputDim> %d <OutputDim> %d <PatchDim> %d <PatchStep> %d <PatchStride> %d <BiasMean> %f <BiasRange> %f <ParamStddev> %f <MaxNorm> %f\n" % (
-    feat_raw_dim * (o.delta_order + 1) * (o.splice * 2 + 1),
-    o.num_filters1 * num_patch1,
-    o.patch_dim1,
-    o.patch_step1,
-    feat_raw_dim,
-    -1.0,
-    2.0,
-    0.02,
-    30,
+convolution_proto += (
+    "<ConvolutionalComponent> <InputDim> %d <OutputDim> %d <PatchDim> %d <PatchStep> %d <PatchStride> %d <BiasMean> %f <BiasRange> %f <ParamStddev> %f <MaxNorm> %f\n"
+    % (
+        feat_raw_dim * (o.delta_order + 1) * (o.splice * 2 + 1),
+        o.num_filters1 * num_patch1,
+        o.patch_dim1,
+        o.patch_step1,
+        feat_raw_dim,
+        -1.0,
+        2.0,
+        0.02,
+        30,
+    )
 )  # ~8x11x3 = 264 inputs
-convolution_proto += "<%sPoolingComponent> <InputDim> %d <OutputDim> %d <PoolSize> %d <PoolStep> %d <PoolStride> %d\n" % (
-    o.pool_type,
-    o.num_filters1 * num_patch1,
-    o.num_filters1 * num_pool,
-    o.pool_size,
-    o.pool_step,
-    o.num_filters1,
+convolution_proto += (
+    "<%sPoolingComponent> <InputDim> %d <OutputDim> %d <PoolSize> %d <PoolStep> %d <PoolStride> %d\n"
+    % (
+        o.pool_type,
+        o.num_filters1 * num_patch1,
+        o.num_filters1 * num_pool,
+        o.pool_size,
+        o.pool_step,
+        o.num_filters1,
+    )
 )
 convolution_proto += "<Rescale> <InputDim> %d <OutputDim> %d <InitParam> %f\n" % (
     o.num_filters1 * num_pool,
@@ -197,16 +203,19 @@ convolution_proto += "%s <InputDim> %d <OutputDim> %d\n" % (
     o.num_filters1 * num_pool,
     o.num_filters1 * num_pool,
 )
-convolution_proto += "<ConvolutionalComponent> <InputDim> %d <OutputDim> %d <PatchDim> %d <PatchStep> %d <PatchStride> %d <BiasMean> %f <BiasRange> %f <ParamStddev> %f <MaxNorm> %f\n" % (
-    o.num_filters1 * num_pool,
-    outputdim_of_cnn,
-    patch_dim2,
-    patch_step2,
-    patch_stride2,
-    -2.0,
-    4.0,
-    0.1,
-    50,
+convolution_proto += (
+    "<ConvolutionalComponent> <InputDim> %d <OutputDim> %d <PatchDim> %d <PatchStep> %d <PatchStride> %d <BiasMean> %f <BiasRange> %f <ParamStddev> %f <MaxNorm> %f\n"
+    % (
+        o.num_filters1 * num_pool,
+        outputdim_of_cnn,
+        patch_dim2,
+        patch_step2,
+        patch_stride2,
+        -2.0,
+        4.0,
+        0.1,
+        50,
+    )
 )  # ~4x128 = 512 inputs
 convolution_proto += "<Rescale> <InputDim> %d <OutputDim> %d <InitParam> %f\n" % (
     outputdim_of_cnn,
