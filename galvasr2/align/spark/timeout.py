@@ -1,3 +1,6 @@
+import threading
+
+
 def timeout(func, args=(), kwargs={}, timeout_duration=1, default=None):
     assert (
         threading.current_thread() is threading.main_thread()

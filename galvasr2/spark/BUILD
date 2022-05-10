@@ -27,3 +27,14 @@ scala_library(
     # javac_jvm_flags,
     # unused_dependency_checker_mode
 )
+
+py_test(
+    name = "tar_data_source_test",
+    main = "tar_data_source_test.py",
+    srcs = ["tar_data_source_test.py"],
+    deps = ["//galvasr2:utils",],
+    data = [
+        "//galvasr2/spark:tar_spark_datasource",
+    ],
+    visibility = ["//visibility:public"],
+)

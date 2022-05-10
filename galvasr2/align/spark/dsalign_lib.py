@@ -22,7 +22,7 @@ import pyspark.sql.types as T
 from galvasr2.align.spark.timeout import timeout
 
 
-def parse_ctm(ctm_buffer):
+def parse_ctm(ctm_buffer, silence_words: set):
     fh = io.StringIO(ctm_buffer)
     # utterance, channel, start time in sec, duration in sec, label
     # 1 A 2.560 0.016 COMMISSION
@@ -34,6 +34,9 @@ def parse_ctm(ctm_buffer):
         except ValueError:
             print("GALVEZ: problematic line: ", line)
             return []
+        if word in silence_words:
+            continue
+
         start_ms = int(float(start_s) * 1000)
         duration_ms = int(float(duration_s) * 1000)
         words.append(
@@ -42,26 +45,37 @@ def parse_ctm(ctm_buffer):
     return words
 
 
-def join_fragments(ctm_contents: List, max_length_ms: int) -> Dict:
+def join_fragments(
+    ctm_contents: List, max_length_ms: int, max_silence_length_ms: int, audio_name: str
+) -> Dict:
     fragments = []
-    start_ms = -1
-    transcript = []
-    for ctm_word_fragment in ctm_contents:
-        if start_ms == -1:
-            start_ms = ctm_word_fragment.start_ms
-        transcript.append(ctm_word_fragment.word)
-        if ctm_word_fragment.end_ms - start_ms > max_length_ms:
+    if len(ctm_contents) > 0:
+        start_ms = ctm_contents[0].start_ms
+        transcript = [ctm_contents[0].word]
+    else:
+        return []
+    for i in range(1, len(ctm_contents)):
+        current_word_fragment = ctm_contents[i]
+        previous_word_fragment = ctm_contents[i - 1]
+        silence_duration_ms = (
+            current_word_fragment.start_ms - previous_word_fragment.end_ms
+        )
+        if (
+            current_word_fragment.end_ms - start_ms > max_length_ms
+            or silence_duration_ms > max_silence_length_ms
+        ):
             fragments.append(
                 {
                     "start": start_ms,
-                    "end": ctm_word_fragment.end_ms,
+                    "end": previous_word_fragment.end_ms,
                     "transcript": " ".join(transcript),
                 }
             )
-            start_ms = -1
+            start_ms = current_word_fragment.start_ms
             transcript = []
+        transcript.append(current_word_fragment.word)
     # Add final straggler fragment, if it exists
-    if start_ms != -1:
+    if len(transcript) != 0:
         fragments.append(
             {
                 "start": start_ms,
@@ -69,6 +83,9 @@ def join_fragments(ctm_contents: List, max_length_ms: int) -> Dict:
                 "transcript": " ".join(transcript),
             }
         )
+    for fragment in fragments:
+        if fragment["end"] - fragment["start"] > max_length_ms:
+            print(f"join_fragments: problem with {audio_name}")
     return fragments
 
 
@@ -81,6 +98,7 @@ def align(args, asr_output_fragments, transcript, alphabet):
         normalize_space=not args.text_keep_ws,
         to_lower=not args.text_keep_casing,
     )
+    # I could accept an array of strings as my transcript instead...
     tc.add_original_text(transcript)
 
     # Chossing these values may speed up search?
@@ -148,6 +166,9 @@ def align(args, asr_output_fragments, transcript, alphabet):
             # At least half must overlap...
             # print(f"GALVEZ: sws_score={sws_score}")
             # import sys; sys.stdout.flush()
+            # Maybe what I need to do is require this score to be higher?
+            # The problem is that I don't know how to decrease this...
+            # If score > n / (2n). So basically >0.5, right?
             if sws_score > (n - 1) / (2 * n):
                 # print(f"GALVEZ: sws passed sws_score={sws_score}")
                 # import sys; sys.stdout.flush()
@@ -170,8 +191,6 @@ def align(args, asr_output_fragments, transcript, alphabet):
     # Are matched fragments ever joined?
     matched_fragments = split_match(fragments)
     matched_fragments = list(filter(lambda f: f is not None, matched_fragments))
-
-    # print(f"GALVEZ:matched_fragments_length={len(matched_fragments)}")
 
     similarity_algos = {}
 
@@ -216,72 +235,66 @@ def align(args, asr_output_fragments, transcript, alphabet):
         best = max((v, i) for i, v in enumerate(similarities))[1] if n > 0 else 0
         return best, similarities
 
-    for index in range(len(matched_fragments) + 1):
-        if index > 0:
-            a = matched_fragments[index - 1]
-            a_start, a_end = a["match-start"], a["match-end"]
-            a_len = a_end - a_start
-            a_stretch = int(a_len * args.align_stretch_fraction)
-            a_shrink = int(a_len * args.align_shrink_fraction)
-            a_end = a_end - a_shrink
-            a_ext = a_shrink + a_stretch
-        else:
-            a = None
-            a_start = a_end = 0
-        if index < len(matched_fragments):
-            b = matched_fragments[index]
-            b_start, b_end = b["match-start"], b["match-end"]
-            b_len = b_end - b_start
-            b_stretch = int(b_len * args.align_stretch_fraction)
-            b_shrink = int(b_len * args.align_shrink_fraction)
-            b_start = b_start + b_shrink
-            b_ext = b_shrink + b_stretch
-        else:
-            b = None
-            b_start = b_end = len(search.text)
+    # for index in range(len(matched_fragments) + 1):
+    #   if index > 0:
+    #     a = matched_fragments[index - 1]
+    #     a_start, a_end = a['match-start'], a['match-end']
+    #     a_len = a_end - a_start
+    #     a_stretch = int(a_len * args.align_stretch_fraction)
+    #     a_shrink = int(a_len * args.align_shrink_fraction)
+    #     a_end = a_end - a_shrink
+    #     a_ext = a_shrink + a_stretch
+    #   else:
+    #     a = None
+    #     a_start = a_end = 0
+    #   if index < len(matched_fragments):
+    #     b = matched_fragments[index]
+    #     b_start, b_end = b['match-start'], b['match-end']
+    #     b_len = b_end - b_start
+    #     b_stretch = int(b_len * args.align_stretch_fraction)
+    #     b_shrink = int(b_len * args.align_shrink_fraction)
+    #     b_start = b_start + b_shrink
+    #     b_ext = b_shrink + b_stretch
+    #   else:
+    #     b = None
+    #     b_start = b_end = len(search.text)
 
-        assert a_end <= b_start
-        assert a_start <= a_end
-        assert b_start <= b_end
-        if a_end == b_start or a_start == a_end or b_start == b_end:
-            continue
-        gap_text = tc.clean_text[a_end - 1 : b_start + 1]
-        gap_meta = tc.meta[a_end - 1 : b_start + 1]
+    #   assert a_end <= b_start
+    #   assert a_start <= a_end
+    #   assert b_start <= b_end
+    #   if a_end == b_start or a_start == a_end or b_start == b_end:
+    #     continue
+    #   gap_text = tc.clean_text[a_end - 1:b_start + 1]
+    #   gap_meta = tc.meta[a_end - 1:b_start + 1]
 
-        if a:
-            a_best_index, a_similarities = get_similarities(
-                a["transcript"],
-                tc.clean_text[a_start:a_end],
-                min(len(gap_text) - 1, a_ext),
-                gap_text,
-                gap_meta,
-                1,
-            )
-            a_best_end = a_best_index + a_end
-        if b:
-            b_best_index, b_similarities = get_similarities(
-                b["transcript"],
-                tc.clean_text[b_start:b_end],
-                min(len(gap_text) - 1, b_ext),
-                gap_text,
-                gap_meta,
-                -1,
-            )
-            b_best_start = b_start - b_best_index
+    #   if a:
+    #     a_best_index, a_similarities = get_similarities(a['transcript'],
+    #                                                     tc.clean_text[a_start:a_end],
+    #                                                     min(len(gap_text) - 1, a_ext),
+    #                                                     gap_text,
+    #                                                     gap_meta,
+    #                                                     1)
+    #     a_best_end = a_best_index + a_end
+    #   if b:
+    #     b_best_index, b_similarities = get_similarities(b['transcript'],
+    #                                                     tc.clean_text[b_start:b_end],
+    #                                                     min(len(gap_text) - 1, b_ext),
+    #                                                     gap_text,
+    #                                                     gap_meta,
+    #                                                     -1)
+    #     b_best_start = b_start - b_best_index
 
-        if a and b and a_best_end > b_best_start:
-            overlap_start = b_start - len(b_similarities)
-            a_similarities = a_similarities[overlap_start - a_end :]
-            b_similarities = b_similarities[: len(a_similarities)]
-            best_index = max(
-                (sum(v), i) for i, v in enumerate(zip(a_similarities, b_similarities))
-            )[1]
-            a_best_end = b_best_start = overlap_start + best_index
+    #   if a and b and a_best_end > b_best_start:
+    #     overlap_start = b_start - len(b_similarities)
+    #     a_similarities = a_similarities[overlap_start - a_end:]
+    #     b_similarities = b_similarities[:len(a_similarities)]
+    #     best_index = max((sum(v), i) for i, v in enumerate(zip(a_similarities, b_similarities)))[1]
+    #     a_best_end = b_best_start = overlap_start + best_index
 
-            if a:
-                a["match-end"] = a_best_end
-            if b:
-                b["match-start"] = b_best_start
+    #     if a:
+    #       a['match-end'] = a_best_end
+    #     if b:
+    #       b['match-start'] = b_best_start
 
     def apply_number(number_key, index, fragment, show, get_value):
         kl = number_key.lower()
@@ -312,6 +325,7 @@ def align(args, asr_output_fragments, transcript, alphabet):
     substitutions = Counter()
     result_fragments = []
     # print(f"GALVEZ:matched_fragments_length2={len(matched_fragments)}")
+    # This only filters
     for fragment in matched_fragments:
         index = fragment["index"]
         time_start = fragment["start"]
@@ -441,6 +455,7 @@ def align(args, asr_output_fragments, transcript, alphabet):
         # Should pause after each playtime.
     # with open(aligned, 'w', encoding='utf-8') as result_file:
     #   result_file.write(json.dumps(result_fragments, indent=4 if args.output_pretty else None, ensure_ascii=False))
+
     num_result_fragments = len(result_fragments)
     num_dropped_fragments = len(fragments) - len(result_fragments)
     # print(f"GALVEZ:reasons={reasons}")
@@ -449,13 +464,20 @@ def align(args, asr_output_fragments, transcript, alphabet):
     return num_result_fragments, num_dropped_fragments, reasons, result_fragments
 
 
-def prepare_align_udf(dsalign_args, alphabet_path):
+def prepare_align_udf(
+    dsalign_args, alphabet_path, max_length_ms, max_silence_length_ms
+):
     args = dsalign_args
     ALIGN_RETURN_TYPE = T.StructType(
         [
             T.StructField("start_ms", T.ArrayType(T.LongType())),
             T.StructField("end_ms", T.ArrayType(T.LongType())),
             T.StructField("label", T.ArrayType(T.StringType())),
+            T.StructField("cer", T.ArrayType(T.FloatType())),
+            T.StructField("wer", T.ArrayType(T.FloatType())),
+            T.StructField("hypotheses", T.ArrayType(T.StringType())),
+            # T.StructField("sws", T.ArrayType(T.FloatType())),
+            # T.StructField("levenshtein", T.ArrayType(T.FloatType())),
         ]
     )
 
@@ -467,13 +489,28 @@ def prepare_align_udf(dsalign_args, alphabet_path):
         ctm_content_series: pd.Series,
     ) -> pd.DataFrame:
         alphabet = Alphabet(alphabet_path)
-        result_dict = {"start_ms": [], "end_ms": [], "label": []}
+        silence_words = frozenset(["<unk>", "[laughter]", "[noise]"])
+        result_dict = {
+            "start_ms": [],
+            "end_ms": [],
+            "label": [],
+            "cer": [],
+            "wer": [],
+            "hypotheses": [],
+            # "sws": [],
+            # "levenshtein": []
+        }
         for name, audio_name, ctm_content, transcript in zip(
             name_series, audio_name_series, ctm_content_series, transcript_series
         ):
             print(f"GALVEZ:name={name}")
             print(f"GALVEZ:audio_name={audio_name}")
-            fragments = join_fragments(parse_ctm(ctm_content), 15_000)
+            fragments = join_fragments(
+                parse_ctm(ctm_content, silence_words),
+                max_length_ms,
+                max_silence_length_ms,
+                audio_name,
+            )
             # timeout after 200 seconds
             output = timeout(
                 align, (args, fragments, transcript, alphabet), timeout_duration=200
@@ -485,19 +522,41 @@ def prepare_align_udf(dsalign_args, alphabet_path):
                 start_times = []
                 end_times = []
                 labels = []
+                cers = []
+                wers = []
+                hypotheses = []
+                # swses = []
+                # levenshteins = []
                 for result in aligned_results:
                     start_times.append(result["start"])
                     end_times.append(result["end"])
-                    labels.append(result["aligned-raw"])
-                    # TODO: Add metrics like CER, WER, etc., for filtering out
-                    # bad alignments later.
+                    labels.append(result["aligned"])
+                    hypotheses.append(result["transcript"])
+
+                    cers.append(result["cer"])
+                    wers.append(result["wer"])
+                    # swses.append(result['sws'])
+                    # levenshteins.append(result['levenshtein'])
+                    # aligned-raw includes tokens that are not part of the alphabet.
+                    # We would like to exclude those.
+                    # labels.append(result['aligned-raw'])
                 result_dict["start_ms"].append(start_times)
                 result_dict["end_ms"].append(end_times)
                 result_dict["label"].append(labels)
+                result_dict["cer"].append(cers)
+                result_dict["wer"].append(wers)
+                result_dict["hypotheses"].append(hypotheses)
+                # result_dict["sws"].append(swses)
+                # result_dict["levenshtein"].append(levenshteins)
             else:
                 result_dict["start_ms"].append([])
                 result_dict["end_ms"].append([])
                 result_dict["label"].append([])
+                result_dict["cer"].append([])
+                result_dict["wer"].append([])
+                result_dict["hypotheses"].append([])
+                # result_dict["sws"].append([])
+                # result_dict["levenshtein"].append([])
         return pd.DataFrame(result_dict)
 
     return align_table
