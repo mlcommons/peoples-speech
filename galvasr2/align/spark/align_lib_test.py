@@ -128,7 +128,7 @@ class CreateAudioSegmentTest(unittest.TestCase):
         mem_bytes = os.sysconf("SC_PAGE_SIZE") * os.sysconf(
             "SC_PHYS_PAGES"
         )  # e.g. 4015976448
-        mem_gib = int((mem_bytes / (1024.0 ** 3)) * 0.9)
+        mem_gib = int((mem_bytes / (1024.0**3)) * 0.9)
         tar_jar = os.path.join(
             find_runfiles(), "__main__/galvasr2/spark/tar_spark_datasource.jar"
         )
@@ -205,7 +205,7 @@ class CreateAudioSegmentTest(unittest.TestCase):
     #     name = F.regexp_replace(name, r"/", "_SLASH_")
     #     name = F.regexp_replace(name, r"\.", "_DOT_")
     #     name = F.regexp_replace(name, r" ", "_SPACE_")
-        
+
     #     alignments_audio_df = alignments_audio_df.withColumn(
     #         "aligned_chunks",
     #         create_audio_segments_udf(
@@ -370,16 +370,23 @@ class CreateAudioSegmentTest(unittest.TestCase):
         print("GALVEZ:max_cer=", max_cer)
         print("GALVEZ:min_duration_ms=", min_duration_ms)
         print("GALVEZ:total number of hours=", abc)
-        
-        
+
+
 # gs://the-peoples-speech-west-europe/forced-aligner/cuda-forced-aligner/output_work_dir_5b/output_work_dir_5b/dataset_tars_jul_28_wav_new_join_no_space_dropped_duplicated_data
 # gs://the-peoples-speech-west-europe/forced-aligner/cuda-forced-aligner/output_work_dir_5b/output_work_dir_5b/dataset_manifest_jul_28_wav_new_join_no_space_dropped_duplicated_data
-        
+
+
 def count_seconds(row):
     with wave.open(io.BytesIO(row["value"])) as wav_fh:
-        true_frames = len(wav_fh.readframes(wav_fh.getnframes())) / wav_fh.getsampwidth()
-        return {"key": row["key"], "duration": int(1000.0 * (true_frames / wav_fh.getframerate()))}
-        
+        true_frames = (
+            len(wav_fh.readframes(wav_fh.getnframes())) / wav_fh.getsampwidth()
+        )
+        return {
+            "key": row["key"],
+            "duration": int(1000.0 * (true_frames / wav_fh.getframerate())),
+        }
+
+
 if __name__ == "__main__":
     unittest.main()
 

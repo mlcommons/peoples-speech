@@ -82,10 +82,9 @@ def DecodeToRawPipe(input_bytes, fmt):
     assert p.returncode == 0, err
     return out
 
+
 def EncodeFlacFromRawPipe(input_bytes):
-    cmd = (
-        f"flac --compression-level-0 --stdout --force-raw-format --channels=1 --sample-rate=16000 --input-size={len(input_bytes)} --sign=signed --bps=16 -"
-    )
+    cmd = f"flac --compression-level-0 --stdout --force-raw-format --channels=1 --sample-rate=16000 --input-size={len(input_bytes)} --sign=signed --bps=16 -"
     p = subprocess.Popen(
         shlex.split(cmd),
         stdin=subprocess.PIPE,
@@ -95,6 +94,7 @@ def EncodeFlacFromRawPipe(input_bytes):
     out, err = p.communicate(input=input_bytes)
     assert p.returncode == 0, err
     return out
+
 
 def EncodeFromRawPipe(input_bytes, fmt):
     # cmd = f'ffmpeg -f s16le -ar 16k -ac 1 -i - -f {fmt} -'
@@ -120,6 +120,7 @@ def EncodeFromRawPipe(input_bytes, fmt):
 #         if line.endswith("."):
 #             yield " ".join([line.content for line in lines[start_of_sentence_i:i]])
 #             start_of_sentence_i = i + 1
+
 
 @pandas_udf(StringType())
 def srt_to_text(srt_file_contents: pd.Series) -> pd.Series:
@@ -465,7 +466,7 @@ def load_audio_and_text_dfs(spark, input_catalogue_path: str):
         filtered_exploded_df.identifier,
         filtered_exploded_df.exploded_files["name"].alias("text_document_id"),
         filtered_exploded_df.exploded_files.format.alias("text_document_format"),
-        filtered_exploded_df.metadata.licenseurl.alias("licenseurl")
+        filtered_exploded_df.metadata.licenseurl.alias("licenseurl"),
     ).where((filtered_exploded_df.exploded_files.format == "SubRip"))
 
     audio_df = filtered_exploded_df.select(
@@ -675,12 +676,21 @@ def create_audio_segments_udf(
     output_audio_codec_series: pd.Series,
 ) -> pd.DataFrame:
     output_array = []
-    assert (len(audio_bytes_series) == len(audio_type_series) and
-            len(audio_type_series) == len(audio_name_series) and
-            len(audio_name_series) == len(start_ms_array_series) and
-            len(start_ms_array_series) == len(end_ms_array_series) and
-            len(end_ms_array_series) == len(output_audio_codec_series))
-    for audio_bytes, audio_type, audio_name, start_ms_array, end_ms_array, output_audio_codec in zip(
+    assert (
+        len(audio_bytes_series) == len(audio_type_series)
+        and len(audio_type_series) == len(audio_name_series)
+        and len(audio_name_series) == len(start_ms_array_series)
+        and len(start_ms_array_series) == len(end_ms_array_series)
+        and len(end_ms_array_series) == len(output_audio_codec_series)
+    )
+    for (
+        audio_bytes,
+        audio_type,
+        audio_name,
+        start_ms_array,
+        end_ms_array,
+        output_audio_codec,
+    ) in zip(
         audio_bytes_series,
         audio_type_series,
         audio_name_series,
@@ -696,10 +706,12 @@ def create_audio_segments_udf(
         segmented_audio = {"audio_name": [], "audio": []}
         for i, (start_ms, end_ms) in enumerate(zip(start_ms_array, end_ms_array)):
             chunk = audio_segment[start_ms:end_ms]
-            assert (abs(len(chunk.raw_data) / 16_000 / 2) * 1000 - (end_ms - start_ms)) <= 1.0, f"{(len(chunk.raw_data) / 16_000 / 2) * 1000} vs. {end_ms - start_ms}"
-            segment_flac_bytes = EncodeFromRawPipe(
-                chunk.raw_data, output_audio_codec
+            assert (
+                abs(len(chunk.raw_data) / 16_000 / 2) * 1000 - (end_ms - start_ms)
+            ) <= 1.0, (
+                f"{(len(chunk.raw_data) / 16_000 / 2) * 1000} vs. {end_ms - start_ms}"
             )
+            segment_flac_bytes = EncodeFromRawPipe(chunk.raw_data, output_audio_codec)
             segmented_audio["audio"].append(segment_flac_bytes)
         output_array.append(segmented_audio)
     audio_segment_names_series = create_audio_segment_names_udf.func(
@@ -717,14 +729,18 @@ AUDIO_SEGMENT_NAMES_RETURN_TYPE = T.ArrayType(T.StringType())
 
 @F.pandas_udf(AUDIO_SEGMENT_NAMES_RETURN_TYPE)
 def create_audio_segment_names_udf(
-    audio_name_series: pd.Series, num_aligned_utterances_series: pd.Series,
+    audio_name_series: pd.Series,
+    num_aligned_utterances_series: pd.Series,
     suffix_series: pd.Series,
 ) -> pd.Series:
-    assert (len(audio_name_series) == len(num_aligned_utterances_series) and
-            len(num_aligned_utterances_series) == len(suffix_series))
+    assert len(audio_name_series) == len(num_aligned_utterances_series) and len(
+        num_aligned_utterances_series
+    ) == len(suffix_series)
     audio_segment_names = []
     for audio_name, num_aligned_utterances, suffix in zip(
-            audio_name_series, num_aligned_utterances_series, suffix_series,
+        audio_name_series,
+        num_aligned_utterances_series,
+        suffix_series,
     ):
         audio_segment_names.append([])
         for i in range(num_aligned_utterances):
