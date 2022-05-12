@@ -2,20 +2,18 @@ import os
 import json
 import logging
 import argparse
-import deepspeech
 import subprocess
 import os.path as path
 import numpy as np
 import textdistance
 import multiprocessing
 from collections import Counter
-from search import FuzzySearch
+from galvasr2.align.search import FuzzySearch
 from glob import glob
-from text import Alphabet, TextCleaner, levenshtein, similarity
-from utils import enweight, log_progress
-from audio import DEFAULT_RATE, read_frames_from_file, vad_split
-from generate_lm import convert_and_filter_topk, build_lm
-from generate_package import create_bundle
+from galvasr2.align.text import Alphabet, TextCleaner, levenshtein, similarity
+from galvasr2.align.utils import enweight, log_progress
+from galvasr2.align.audio import DEFAULT_RATE, read_frames_from_file, vad_split
+from galvasr2.align.generate_lm import convert_and_filter_topk, build_lm
 
 BEAM_WIDTH = 500
 LM_ALPHA = 1
@@ -80,13 +78,7 @@ model = None
 
 
 def init_stt(output_graph_path, scorer_path):
-    # global model? How are we supposed to do multiprocessing then?
-    global model
-    model = deepspeech.Model(output_graph_path)
-    # It definitely seems very reasonable to adapt the
-    # ctc_decoder_with_kenlm tensorflow operator to use this...
-    model.enableExternalScorer(scorer_path)
-    logging.debug("Process {}: Loaded models".format(os.getpid()))
+    raise Exception("Dead code")
 
 
 def stt(sample):

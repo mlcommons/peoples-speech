@@ -1,5 +1,5 @@
 from collections import Counter
-from text import ngrams, similarity
+from galvasr2.align.text import ngrams, similarity
 
 from galvasr2.align.smith_waterman import sw_align as sw_align_sped_up
 
