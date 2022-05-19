@@ -5,7 +5,7 @@ To run the test locally, gentle receives a .txt file without timestamps and an a
 Setup your directory with a copy of the script_text directory, containing the .srt and .flac file. 
 
 1. Run 
-    `cd $(pwd)/script_text`
+    `cd peoples-speech/script_text`
 2. Run 
 `python ts_remove.py`
 3. Run
