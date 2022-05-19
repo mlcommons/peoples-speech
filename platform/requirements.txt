@@ -1,6 +1,0 @@
-iso-639
-smart-open
-gtts
-python-configuration[yaml]
-whoosh
-audiofile
