@@ -2,7 +2,7 @@
 
 To run the test locally, gentle receives a .txt file without timestamps and an audio file.
 
-Setup your directory with a copy of the script_text directory, containing the .srt and .flac file. 
+Clone the repo and do the following:
 
 1. Run 
     `cd peoples-speech && git checkout rafael/gentle_aligner_test && cd script_test`
