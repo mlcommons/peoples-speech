@@ -148,17 +148,18 @@ def main(argv):
         "SC_PHYS_PAGES"
     )  # e.g. 4015976448
     mem_gib = int((mem_bytes / (1024.0 ** 3)) * 0.9)
-    jar_path, = galvasr2.__path__
-    jars = ",".join(glob.glob(
-        os.path.join(jar_path, "*.jar")
-    ))
+    (jar_path,) = galvasr2.__path__
+    jars = ",".join(glob.glob(os.path.join(jar_path, "*.jar")))
     print("GALVEZ:jars=", jars)
     os.makedirs("/tmp/spark-events", exist_ok=True)
     spark = (
         pyspark.sql.SparkSession.builder.master(f"local[{os.cpu_count()}]")
         .config("spark.eventLog.enabled", "true")
-        #.config("spark.eventLog.dir", "/spark-events")
-        .config("spark.hadoop.fs.AbstractFileSystem.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS")
+        # .config("spark.eventLog.dir", "/spark-events")
+        .config(
+            "spark.hadoop.fs.AbstractFileSystem.gs.impl",
+            "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS",
+        )
         .config("spark.sql.execution.arrow.pyspark.enabled", "true")
         .config(
             "spark.driver.extraJavaOptions",
@@ -193,10 +194,14 @@ def main(argv):
         F.lit("/"),
         F.col("text_document_id"),
     )
-    temp_catalogue_df = catalogue_df.withColumn("audio_paths", audio_paths).withColumn("srt_paths", srt_paths)
+    temp_catalogue_df = catalogue_df.withColumn("audio_paths", audio_paths).withColumn(
+        "srt_paths", srt_paths
+    )
     # print("GALVEZ:schema=")
     # temp_catalogue_df.printSchema()
-    temp_catalogue_df.toPandas().to_json("audio_id_text_id_mapping.json", orient="records", lines=True)
+    temp_catalogue_df.toPandas().to_json(
+        "audio_id_text_id_mapping.json", orient="records", lines=True
+    )
 
     _, licenseurl_df = load_audio_and_text_dfs(spark, FLAGS.input_catalogue)
     licenseurl_df = licenseurl_df.select(
@@ -581,12 +586,8 @@ def main(argv):
         # coalesce(1) seems to make the create_audio_segments_udf function run serially
         output_df.write.mode("overwrite").json(manifest_dir)
 
-    repartitioned_tars_dir = os.path.join(
-        FLAGS.work_dir, "repartitioned_dataset_tars"
-    )
-    tmp_tars_dir = os.path.join(
-        FLAGS.work_dir, "repartitioned_dataset_tmp_dir"
-    )
+    repartitioned_tars_dir = os.path.join(FLAGS.work_dir, "repartitioned_dataset_tars")
+    tmp_tars_dir = os.path.join(FLAGS.work_dir, "repartitioned_dataset_tmp_dir")
     if FLAGS.stage <= 4 and FLAGS.end_stage >= 4:
         tars_df = spark.read.format("tar").load(tars_dir)  # .limit(100)
         number_of_rows = tars_df.count()
