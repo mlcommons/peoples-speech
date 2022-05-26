@@ -16,7 +16,6 @@ import threading
 from typing import List, Tuple
 import wave
 
-import ds_ctcdecoder
 from ftfy import fix_text, guess_bytes
 import langid
 import numpy as np
@@ -25,11 +24,10 @@ import pydub
 from pydub import AudioSegment
 import pyspark
 from matching.games import HospitalResident
-import tensorflow as tf
+import srt
 import tqdm
 
 import re
-import srt
 
 from pyspark.sql.functions import col, pandas_udf
 import pyspark.sql.types as T
@@ -315,109 +313,6 @@ def prepare_vad_udf(num_padding_frames, threshold, aggressiveness, frame_duratio
 
 
 GENERATE_LM_OUTPUT_SCHEMA = StructType([StructField("path", StringType())])
-
-
-def prepare_generate_lm_udf(kenlm_path: str, debug_work_dir: str, alphabet_path: str):
-    # @pandas_udf(GENERATE_LM_OUTPUT_SCHEMA)
-    # TODO: Need to sort the log_probabilities by int64_uttid (right?)
-    def generate_lm(
-        grouping_key: Tuple[np.str, np.str], data_df: pd.DataFrame
-    ) -> pd.DataFrame:
-        (
-            identifier,
-            text_document_id,
-        ) = grouping_key
-        identifier = str(identifier)
-        text_document_id = str(text_document_id)
-
-        transcript = data_df.transcript[0]
-        with tempfile.NamedTemporaryFile("w+t", dir=debug_work_dir) as input_txt:
-            input_txt.write(transcript)
-            input_txt.flush()
-            os.makedirs(os.path.join(debug_work_dir, identifier), exist_ok=True)
-            scorer_path = os.path.join(
-                debug_work_dir, identifier, text_document_id + ".scorer"
-            )
-            data_lower, vocab_str = convert_and_filter_topk(
-                scorer_path, input_txt.name, 500000
-            )
-            build_lm(
-                scorer_path,
-                kenlm_path,
-                5,
-                "85%",
-                "0|0|1",
-                True,
-                255,
-                8,
-                "trie",
-                data_lower,
-                vocab_str,
-            )
-            os.remove(scorer_path + "." + "lower.txt.gz")
-            os.remove(scorer_path + "." + "lm.arpa")
-            os.remove(scorer_path + "." + "lm_filtered.arpa")
-
-            create_bundle(
-                alphabet_path,
-                scorer_path + "." + "lm.binary",
-                scorer_path + "." + "vocab-500000.txt",
-                scorer_path,
-                False,
-                0.931289039105002,
-                1.1834137581510284,
-            )
-            os.remove(scorer_path + "." + "lm.binary")
-            os.remove(scorer_path + "." + "vocab-500000.txt")
-
-        with open(alphabet_path) as fh:
-            num_output_symbols = len(fh.readlines()) + 1
-        assert num_output_symbols == 32, f"GALVEZ:{num_output_symbols}"
-        transcripts = []
-
-        id_to_symbol = {}
-        with open(alphabet_path) as fh:
-            for i, line in enumerate(fh):
-                id_to_symbol[i] = line.rstrip()
-        id_to_symbol[31] = "blank"
-
-        for row in data_df.itertuples():
-            log_probabilities = row.log_probabilities.reshape(-1, num_output_symbols)
-            probabilities = np.exp(log_probabilities)
-            # np.exp(probabilities, out=probabilities)
-            np.testing.assert_allclose(probabilities.sum(axis=1), 1.0, atol=1e-3)
-            # simple_decoder_output = []
-            # for t in range(probabilities.shape[0]):
-            #   best = np.argmax(probabilities[t,:])
-            #   print(np.max(probabilities[t,:]))
-            #   if (id_to_symbol[best] != "blank"):
-            #     simple_decoder_output.append(id_to_symbol[best])
-
-            # print("GALVEZ simple output:", "".join(simple_decoder_output))
-
-            cutoff_prob = 1.0
-            cutoff_top_n = 100
-            scorer = ds_ctcdecoder.Scorer()
-            result = scorer.init(
-                scorer_path.encode("utf-8"), alphabet_path.encode("utf-8")
-            )
-            scorer.set_utf8_mode(False)
-            assert result == 0, result
-            alphabet = ds_ctcdecoder.Alphabet()
-            result = alphabet.init(alphabet_path.encode("utf-8"))
-            assert not scorer.is_utf8_mode()
-            assert result == 0, result
-            scorer = None
-            outputs = ds_ctcdecoder.ctc_beam_search_decoder(
-                probabilities, alphabet, 100, cutoff_prob, cutoff_top_n, scorer
-            )
-            print(f"GALVEZ:output={outputs[0][1]}")
-            print(f"GALVEZ:length={probabilities.shape[0] * 30. / 1000.}")
-            transcripts.append(outputs[0][1])
-
-        return pd.DataFrame({"path": pd.Series(transcripts)})
-
-    return generate_lm
 
 
 def load_audio_and_text_dfs(spark, input_catalogue_path: str):

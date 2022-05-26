@@ -6,12 +6,12 @@ import threading
 from typing import Dict, List, Tuple
 
 from collections import Counter
-from search import FuzzySearch
+from galvasr2.align.search import FuzzySearch
 import textdistance
 from glob import glob
-from text import Alphabet, TextCleaner, levenshtein, similarity
-from utils import enweight
-from dsalign_main import ALGORITHMS, NAMED_NUMBERS
+from galvasr2.align.text import Alphabet, TextCleaner, levenshtein, similarity
+from galvasr2.align.utils import enweight
+from galvasr2.align.dsalign_main import ALGORITHMS, NAMED_NUMBERS
 
 import logging
 
