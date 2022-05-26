@@ -147,7 +147,7 @@ def main(argv):
     mem_bytes = os.sysconf("SC_PAGE_SIZE") * os.sysconf(
         "SC_PHYS_PAGES"
     )  # e.g. 4015976448
-    mem_gib = int((mem_bytes / (1024.0 ** 3)) * 0.9)
+    mem_gib = int((mem_bytes / (1024.0**3)) * 0.9)
     (jar_path,) = galvasr2.__path__
     jars = ",".join(glob.glob(os.path.join(jar_path, "*.jar")))
     print("GALVEZ:jars=", jars)
