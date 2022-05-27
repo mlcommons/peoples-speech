@@ -28,7 +28,7 @@ QUERIES = dict(
     # ALL_CAPTIONED_DATA=f"{LICENSE_WHITELIST} AND (mediatype:audio OR mediatype:movies) AND (closed_captioning:yes OR format:SubRip OR format:\"Web Video Text Tracks\") AND (NOT access-restricted-item:TRUE)",
     # NON_CAPTIONED_DATA_WITH_TEXT=f"{LICENSE_WHITELIST} AND (format:DjVuTXT AND format:MP3 AND NOT format:SubRip) AND NOT (subject:'librivox')",
     # CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS=f'{LICENSE_WHITELIST} AND (mediatype:audio OR mediatype:movies) AND (closed_captioning:yes OR format:SubRip OR format:"Web Video Text Tracks") AND (NOT access-restricted-item:TRUE)',
-    CC_BY_SA_ALL_AUDIO_LABELED_OR_UNLABELED=f'{LICENSE_WHITELIST} AND (mediatype:audio OR mediatype:movies) AND (NOT access-restricted-item:TRUE)',
+    CC_BY_SA_ALL_AUDIO_LABELED_OR_UNLABELED=f"{LICENSE_WHITELIST} AND (mediatype:audio OR mediatype:movies) AND (NOT access-restricted-item:TRUE)",
 )
 
 
@@ -94,7 +94,7 @@ if __name__ == "__main__":
         download_data(
             save_file,
             # Ryan: Change this output path
-            f"download_output/{key}"
+            f"download_output/{key}",
         )
 
     # download_data("CAPTIONED_DATA.jsonl.gz", "gs://the-peoples-speech-west-europe/archive_org/Aug_18_2020/CAPTIONED_DATA")
