@@ -3,7 +3,7 @@ To run the test locally, gentle receives a .txt file without timestamps and an a
 
 Clone the repo and do the following:
 
-1. Run `cd peoples-speech && git checkout rafael/aligner_test && cd script_test`
+1. Run `cd peoples-speech && git checkout rafael/aligner_test && cd gentle_test/script_test`
 
 2. Run `python ts_remove.py && cd ..`
 
