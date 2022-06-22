@@ -4,7 +4,7 @@
 # You may find more detail on Conformer-CTC at `examples/asr/conf/conformer/conformer_ctc_bpe.yaml`
 
 name: "Conformer-CTC-Char"
-n_gpus: ???
+n_gpus: 1
 seed: 64
 
 model:
@@ -16,7 +16,7 @@ model:
   skip_nan_grad: false
 
   train_ds:
-    manifest_filepath: ???
+    manifest_filepath: /data/the-peoples-speech/cc-by-clean/nemo_format_manifest.jsonl
     labels: ${model.labels}
     sample_rate: ${model.sample_rate}
     batch_size: 16 # you may increase batch_size if your memory allows
@@ -27,15 +27,15 @@ model:
     max_duration: 16.7 # it is set for LibriSpeech, you may need to update it for your dataset
     min_duration: 0.1
     # tarred datasets
-    is_tarred: false
-    tarred_audio_filepaths: ???
+    is_tarred: true
+    tarred_audio_filepaths: ['/data/the-peoples-speech/cc-by-clean/audios/clean_003112.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_006100.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_005107.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_001983.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_001354.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_004500.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_004167.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_006446.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_006863.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_004353.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_010963.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_002015.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_000591.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_004434.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_004546.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_005451.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_010742.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_002227.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_002134.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_003505.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_005088.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_004726.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_008553.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_000979.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_000243.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_011018.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_006069.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_001188.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_004215.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_007987.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_000877.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_005041.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_006234.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_004674.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_001663.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_009087.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_007260.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_007950.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_000344.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_004077.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_004305.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_007714.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_010054.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_010488.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_004318.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_005287.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_004249.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_007623.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_006132.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_008651.tar', '/data/the-peoples-speech/cc-by-clean/audios/clean_009961.tar']
     shuffle_n: 2048
     # bucketing params
     bucketing_strategy: "synced_randomized"
     bucketing_batch_size: null
 
   validation_ds:
-    manifest_filepath: ???
+    manifest_filepath: "/data/librispeech/dev_clean.json"
     labels: ${model.labels}
     sample_rate: ${model.sample_rate}
     batch_size: 16 # you may increase batch_size if your memory allows
@@ -126,10 +126,10 @@ model:
 
     # scheduler setup
     sched:
-      name: NoamAnnealing
-      d_model: ${model.encoder.d_model}
+      name: CosineAnnealing
+     
       # scheduler config override
-      warmup_steps: 10000
+      warmup_steps: 1000
       warmup_ratio: null
       min_lr: 1e-6
 
@@ -156,7 +156,7 @@ trainer:
 
 
 exp_manager:
-  exp_dir: ???
+  exp_dir: /experiments
   name: ${name}
   create_tensorboard_logger: true
   create_checkpoint_callback: true
