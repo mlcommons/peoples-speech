@@ -3,7 +3,7 @@
 
 # You may find more detail on Conformer-CTC at `examples/asr/conf/conformer/conformer_ctc_bpe.yaml`
 
-name: ???
+name: "Conformer-CTC-Char"
 n_gpus: ???
 seed: 64
 
@@ -14,10 +14,11 @@ model:
   log_prediction: false # enables logging sample predictions in the output during training
   ctc_reduction: 'mean_batch'
   use_cer: true
+  skip_nan_grad: false
 
   train_ds:
     manifest_filepath: ???
-    tarred_audio_filepaths: ???
+    tarred_audio_filepaths: '/data/the-peoples-speech/cc-by-clean/audios/part-{00000..00999}-5f4dc359-da2b-44e3-bc2e-acd03133d1f6-c000.tar'
     is_tarred: true
     labels: ${model.labels}
     sample_rate: ${model.sample_rate}
@@ -29,14 +30,14 @@ model:
     max_duration: 16.7 # it is set for LibriSpeech, you may need to update it for your dataset
     min_duration: 0.1
     max_cer: 0.13
-    tarred_shard_strategy: "scatter"
+    tarred_shard_strategy: "replicate"
 
   validation_ds:
     manifest_filepath: ???
     sample_rate: ${model.sample_rate}
     labels: ${model.labels}
     batch_size: 1
-    num_workers: 4
+    num_workers: 8
     shuffle: False
     pin_memory: true
 
@@ -77,7 +78,7 @@ model:
     feat_in: ${model.preprocessor.features}
     feat_out: -1 # you may set it if you need different output size other than the default d_model
     n_layers: 16
-    d_model: 320
+    d_model: 256
 
     # Sub-sampling params
     subsampling: striding # vggnet or striding, vggnet may give better results but needs more memory
@@ -98,6 +99,7 @@ model:
 
     # Convolution module's params
     conv_kernel_size: 31
+    conv_norm_type: batch_norm
 
     ### regularization
     dropout: 0.1 # The dropout used in most of the Conformer Modules
@@ -112,7 +114,7 @@ model:
 
   optim:
     name: adamw
-    lr: 0.1
+    lr: 2.0
     # optimizer arguments
     betas: [0.9, 0.98]
     # less necessity for weight_decay as we already have large augmentations with SpecAug
@@ -127,21 +129,22 @@ model:
       # scheduler config override
       warmup_steps: 10000
       warmup_ratio: null
-      min_lr: 1e-10
+      min_lr: 1e-6
 
 trainer:
-  gpus: ${n_gpus} # number of GPUs, -1 would use all available GPUs
+  gpus: -1 # number of GPUs, -1 would use all available GPUs
   num_nodes: 1
   max_epochs: 10
   max_steps: null # computed at runtime if not set
   val_check_interval: 0.05 # Set to 0.25 to check 4 times per epoch, or an int for number of iterations
-  accelerator: ddp
+  accelerator: auto
+  strategy: ddp
   accumulate_grad_batches: 1
   gradient_clip_val: 0.0
   amp_level: O2 # O1/O2 for mixed precision
   amp_backend: apex
-  precision: 16 # Should be set to 16 for O1 and O2 to enable the AMP.
-  log_every_n_steps: 1  # Interval of logging.
+  precision: 32 # Should be set to 16 for O1 and O2 to enable the AMP.
+  log_every_n_steps: 10  # Interval of logging.
   progress_bar_refresh_rate: 10
   resume_from_checkpoint: null # The path to a checkpoint file to continue the training, restores the whole state including the epoch, step, LR schedulers, apex, etc.
   num_sanity_val_steps: 0 # number of steps to perform validation steps for sanity check the validation process before starting the training, setting to 0 disables it
@@ -160,14 +163,15 @@ exp_manager:
     # in case of multiple validation sets, first one is used
     monitor: "val_wer"
     mode: "min"
-    save_top_k: 3
+    save_top_k: 5
+    always_save_nemo: true
 
   # you need to set these two to True to continue the training
   # resume_if_exists: false
   # resume_ignore_no_checkpoint: false
 
   # You may use this section to create a W&B logger
-  create_wandb_logger: false
-  wandb_logger_kwargs:
-    name: null
-    project: null
+  # create_wandb_logger: false
+  # wandb_logger_kwargs:
+    # name: null
+    # project: null
