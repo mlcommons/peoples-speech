@@ -68,7 +68,8 @@ def DecodeToWavPipe(input_bytes, fmt):
 
 def DecodeToRawPipe(input_bytes, fmt):
     cmd = (
-        f"sox -t {fmt} - -t raw --channels 1 --rate 16000 --encoding signed --bits 16 -"
+        f"ffmpeg -hide_banner -loglevel panic -f {fmt} -i - -f s16le -ar 16k -ac 1  -"
+        #f"sox -t {fmt} - -t raw --channels 1 --rate 16000 --encoding signed --bits 16 -"
     )
     p = subprocess.Popen(
         shlex.split(cmd),
@@ -82,7 +83,7 @@ def DecodeToRawPipe(input_bytes, fmt):
 
 
 def EncodeFlacFromRawPipe(input_bytes):
-    cmd = f"flac --compression-level-0 --stdout --force-raw-format --channels=1 --sample-rate=16000 --input-size={len(input_bytes)} --sign=signed --bps=16 -"
+    cmd = f"flac --totally-silent --compression-level-0 --force-raw-format --endian=little --channels=1 --sample-rate=16000 --input-size={len(input_bytes)} --sign=signed --bps=16 -f --stdout -"
     p = subprocess.Popen(
         shlex.split(cmd),
         stdin=subprocess.PIPE,
@@ -384,6 +385,8 @@ def load_audio_and_text_dfs(spark, input_catalogue_path: str):
 # identifer, MP3 file name, transcript file name
 def load_audio_id_text_id_mapping(spark, input_catalogue_path: str):
     audio_df, text_df = load_audio_and_text_dfs(spark, input_catalogue_path)
+    audio_df = audio_df.limit(100)
+    text_df = text_df.limit(100)
 
     joined_df = audio_df.join(text_df, "identifier")
     joined_df = joined_df.withColumn(
@@ -606,7 +609,8 @@ def create_audio_segments_udf(
             ) <= 1.0, (
                 f"{(len(chunk.raw_data) / 16_000 / 2) * 1000} vs. {end_ms - start_ms}"
             )
-            segment_flac_bytes = EncodeFromRawPipe(chunk.raw_data, output_audio_codec)
+            assert output_audio_codec == "flac"
+            segment_flac_bytes = EncodeFlacFromRawPipe(chunk.raw_data)
             segmented_audio["audio"].append(segment_flac_bytes)
         output_array.append(segmented_audio)
     audio_segment_names_series = create_audio_segment_names_udf.func(
@@ -622,6 +626,7 @@ def create_audio_segments_udf(
 AUDIO_SEGMENT_NAMES_RETURN_TYPE = T.ArrayType(T.StringType())
 
 
+# Change based on keys_256_characters
 @F.pandas_udf(AUDIO_SEGMENT_NAMES_RETURN_TYPE)
 def create_audio_segment_names_udf(
     audio_name_series: pd.Series,
@@ -639,7 +644,9 @@ def create_audio_segment_names_udf(
     ):
         audio_segment_names.append([])
         for i in range(num_aligned_utterances):
-            audio_segment_names[-1].append(f"{audio_name}_{i:05d}.{suffix}")
+            name = f"{audio_name}_{i:05d}.{suffix}"
+            assert len(name) < 256, name
+            audio_segment_names[-1].append(name)
     return pd.Series(audio_segment_names)
 
 

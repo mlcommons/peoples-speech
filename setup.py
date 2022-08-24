@@ -10,11 +10,12 @@ setup(
     version="1.0",
     packages=find_packages(),
     install_requires=[
-        "pyspark==3.1.2",
+        # "git+https://github.com/apache/spark.git#egg=pyspark&subdirectory=python",
         "absl-py",
         "pandas",
         "matching",
-        "langid",
+        # "langid",
+        "nemo_toolkit[asr]",
         "tqdm",
         "pydub",
         "ftfy",
@@ -23,7 +24,11 @@ setup(
         "textdistance",
         "sox",
         "Cython",
-        "webrtcvad"
+        "webrtcvad",
+        # From https://github.com/NVIDIA/NeMo/blob/main/tools/ctc_segmentation/requirements.txt
+        # "ctc_segmentation==1.7.1",
+        # "num2words",
+        # End From
     ],
     include_package_data=True,
     package_data={'galvasr2': ['*.jar']},

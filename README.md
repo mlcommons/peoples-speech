@@ -4,7 +4,8 @@ Installation
 
 
 ```
-sudo apt-get install git-lfs
+# libprotobuf-dev is an onnx dependency, transitively brought in by nemo.
+sudo apt-get install git-lfs sox ffmpeg
 # Set up a virtual environment of some sort
 pip install numpy Cython
 python setup.py develop

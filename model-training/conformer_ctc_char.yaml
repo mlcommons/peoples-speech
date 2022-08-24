@@ -3,8 +3,8 @@
 
 # You may find more detail on Conformer-CTC at `examples/asr/conf/conformer/conformer_ctc_bpe.yaml`
 
-name: ???
-n_gpus: ???
+name: galvez_run
+n_gpus: 0
 seed: 64
 
 model:
@@ -16,14 +16,14 @@ model:
   use_cer: true
 
   train_ds:
-    manifest_filepath: ???
-    tarred_audio_filepaths: ???
+    manifest_filepath: '/mnt/disks/spark-scratch/nemo_data/clean_000000.nemo.json'
+    tarred_audio_filepaths: ['/mnt/disks/spark-scratch/nemo_data/clean_000000.tar']
     is_tarred: true
     labels: ${model.labels}
     sample_rate: ${model.sample_rate}
     batch_size: 16 # you may increase batch_size if your memory allows
     shuffle: true
-    num_workers: 8
+    num_workers: 1
     pin_memory: true
     trim_silence: false
     max_duration: 16.7 # it is set for LibriSpeech, you may need to update it for your dataset
@@ -32,7 +32,7 @@ model:
     tarred_shard_strategy: "scatter"
 
   validation_ds:
-    manifest_filepath: ???
+    manifest_filepath: null
     sample_rate: ${model.sample_rate}
     labels: ${model.labels}
     batch_size: 1
@@ -138,15 +138,15 @@ trainer:
   accelerator: ddp
   accumulate_grad_batches: 1
   gradient_clip_val: 0.0
-  amp_level: O2 # O1/O2 for mixed precision
-  amp_backend: apex
-  precision: 16 # Should be set to 16 for O1 and O2 to enable the AMP.
+  # amp_level: O2 # O1/O2 for mixed precision
+  # amp_backend: apex
+  # precision: 16 # Should be set to 16 for O1 and O2 to enable the AMP.
   log_every_n_steps: 1  # Interval of logging.
   progress_bar_refresh_rate: 10
   resume_from_checkpoint: null # The path to a checkpoint file to continue the training, restores the whole state including the epoch, step, LR schedulers, apex, etc.
   num_sanity_val_steps: 0 # number of steps to perform validation steps for sanity check the validation process before starting the training, setting to 0 disables it
   check_val_every_n_epoch: 1 # number of evaluations on validation every n epochs
-  sync_batchnorm: true
+  sync_batchnorm: false
   checkpoint_callback: false  # Provided by exp_manager
   logger: false  # Provided by exp_manager
 
