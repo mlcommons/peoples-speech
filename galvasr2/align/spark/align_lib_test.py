@@ -128,7 +128,7 @@ class CreateAudioSegmentTest(unittest.TestCase):
         mem_bytes = os.sysconf("SC_PAGE_SIZE") * os.sysconf(
             "SC_PHYS_PAGES"
         )  # e.g. 4015976448
-        mem_gib = int((mem_bytes / (1024.0 ** 3)) * 0.9)
+        mem_gib = int((mem_bytes / (1024.0**3)) * 0.9)
         tar_jar = os.path.join(
             find_runfiles(), "__main__/galvasr2/spark/tar_spark_datasource.jar"
         )
