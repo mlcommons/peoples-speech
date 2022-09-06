@@ -66,7 +66,7 @@ Then the audio. We suggest you open a screen/tmux to perform this download, to p
 
     tmux
     mkdir ~/data/the-peoples-speech/cc-by-clean/audios
-    python3 ~/peoples-speech/model-training/download.py
+    python3 ~/peoples-speech/model-training/download_hf.py
 
 Now that the download script is running, you can unattach from the tmux window using `ctrl+b` and then `d`on your keyboard. The download script will keep on running behind the scenes, and if your connection to the VM drops it'll keep on going.
 
