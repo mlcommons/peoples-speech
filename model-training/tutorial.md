@@ -71,7 +71,7 @@ Now that the download script is running, you can unattach from the tmux window u
 
 Note that we are using preemptible instances. They're a lot cheaper, but they shut off after 24 hours. Given that we're using a subset for this tutorial, downloading the files should take no more than a couple minutes. Training with the whole dataset will imply downloading data for more than 30 hours!
 
-## 4. Pull our Docker image to your VM
+## 5. Pull our Docker image to your VM
 
 We prepared a Docker image with the software you'll need to train NeMo models. It's on Github. To download it run the following commands:
 
@@ -84,7 +84,7 @@ If it was pulled correctly, the output of `docker image list`
 should include a line containing the following tag: 
 peoplespeech
 
-## 5. Verify GPU availability
+## 6. Verify GPU availability
 
 We’re almost ready to start training speech-to-text models on a GPU! We’ll attach one to our VM in the next step, but first we need to verify that our GCP quota allows it. Google Cloud uses [quotas](https://cloud.google.com/compute/quotas#gpu_quota) to restrict users’ access to resources, so that they won’t accidentaly incur in unforeseen charges. You can check for your quotas on any region by issuing the following command. Note that quotas work
 region -wise. We specified a zone when creating our VM; regions are larger than zones. My VM’s zone is `europe-west4-b`, and its region is `europe-west4`.
@@ -102,11 +102,11 @@ You’re welcome to use another GPU if it better fits your needs, V100 is just w
 Don’t worry, increasing quotas in GCP rarely takes over a day in my personal experience. We would give you instructions on this, but Google does it better, so go check out their [guide](https://cloud.google.com/docs/quota#requesting_higher_quota). Just remember you’re trying to increase the limit for
 `PREEMPTIBLE_NVIDIA_V100_GPUS` in your VM’s region. Requesting quota increases is completely free, so request away!
 
-## 6. Verify download
+## 7. Verify download
 
 At this point you should check back on your download script. To do so, you have to attach back to the tmux window where we left the script running. Run `tmux attach -t 0` and, if the download is not done, wait (it should take at most 15 minutes). After downloading the files, run the `exit` command. 
 
-## 7. Attach a GPU to your VM
+## 8. Attach a GPU to your VM
 
 Unfortunately, there’s currently no way to attach a GPU to an existing VM using
 gcloud. You’ll have to use the Google Cloud Console (GCP’s browser UI). Follow
@@ -114,7 +114,7 @@ GCP’s [guide](https://cloud.google.com/compute/docs/gpus/add-remove-gpus#add-g
 
 Bear in mind that this will increase the price of keeping your instance on to 1.03 USD/hour for one GPU and up to 5 USD/hour if you attach 4 of them. Please don’t get the feeling that this is cheap, it adds up quickly!
 
-## 8. Improve your VM's vCPU count and memory 
+## 9. Improve your VM's vCPU count and memory 
 
 In order to train on a GPU, you need to increase the vCPU count and memory of our VM. These components are in charge of reading samples from disk, preprocessing them, and passing them to the GPU. Multiple vCPU can preprocess data in parallel (hence the count increase), and the VM needs enough memory to hold one batch of preprocessed data (hence the memory increase).
 
@@ -126,7 +126,7 @@ We then change the machine type to one with 8 vCPU and 52GB RAM:
     
     gcloud compute instances set-machine-type peoples-speech-training --machine-type n1-highmem-8
 
-## 9. Run the container and verify the GPU
+## 10. Run the container and verify the GPU
 
 Start your VM again, log into it, and run the image we pulled in Step 3.
 
@@ -146,13 +146,13 @@ If it doesn’t you either didn’t attach it correctly or its drivers aren’t 
 
     sudo /opt/deeplearning/install-driver.sh
 
-## 10. Obtain a validation set
+## 11. Obtain a validation set
 
 We'll be using a subset of [Librispeech](https://ieeexplore.ieee.org/document/7178964) [2] as a validation set. NeMo includes scripts to download and format this dataset:
 
     python /workspace/NeMo/scripts/dataset_processing/get_librispeech_data.py --data_root=/data/librispeech --data_set=dev_clean
 
-## 11. Train the Model
+## 12. Train the Model
 
 We’re ready to train! We’ll use the `train_ctc_model.py` for that. This script uses
 NVIDIA NeMo to specify a 27M-parameter Conformermodel. NeMo uses [Hydra](https://hydra.cc/) to configure models. This allows for easier configuration versioning, which is often overlooked in Machine Learning code. The model configuration we’ll use is inside
@@ -171,7 +171,7 @@ NVIDIA NeMo to specify a 27M-parameter Conformermodel. NeMo uses [Hydra](https:/
 NeMo will store logs, checkpoints, and metrics (Tensorboard) in the
 `~/experiments/tutorial-training` directory.
 
-## 12. Keep training or fine tuning
+## 13. Keep training or fine tuning
 After 18 hours of training, our model reached 12.75% CER on Librispeech's dev-clean
 subset. To keep training, rerun the container, find the artifacts from the previous training at `/experiments/tutorial-training` and issue a command like:
 
@@ -182,14 +182,14 @@ We trained a model using this method that reached 5.02% CER, 10.47% WER on the s
 
 Note that `trainer.resume_from_checkpoint` also allows you to finetune a pre-trained model, [like the ones published by NVIDIA](https://catalog.ngc.nvidia.com/models).
 
-## 13. What's next? 
+## 14. What's next? 
 
 The model we trained is an [acoustic model](https://en.wikipedia.org/wiki/Acoustic_model)— one that maps auditive units to textual units. You could now:
 - Use the model to transcribe audio. Hint: use our script `peoples-speech/model-training/transcribe.py`.
 - Improve said transcriptions by involving a language model in the transcription process. An acoustic model is mostly unaware of which letter combinations make up actual words; a LM can provide this kind of information. Hint : Use our script `peoples-speech/model-training/transcribe.py` . Specify the `--kenlm_model_path` parameter ([see the docs for KenLM](https://github.com/kpu/kenlm)).
 - Finetune on other data, or mix The People’s Speech in with other datasets.
 
-## 14. References 
+## 15. References 
 
 [1] Galvez, Daniel, Greg Diamos, Juan Ciro, Juan Felipe Cerón, Keith Achorn, Anjali Gopi, David Kanter, Maximilian Lam, Mark Mazumder, and Vijay Janapa Reddi. “The People’s Speech: A Large-Scale Diverse English Speech Recognition Dataset for Commercial Usage.” arXiv preprint arXiv:2111.09344 (2021).
 
