@@ -43,7 +43,7 @@ Don't forget to replace both the project name and the [GCP zone](https://cloud.g
 We prepared a Docker image as well as some scripts to easily download the dataset. To use them you'll need to clone the repository for the tutorial into your VM. This can be done using:
 
     cd ~
-    git clone git@github.com:mlcommons/peoples-speech.git
+    git clone https://github.com/mlcommons/peoples-speech.git
 
 ## 4. Download the data 
 
@@ -60,7 +60,7 @@ You'll need to download the manifest (which contains the text transcriptions) an
     mkdir ~/data/librispeech
     mkdir ~/data/the-peoples-speech/cc-by-clean 
     cd ~/data/the-peoples-speech/cc-by-clean
-    sudo gsutil cp  gs://the-peoples-speech-west-europe/forced-aligner/cuda-forced-aligner/peoples-speech/output_work_dir_9a/cc_by_clean/dataset_manifest_nemo_single/part-00000-5cb297b4-a5ca-4938-b98d-8e47087b8d4d-c000.json nemo_manifest.json
+    wget -O nemo_manifest.json https://huggingface.co/datasets/MLCommons/peoples-speech-v2/resolve/main/train/clean.json
 
 Then the audio. We suggest you open a screen/tmux to perform this download, to protect it from connection failures between your local machine and the VM. We'll be using tmux, but if you're more familiar with screen you can use it.
 
