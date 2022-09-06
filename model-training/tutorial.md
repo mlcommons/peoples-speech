@@ -34,10 +34,13 @@ To begin, we'll create an instance.The command we're running will create:
 
 In order to create the instance run the following command:
 
-    gcloud compute instances create peoples-speech-training --project the-peoples-speech --zone us-central1-a --machine-type n1-standard-4  --no-restart-on-failure  --maintenance-policy TERMINATE --scopes https://www.googleapis.com/auth/devstorage.read_only,https://www.googleapis.com/auth/logging.write,https://www.googleapis.com/auth/monitoring.write,https://www.googleapis.com/auth/servicecontrol,https://www.googleapis.com/auth/service.management.readonly,https://www.googleapis.com/auth/trace.append --image-family pytorch-latest-gpu --image-project deeplearning-platform-release --boot-disk-size 200GB --boot-disk-type projects/the-peoples-speech/zones/europe-west4-b/diskTypes/pd-standard --boot-disk-device-name peoples-speech-training-disk  --metadata "install-nvidia-driver=True,proxy-mode=project_editors" --preemptible
+    gcloud compute instances create peoples-speech-training --project <YOUR-PROJECT-NAME> --zone <YOUR-GCP-ZONE> --machine-type n1-standard-4  --no-restart-on-failure  --maintenance-policy TERMINATE --scopes https://www.googleapis.com/auth/devstorage.read_only,https://www.googleapis.com/auth/logging.write,https://www.googleapis.com/auth/monitoring.write,https://www.googleapis.com/auth/servicecontrol,https://www.googleapis.com/auth/service.management.readonly,https://www.googleapis.com/auth/trace.append --image-family pytorch-latest-gpu --image-project deeplearning-platform-release --boot-disk-size 200GB --boot-disk-type projects/the-peoples-speech/zones/europe-west4-b/diskTypes/pd-standard --boot-disk-device-name peoples-speech-training-disk  --metadata "install-nvidia-driver=True,proxy-mode=project_editors" --preemptible
 
 Don't forget to replace both the project name and the [GCP zone](https://cloud.google.com/compute/docs/regions-zones) where you have GPUs available. This will create and start your VM.
 
+After creating the instance you can log to it using
+
+    gcloud compute ssh peoples-speech-training
 ## 3. Clone the repository with the training pipeline
 
 We prepared a Docker image as well as some scripts to easily download the dataset. To use them you'll need to clone the repository for the tutorial into your VM. This can be done using:
@@ -48,10 +51,6 @@ We prepared a Docker image as well as some scripts to easily download the datase
 ## 4. Download the data 
 
 A few subsets of the People's Speech dataset are available at Huggingface, characterized by the type of license (CC-BY-4.0 or CC-BY-SA) and quality of the data (there are both a clean  and dirty subset, with higher quality labels in the former than in the latter). We'll be using the clean subset, CC-BY-4.0 licensed subset in this tutorial. If you want to use a different subset, visit the dataset's [homepage](https://mlcommons.org/en/peoples-speech/), browse for the right download links there, and replace them in the `wget` commands below.
-
-To download the data, start by logging into your new VM:
-
-    gcloud compute ssh peoples-speech-training
 
 You'll need to download the manifest (which contains the text transcriptions) and the audio separately. First the manifest: 
 
