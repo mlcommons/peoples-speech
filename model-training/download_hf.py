@@ -10,7 +10,7 @@ for i in tqdm(range(1000)):
     tar_number = i
     tar_number = (str(tar_number)).zfill(6)
     name = f'part-{tar_number}-5f4dc359-da2b-44e3-bc2e-acd03133d1f6-c000.tar'
-    destination_filepath = f'{home}/Factored/data/the-peoples-speech/cc-by-clean/audios/{name}'
+    destination_filepath = f'{home}/data/the-peoples-speech/cc-by-clean/audios/{name}'
     file_path = url+f'clean_{tar_number}.tar'
     r = requests.get(file_path, stream=True)
     if r.status_code == 200:
