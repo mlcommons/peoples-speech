@@ -178,7 +178,8 @@ subset. To keep training, rerun the container, find the artifacts from the previ
     python train_ctc_model.py --config-name=conformer_ctc_char name=tutorial-training n_gpus=1 model.train_ds.manifest_filepath=/data/the-peoples-speech/cc-by-clean/nemo_manifest.jsonl model.train_ds.tarred_audio_filepaths=/data/the-peoples-speech/cc-by-clean/audios.tar model.validation_ds.manifest_filepath=/data/librispeech/dev_clean.json exp_manager.exp_dir=/experiments trainer.resume_from_checkpoint=/experiments/tutorial-training/????-??-??_??-??-??/checkpoints/tutorial-training--val_wer\\=?-epoch\\=?-last.ckpt 
 
 
-We trained a model using this method that reached 5.02% CER, 10.47% WER on the same subset, and 10.76% WER on `test-clean`, after about 48h of training on 4 parallel GPUs. We would expect marginal gains from training beyond this point.
+We trained a model using this method that reached 12.82% CER, 34.06% WER on the test subset, and after involving a language model in the transcription process on the same test set we obtained 9.99% CER, 22.02% WER  after about 5h of training on 4 parallel GPUs. Feel free to keep on training for more time, we're sure there is room for learning left!
+
 
 Note that `trainer.resume_from_checkpoint` also allows you to finetune a pre-trained model, [like the ones published by NVIDIA](https://catalog.ngc.nvidia.com/models).
 
@@ -195,6 +196,5 @@ The model we trained is an [acoustic model](https://en.wikipedia.org/wiki/Acoust
 
 [2] Panayotov, Vassil, Guoguo Chen, Daniel Povey, and Sanjeev Khudanpur. “Librispeech: an asr corpus based on public domain audio books.” In
 2015 IEEE international conference on acoustics, speech and signal processing (ICASSP) , pp. 5206–5210. IEEE, 2015.
-
 
 
