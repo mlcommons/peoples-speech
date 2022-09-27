@@ -11,6 +11,10 @@ In this tutorial, we’ll show you how to train your own models on this dataset.
 - Train a 27M-parameter [Conformer](https://arxiv.org/abs/2005.08100)
 - Use the trained model to transcribe audio.
 
+## 0. Pre-Requisites
+
+We will be accessing github through SSH so we will need a SSH key pair. If you don't have one set up, instructions to do so are here [Github SSH Set Up] (https://stackoverflow.com/a/57734732)
+
 ## 1. Set up the Google Cloud SDK
 
 You'll need a Google CLoud account and a project for this. If you already have one, you can skip steps 1 and 2.
