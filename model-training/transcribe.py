@@ -81,7 +81,26 @@ def _asr_on_tarpaths_chunk(chunk_args):
         os.makedirs(tmp_dir)
         try:
             with tarfile.open(audio_tarpath) as audio_tarfile:
-                audio_tarfile.extractall(path=tmp_dir)
+                def is_within_directory(directory, target):
+                    
+                    abs_directory = os.path.abspath(directory)
+                    abs_target = os.path.abspath(target)
+                
+                    prefix = os.path.commonprefix([abs_directory, abs_target])
+                    
+                    return prefix == abs_directory
+                
+                def safe_extract(tar, path=".", members=None, *, numeric_owner=False):
+                
+                    for member in tar.getmembers():
+                        member_path = os.path.join(path, member.name)
+                        if not is_within_directory(path, member_path):
+                            raise Exception("Attempted Path Traversal in Tar File")
+                
+                    tar.extractall(path, members, numeric_owner) 
+                    
+                
+                safe_extract(audio_tarfile, path=tmp_dir)
         except OSError as exc:
             # Skip long-named audio files
             if exc.errno == errno.ENAMETOOLONG:
@@ -91,7 +110,26 @@ def _asr_on_tarpaths_chunk(chunk_args):
                         m for m in members
                         if len(m.name) <= os.pathconf("/", "PC_NAME_MAX")
                     ]
-                    audio_tarfile.extractall(path=tmp_dir, members=healthy_members)
+                    def is_within_directory(directory, target):
+                        
+                        abs_directory = os.path.abspath(directory)
+                        abs_target = os.path.abspath(target)
+                    
+                        prefix = os.path.commonprefix([abs_directory, abs_target])
+                        
+                        return prefix == abs_directory
+                    
+                    def safe_extract(tar, path=".", members=None, *, numeric_owner=False):
+                    
+                        for member in tar.getmembers():
+                            member_path = os.path.join(path, member.name)
+                            if not is_within_directory(path, member_path):
+                                raise Exception("Attempted Path Traversal in Tar File")
+                    
+                        tar.extractall(path, members, numeric_owner) 
+                        
+                    
+                    safe_extract(audio_tarfile, path=tmp_dir, members=healthy_members)
                     warnings.warn(
                         f"Some audio files were dropped from {audio_tarpath} "
                         "because they have long file names"
