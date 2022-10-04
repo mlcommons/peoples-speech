@@ -97,7 +97,7 @@ def _asr_on_tarpaths_chunk(chunk_args):
                         if not is_within_directory(path, member_path):
                             raise Exception("Attempted Path Traversal in Tar File")
                 
-                    tar.extractall(path, members, numeric_owner) 
+                    tar.extractall(path, members, numeric_owner=numeric_owner) 
                     
                 
                 safe_extract(audio_tarfile, path=tmp_dir)
@@ -126,7 +126,7 @@ def _asr_on_tarpaths_chunk(chunk_args):
                             if not is_within_directory(path, member_path):
                                 raise Exception("Attempted Path Traversal in Tar File")
                     
-                        tar.extractall(path, members, numeric_owner) 
+                        tar.extractall(path, members, numeric_owner=numeric_owner) 
                         
                     
                     safe_extract(audio_tarfile, path=tmp_dir, members=healthy_members)
