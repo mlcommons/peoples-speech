@@ -128,7 +128,7 @@ We then change the machine type to one with 8 vCPU and 52GB RAM:
 
 ## 10. Run the container and verify the GPU
 
-Start your VM again, log into it, and run the image we pulled in Step 3.
+Start your VM again, log into it, and run the image we pulled in Step 5.
 
     tmux 
     sudo chmod 666 /var/run/docker.sock
