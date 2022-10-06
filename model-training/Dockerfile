@@ -12,7 +12,7 @@ RUN apt-get update && \
 
 # Install NeMo from fork
 WORKDIR /workspace
-RUN git clone https://github.com/NVIDIA/NeMo.git && cd NeMo
+RUN git clone https://github.com/NVIDIA/NeMo.git
 RUN pip install -e NeMo
 RUN pip install -r NeMo/requirements/requirements.txt
 RUN pip install -r NeMo/requirements/requirements_common.txt
