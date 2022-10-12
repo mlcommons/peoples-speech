@@ -2,13 +2,8 @@
 
 ## Data Download
 
-Please contact greg@mlcommons.org to get access to the data. You will
-need to provide an email for us to add to an access control list.
+Please get the dataset from an official mirror: https://huggingface.co/datasets/MLCommons/peoples_speech
 
-Once you have access, please download and install
-[gsutil](https://cloud.google.com/storage/docs/gsutil). You will need
-to run `gsutil auth login` to log into the same account you provided
-to greg@mlcommons.org.
 
 Then run the following commands:
 
