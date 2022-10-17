@@ -192,8 +192,9 @@ def main(argv):
     temp_catalogue_df = catalogue_df.withColumn("audio_paths", audio_paths).withColumn(
         "srt_paths", srt_paths
     )
+    # print("GALVEZ:count=", catalogue_df.count())
     # print("GALVEZ:schema=")
-    # temp_catalogue_df.printSchema()
+    temp_catalogue_df.printSchema()
     temp_catalogue_df.toPandas().to_json(
         "audio_id_text_id_mapping.json", orient="records", lines=True
     )
@@ -339,6 +340,7 @@ def main(argv):
         transcripts_df = load_transcripts(
             spark, FLAGS.input_gcs_path, training_sample_rows
         )
+        # TODO: Need to replace this with nemo-based text norm...
         transcripts_df = transcripts_df.withColumn(
             "transcript", normalize_english_text_udf(transcripts_df.transcript)
         )
@@ -599,17 +601,25 @@ def main(argv):
         tars_df = spark.read.format("tar").load(tars_dir)  # .limit(100)
         number_of_rows = tars_df.count()
 
+        # This magic number gives us about 100 MiB per tar file.  The
+        # next few lines of code try to give us about 100 MiB per tar
+        # file. However, we will go over this amount if that would
+        # give us more than MAX_FILES_IN_DIRECTORY_IN_GIT_WITH_SLACK
+        # tar files in total, which we cannot add to a git lfs repo.
         ROWS_PER_TAR_FILE = 335
+        # git allows at most 10,000 files in a directory. Subtract 100
+        # in case someone puts something else in this output
+        # directory.
+        MAX_FILES_IN_DIRECTORY_IN_GIT_WITH_SLACK = 10_000 - 100
+        number_of_tar_files = min(number_of_rows // ROWS_PER_TAR_FILE, MAX_FILES_IN_DIRECTORY_IN_GIT_WITH_SLACK)
 
-        # We just want ~300 rows in each tar file here...How to do that?
         spark2 = spark.newSession()
         spark2.conf.set(
             "spark.sql.execution.rangeExchange.sampleSizePerPartition", number_of_rows
         )
-        spark2.conf.set("spark.sql.files.minPartitionNum", number_of_rows // ROWS_PER_TAR_FILE)
+        spark2.conf.set("spark.sql.files.minPartitionNum", number_of_tar_files)
         tars_df = spark2.read.format("tar").load(tars_dir)  # .limit(100)
-        tars_df = tars_df.repartitionByRange(number_of_rows // ROWS_PER_TAR_FILE, F.col("key"))
-        # tars_df = tars_df.repartitionByRange(number_of_tar_files == 9000, F.col("key")) 
+        tars_df = tars_df.repartitionByRange(number_of_tar_files, F.col("key"))
         tars_df.write.mode("overwrite").format("tar").save(repartitioned_tars_dir)
 
     nemo_manifest_dir = os.path.join(FLAGS.work_dir, "dataset_manifest_nemo")

@@ -25,6 +25,7 @@ setup(
         "sox",
         "Cython",
         "webrtcvad",
+        "pycld2",
         # From https://github.com/NVIDIA/NeMo/blob/main/tools/ctc_segmentation/requirements.txt
         # "ctc_segmentation==1.7.1",
         # "num2words",

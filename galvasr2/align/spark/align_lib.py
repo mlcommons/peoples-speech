@@ -20,6 +20,7 @@ from ftfy import fix_text, guess_bytes
 import langid
 import numpy as np
 import pandas as pd
+import pycld2 as cld2
 import pydub
 from pydub import AudioSegment
 import pyspark
@@ -81,7 +82,6 @@ def DecodeToRawPipe(input_bytes, fmt):
     assert p.returncode == 0, err
     return out
 
-
 def EncodeFlacFromRawPipe(input_bytes):
     cmd = f"flac --totally-silent --compression-level-0 --force-raw-format --endian=little --channels=1 --sample-rate=16000 --input-size={len(input_bytes)} --sign=signed --bps=16 -f --stdout -"
     p = subprocess.Popen(
@@ -137,6 +137,15 @@ def srt_to_text(srt_file_contents: pd.Series) -> pd.Series:
     return srt_file_contents.apply(helper)
 
 
+
+
+def prepare_normalize_english_text_nemo_udf():
+    @pandas_udf(StringType())
+    def normalize_english_text_nemo_udf(unnormalized_text_series: pd.Series) -> pd.Series:
+        normalizer.split_text_into_sentences
+    return normalize_english_text_nemo_udf
+
+
 @pandas_udf(StringType())
 def normalize_english_text_udf(unnormalized_text_series: pd.Series) -> pd.Series:
     from gruut.lang import get_tokenizer
@@ -164,6 +173,19 @@ def infer_language_udf(text_column: pd.Series) -> pd.Series:
         lambda string: langid.classify(string)[0] if string else ""
     )
 
+
+@pandas_udf(StringType())
+def infer_language_cld2_udf(text_column: pd.Series) -> pd.Series:
+    def infer_single_sample(string):
+        _is_reliable, _text_bytes_found, details = cld2.detect(
+            string,
+        )
+        language, _code, _range, _score = details[0]
+        return language
+        
+    return text_column.apply(
+        lambda string: infer_single_sample(string) if string else ""
+    )
 
 # bytes, length, sampling_frequency, number_channels
 def load_audio_files(spark, collected_audio_document_rows, base_path: str):
@@ -206,8 +228,7 @@ def load_transcripts(
         else:
             return text_document_id
 
-    # TODO: Upload this file
-    with open("/development/lingvo-source/missing_files.json", "r") as fh:
+    with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "missing_files.json"), "r") as fh:
         missing_text_document_ids = set(json.load(fh))
     text_document_ids = [
         os.path.join(
@@ -385,8 +406,6 @@ def load_audio_and_text_dfs(spark, input_catalogue_path: str):
 # identifer, MP3 file name, transcript file name
 def load_audio_id_text_id_mapping(spark, input_catalogue_path: str):
     audio_df, text_df = load_audio_and_text_dfs(spark, input_catalogue_path)
-    audio_df = audio_df.limit(100)
-    text_df = text_df.limit(100)
 
     joined_df = audio_df.join(text_df, "identifier")
     joined_df = joined_df.withColumn(
