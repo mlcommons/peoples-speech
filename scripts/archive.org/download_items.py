@@ -30,7 +30,7 @@ QUERIES = dict(
     # ALL_CAPTIONED_DATA=f"{LICENSE_WHITELIST} AND (mediatype:audio OR mediatype:movies) AND (closed_captioning:yes OR format:SubRip OR format:\"Web Video Text Tracks\") AND (NOT access-restricted-item:TRUE)",
     # NON_CAPTIONED_DATA_WITH_TEXT=f"{LICENSE_WHITELIST} AND (format:DjVuTXT AND format:MP3 AND NOT format:SubRip) AND NOT (subject:'librivox')",
     # CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS=f'{LICENSE_WHITELIST} AND (mediatype:audio OR mediatype:movies) AND (closed_captioning:yes OR format:SubRip OR format:"Web Video Text Tracks") AND (NOT access-restricted-item:TRUE)',
-    CC_BY_SA_ALL_AUDIO_LABELED_OR_UNLABELED=f'{LICENSE_WHITELIST} AND (mediatype:audio OR mediatype:movies)',
+    CC_BY_SA_ALL_AUDIO_LABELED_OR_UNLABELED=f"{LICENSE_WHITELIST} AND (mediatype:audio OR mediatype:movies)",
     # I used to have this, until I realized that I just needed to login (via 'ia configure') to download them.
     # AND (NOT access-restricted-item:TRUE)',
 )
@@ -38,10 +38,11 @@ QUERIES = dict(
 # default timeout is 12
 REQUEST_KWARGS = {"timeout": 120.0}
 
+
 def download_data(metadata_file, save_directory):
     def get_data(identifier):
         try:
-            get_item_kwargs={"request_kwargs": REQUEST_KWARGS}
+            get_item_kwargs = {"request_kwargs": REQUEST_KWARGS}
             ia.download(
                 identifier,
                 formats=[
@@ -80,6 +81,7 @@ def download_data(metadata_file, save_directory):
     with ThreadPoolExecutor(10) as executor:
         list(tqdm(executor.map(get_data, ids), total=len(ids)))
 
+
 def download_ids(query, id_save_file):
     print("Query IDs matching query")
     # default max_retries is 3
@@ -87,6 +89,7 @@ def download_ids(query, id_save_file):
     all_results = list(tqdm(search.iter_as_results()))
     with open(id_save_file, "wt") as fh:
         json.dump(all_results, fh)
+
 
 def download_metadata(id_save_file, save_file):
     save_file_lock = threading.Lock()
@@ -99,13 +102,16 @@ def download_metadata(id_save_file, save_file):
     except FileNotFoundError:
         already_downloaded_ids = set()
     with open(save_file, "at") as fh:
+
         def download_metadata_to_file(result: dict):
             if result["identifier"] in already_downloaded_ids:
                 return
-            item = ia.get_item(result["identifier"],
-                               archive_session=session,
-                               request_kwargs=REQUEST_KWARGS)
-                
+            item = ia.get_item(
+                result["identifier"],
+                archive_session=session,
+                request_kwargs=REQUEST_KWARGS,
+            )
+
             metadata = item.item_metadata
             metadata["identifier"] = result["identifier"]
             with save_file_lock:
@@ -115,7 +121,10 @@ def download_metadata(id_save_file, save_file):
         with ThreadPoolExecutor(15) as executor:
             print("Download metadata")
             list(
-                tqdm(executor.map(download_metadata_to_file, all_results), total=len(all_results))
+                tqdm(
+                    executor.map(download_metadata_to_file, all_results),
+                    total=len(all_results),
+                )
             )
 
 

@@ -18,7 +18,11 @@ from typing import Dict, List, Tuple
 from absl import app
 from absl import flags
 import nemo.collections.asr as nemo_asr
-from nemo.collections.asr.parts.utils.streaming_utils import AudioFeatureIterator, BatchedFeatureFrameBufferer, FrameBatchASR
+from nemo.collections.asr.parts.utils.streaming_utils import (
+    AudioFeatureIterator,
+    BatchedFeatureFrameBufferer,
+    FrameBatchASR,
+)
 import numpy as np
 import pandas as pd
 import pyarrow as pa
@@ -55,19 +59,24 @@ flags.DEFINE_string(
     "gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS.jsonl.gz",
     "Input catalogue. Basically just a dump of archive.org metadata for now.",
 )
-flags.DEFINE_string("input_gcs_path", "/PLEASE_SET", "Input directory. Exact format of this is a bit undefined right now and will likely change. Write now it is created by scripts/archive.org/download_items.py")
 flags.DEFINE_string(
-    "work_dir", "", ""
+    "input_gcs_path",
+    "/PLEASE_SET",
+    "Input directory. Exact format of this is a bit undefined right now and will likely change. Write now it is created by scripts/archive.org/download_items.py",
 )
+flags.DEFINE_string("work_dir", "", "")
 flags.DEFINE_string(
-    "spark_local_dir", "/mnt/disks/spark-scratch/", "Hard drive that should be at least 1 TiB in size. Used for shuffling."
+    "spark_local_dir",
+    "/mnt/disks/spark-scratch/",
+    "Hard drive that should be at least 1 TiB in size. Used for shuffling.",
 )
+
 
 def main(argv):
     mem_bytes = os.sysconf("SC_PAGE_SIZE") * os.sysconf(
         "SC_PHYS_PAGES"
     )  # e.g. 4015976448
-    mem_gib = int((mem_bytes / (1024.0 ** 3)) * 0.9)
+    mem_gib = int((mem_bytes / (1024.0**3)) * 0.9)
     os.makedirs("/tmp/spark-events", exist_ok=True)
     spark = (
         pyspark.sql.SparkSession.builder.master(f"local[{os.cpu_count()}]")
@@ -133,38 +142,66 @@ def main(argv):
         .config("spark.local.dir", FLAGS.spark_local_dir)
         .getOrCreate()
     )
-    spark_single_executor.sparkContext.setLogLevel("INFO")  # "ALL" for very verbose logging
+    spark_single_executor.sparkContext.setLogLevel(
+        "INFO"
+    )  # "ALL" for very verbose logging
     logging.getLogger("py4j").setLevel(logging.ERROR)
 
-    audio_df = spark_single_executor.read.format("binaryFile").load(audio_paths_py).drop("path", "length", "modificationTime")
+    audio_df = (
+        spark_single_executor.read.format("binaryFile")
+        .load(audio_paths_py)
+        .drop("path", "length", "modificationTime")
+    )
 
     mp3_decode_udf, mp3_decode_return_schema = prepare_mp3_decode_udf(16_000)
     # Problem with conformer is that the framing is a little weird due
     # to convolutional subsampling.
     nemo_transcribe_udf, nemo_transcribe_return_schema = prepare_nemo_transcribe_udf(
         "stt_en_conformer_ctc_small",
-        int(spark_single_executor.conf.get("spark.sql.execution.arrow.maxRecordsPerBatch")),
+        int(
+            spark_single_executor.conf.get(
+                "spark.sql.execution.arrow.maxRecordsPerBatch"
+            )
+        ),
         1.6,
-        4.0)
-    transcripts_df = audio_df.mapInArrow(mp3_decode_udf, mp3_decode_return_schema).mapInArrow(nemo_transcribe_udf, nemo_transcribe_return_schema)
+        4.0,
+    )
+    transcripts_df = audio_df.mapInArrow(
+        mp3_decode_udf, mp3_decode_return_schema
+    ).mapInArrow(nemo_transcribe_udf, nemo_transcribe_return_schema)
     print("GALVEZ:", transcripts_df.head())
 
-def load_raw_audios(frame_batch_asr, waveforms_batch: List[np.array], delay, model_stride_in_secs):
+
+def load_raw_audios(
+    frame_batch_asr, waveforms_batch: List[np.array], delay, model_stride_in_secs
+):
     assert len(waveforms_batch) == frame_batch_asr.batch_size
 
     # Read in a batch of audio files, one by one
     for idx in range(frame_batch_asr.batch_size):
-        samples = np.pad(waveforms_batch[idx],
-                         (0, int(delay * model_stride_in_secs *
-                                 frame_batch_asr.asr_model._cfg.sample_rate)))
-        frame_reader = AudioFeatureIterator(samples, frame_batch_asr.frame_len,
-                                            frame_batch_asr.raw_preprocessor,
-                                            frame_batch_asr.asr_model.device)
+        samples = np.pad(
+            waveforms_batch[idx],
+            (
+                0,
+                int(
+                    delay
+                    * model_stride_in_secs
+                    * frame_batch_asr.asr_model._cfg.sample_rate
+                ),
+            ),
+        )
+        frame_reader = AudioFeatureIterator(
+            samples,
+            frame_batch_asr.frame_len,
+            frame_batch_asr.raw_preprocessor,
+            frame_batch_asr.asr_model.device,
+        )
         frame_batch_asr.set_frame_reader(frame_reader, idx)
 
 
 def prepare_mp3_decode_udf(sample_rate: int):
     mp3_decode_return_schema = T.StructType([T.StructField("data", T.BinaryType())])
+
     def mp3_decode(batches: Iterable[pa.RecordBatch]):
         for batch in batches:
             return_batch = []
@@ -183,15 +220,22 @@ def prepare_mp3_decode_udf(sample_rate: int):
                     return_batch.append(out)
             yield pa.RecordBatch.from_pydict({"data": return_batch})
             # yield pa.Table.from_arrays([return_batch], names=["data"])
+
     return mp3_decode, mp3_decode_return_schema
-            
+
 
 # batch_size should be derived from "spark.sql.execution.arrow.maxRecordsPerBatch"
-def prepare_nemo_transcribe_udf(model_name: str, batch_size: int, chunk_len,
-                                total_buffer_in_secs):
-    nemo_transcribe_return_schema = T.StructType([T.StructField("transcripts", T.StringType())])
+def prepare_nemo_transcribe_udf(
+    model_name: str, batch_size: int, chunk_len, total_buffer_in_secs
+):
+    nemo_transcribe_return_schema = T.StructType(
+        [T.StructField("transcripts", T.StringType())]
+    )
+
     def nemo_transcribe(batches: Iterable[pa.RecordBatch]):
-        asr_model = nemo_asr.models.EncDecCTCModelBPE.from_pretrained(model_name=model_name)
+        asr_model = nemo_asr.models.EncDecCTCModelBPE.from_pretrained(
+            model_name=model_name
+        )
 
         decoding_cfg = OmegaConf.create({})
         with open_dict(decoding_cfg):
@@ -203,7 +247,7 @@ def prepare_nemo_transcribe_udf(model_name: str, batch_size: int, chunk_len,
         asr_model.preprocessor.featurizer.pad_to = 0
         asr_model.encoder.freeze()
         asr_model.decoder.freeze()
-        
+
         asr_model.eval()
         # Why in the world is this necessary?
         asr_model = asr_model.to(asr_model.device)
@@ -215,7 +259,7 @@ def prepare_nemo_transcribe_udf(model_name: str, batch_size: int, chunk_len,
         # model_stride_in_seconds = 80 / 1000  # Make sure to change this as appropriate...
         # tokens_per_chunk = math.ceil(chunk_len / model_stride_in_seconds)
         # mid_delay = math.ceil((chunk_len + (total_buffer_in_secs - chunk_len) / 2) / model_stride_in_seconds)
-    
+
         for batch in batches:
             assert len(batch) <= batch_size
 
@@ -223,14 +267,15 @@ def prepare_nemo_transcribe_udf(model_name: str, batch_size: int, chunk_len,
 
             for raw_audio in batch.column("data"):
                 print("GALVEZ:raw_audio_length=", len(raw_audio.as_py()))
-                input_signal = torch.from_numpy(np.frombuffer(raw_audio.as_py(), dtype=np.int16))
+                input_signal = torch.from_numpy(
+                    np.frombuffer(raw_audio.as_py(), dtype=np.int16)
+                )
                 input_signal = input_signal.unsqueeze(0)
-
 
                 # We need to do batches in reasonable sizes. e.g., 10 minutes
 
                 # Do 15 second chunks to match training situation
-                
+
                 # Make everything the same size. Eitehr throw out or
                 # run as a singletone the final chunk.
                 N_MINUTES_IN_SAMPLES = 5 * 60 * 16_000
@@ -241,23 +286,42 @@ def prepare_nemo_transcribe_udf(model_name: str, batch_size: int, chunk_len,
                 # How does NeMo subsample inputs?
 
                 # valid or full convolutions?
-                for start_sample in range(0, input_signal.shape[1], N_MINUTES_IN_SAMPLES):
-                    end_sample = min(start_sample + N_MINUTES_IN_SAMPLES, input_signal.shape[1])
+                for start_sample in range(
+                    0, input_signal.shape[1], N_MINUTES_IN_SAMPLES
+                ):
+                    end_sample = min(
+                        start_sample + N_MINUTES_IN_SAMPLES, input_signal.shape[1]
+                    )
                     chunk_input_signal = input_signal[:, start_sample:end_sample]
-                    chunk_input_signal_length = torch.tensor([input_signal.shape[1]], dtype=torch.int64)                    
-                    chunk_logits, chunk_logits_len, greedy_predictions = \
-                        asr_model.forward(input_signal=chunk_input_signal,
-                                          input_signal_length=chunk_input_signal_length)
+                    chunk_input_signal_length = torch.tensor(
+                        [input_signal.shape[1]], dtype=torch.int64
+                    )
+                    (
+                        chunk_logits,
+                        chunk_logits_len,
+                        greedy_predictions,
+                    ) = asr_model.forward(
+                        input_signal=chunk_input_signal,
+                        input_signal_length=chunk_input_signal_length,
+                    )
 
-
-                    current_hypotheses, _ = asr_model.decoding.ctc_decoder_predictions_tensor(chunk_logits, decoder_lengths=chunk_logits_len, return_hypotheses=True)
+                    (
+                        current_hypotheses,
+                        _,
+                    ) = asr_model.decoding.ctc_decoder_predictions_tensor(
+                        chunk_logits,
+                        decoder_lengths=chunk_logits_len,
+                        return_hypotheses=True,
+                    )
 
                     for i in range(len(current_hypotheses)):
-                        current_hypotheses[i].y_sequence = chunk_logits[i][:chunk_logits_len[i]]
+                        current_hypotheses[i].y_sequence = chunk_logits[i][
+                            : chunk_logits_len[i]
+                        ]
 
                     # Need to convert integer timesteps to actual times somehow...
                     # Check out how riva does it?
-                    
+
                     # logits_len += chunk_logits_len
                     print("GALVEZ:greedy_prediction=", greedy_predictions.shape)
                     greedy_prediction_chunks.append(greedy_predictions)
@@ -267,12 +331,12 @@ def prepare_nemo_transcribe_udf(model_name: str, batch_size: int, chunk_len,
                 hypothesis = asr_model._wer.ctc_decoder_predictions_tensor(
                     greedy_prediction,
                     # predictions_len=logits_len,
-                    return_hypotheses=True)
+                    return_hypotheses=True,
+                )
                 print("GALVEZ:hypothesis=", hypothesis)
                 batch_transcripts.append(hypothesis)
                 # batch_transcripts.append(" ".join(greedy_prediction_chunks))
 
-            
             # load_raw_audios(frame_asr,
             #                 [np.frombuffer(raw_audio.as_py(), dtype=np.int16) for raw_audio in batch.column("data")],
             #                 mid_delay,
@@ -288,7 +352,9 @@ def prepare_nemo_transcribe_udf(model_name: str, batch_size: int, chunk_len,
 
             yield pa.RecordBatch.from_pydict({"transcripts": batch_transcripts})
             # yield pa.Table.from_arrays([batch_transcripts], names=["transcripts"])
+
     return nemo_transcribe, nemo_transcribe_return_schema
+
 
 # utils.py
 # timings, char_probs, char_list = cs.ctc_segmentation(config, log_probs, ground_truth_mat)

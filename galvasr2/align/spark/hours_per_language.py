@@ -34,7 +34,7 @@ def main(argv):
     mem_bytes = os.sysconf("SC_PAGE_SIZE") * os.sysconf(
         "SC_PHYS_PAGES"
     )  # e.g. 4015976448
-    mem_gib = int((mem_bytes / (1024.0 ** 3)) * 0.9)
+    mem_gib = int((mem_bytes / (1024.0**3)) * 0.9)
     spark = (
         SparkSession.builder.master("local[*]")
         .appName("Hours Per Language")

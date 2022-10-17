@@ -142,7 +142,7 @@ def main(argv):
     mem_bytes = os.sysconf("SC_PAGE_SIZE") * os.sysconf(
         "SC_PHYS_PAGES"
     )  # e.g. 4015976448
-    mem_gib = int((mem_bytes / (1024.0 ** 3)) * 0.9)
+    mem_gib = int((mem_bytes / (1024.0**3)) * 0.9)
     (jar_path,) = galvasr2.__path__
     jars = ",".join(glob.glob(os.path.join(jar_path, "*.jar")))
     print("GALVEZ:jars=", jars)
@@ -386,15 +386,19 @@ def main(argv):
         alignments_df.printSchema()
         # TODO: Add anti join with our test set ids.
 
-        test_and_dev_df = spark.read.format("json").load([
-            "gs://the-peoples-speech-west-europe/forced-aligner/dev_and_test_manifests/dev.json",
-            "gs://the-peoples-speech-west-europe/forced-aligner/dev_and_test_manifests/test.json"
-        ])
+        test_and_dev_df = spark.read.format("json").load(
+            [
+                "gs://the-peoples-speech-west-europe/forced-aligner/dev_and_test_manifests/dev.json",
+                "gs://the-peoples-speech-west-europe/forced-aligner/dev_and_test_manifests/test.json",
+            ]
+        )
 
-        test_and_dev_df = test_and_dev_df.select(test_and_dev_df.identifier,
-                                                 test_and_dev_df.text_document_id)
+        test_and_dev_df = test_and_dev_df.select(
+            test_and_dev_df.identifier, test_and_dev_df.text_document_id
+        )
 
-        alignments_df = alignments_df.join(test_and_dev_df,
+        alignments_df = alignments_df.join(
+            test_and_dev_df,
             on=(alignments_df.identifier == test_and_dev_df.identifier)
             & (alignments_df.text_document_id == test_and_dev_df.text_document_id),
             how="anti",
@@ -552,9 +556,15 @@ def main(argv):
 
         key_name_256_char_max = F.concat(key_name.substr(0, 256 - 64 - 20), sha256)
 
-        key_name = F.when(F.length(key_name) < 256 - 20, key_name).otherwise(key_name_256_char_max)
-        
-        key_name_rows = alignments_audio_df.select(key_name, alignments_audio_df.identifier, alignments_audio_df.audio_document_id).collect()
+        key_name = F.when(F.length(key_name) < 256 - 20, key_name).otherwise(
+            key_name_256_char_max
+        )
+
+        key_name_rows = alignments_audio_df.select(
+            key_name,
+            alignments_audio_df.identifier,
+            alignments_audio_df.audio_document_id,
+        ).collect()
         for i, row in enumerate(key_name_rows):
             row_key_name = row[0]
             assert len(row_key_name) < 4096, row_key_name
@@ -611,7 +621,10 @@ def main(argv):
         # in case someone puts something else in this output
         # directory.
         MAX_FILES_IN_DIRECTORY_IN_GIT_WITH_SLACK = 10_000 - 100
-        number_of_tar_files = min(number_of_rows // ROWS_PER_TAR_FILE, MAX_FILES_IN_DIRECTORY_IN_GIT_WITH_SLACK)
+        number_of_tar_files = min(
+            number_of_rows // ROWS_PER_TAR_FILE,
+            MAX_FILES_IN_DIRECTORY_IN_GIT_WITH_SLACK,
+        )
 
         spark2 = spark.newSession()
         spark2.conf.set(

@@ -70,7 +70,7 @@ def DecodeToWavPipe(input_bytes, fmt):
 def DecodeToRawPipe(input_bytes, fmt):
     cmd = (
         f"ffmpeg -hide_banner -loglevel panic -f {fmt} -i - -f s16le -ar 16k -ac 1  -"
-        #f"sox -t {fmt} - -t raw --channels 1 --rate 16000 --encoding signed --bits 16 -"
+        # f"sox -t {fmt} - -t raw --channels 1 --rate 16000 --encoding signed --bits 16 -"
     )
     p = subprocess.Popen(
         shlex.split(cmd),
@@ -81,6 +81,7 @@ def DecodeToRawPipe(input_bytes, fmt):
     out, err = p.communicate(input=input_bytes)
     assert p.returncode == 0, err
     return out
+
 
 def EncodeFlacFromRawPipe(input_bytes):
     cmd = f"flac --totally-silent --compression-level-0 --force-raw-format --endian=little --channels=1 --sample-rate=16000 --input-size={len(input_bytes)} --sign=signed --bps=16 -f --stdout -"
@@ -137,12 +138,13 @@ def srt_to_text(srt_file_contents: pd.Series) -> pd.Series:
     return srt_file_contents.apply(helper)
 
 
-
-
 def prepare_normalize_english_text_nemo_udf():
     @pandas_udf(StringType())
-    def normalize_english_text_nemo_udf(unnormalized_text_series: pd.Series) -> pd.Series:
+    def normalize_english_text_nemo_udf(
+        unnormalized_text_series: pd.Series,
+    ) -> pd.Series:
         normalizer.split_text_into_sentences
+
     return normalize_english_text_nemo_udf
 
 
@@ -182,10 +184,11 @@ def infer_language_cld2_udf(text_column: pd.Series) -> pd.Series:
         )
         language, _code, _range, _score = details[0]
         return language
-        
+
     return text_column.apply(
         lambda string: infer_single_sample(string) if string else ""
     )
+
 
 # bytes, length, sampling_frequency, number_channels
 def load_audio_files(spark, collected_audio_document_rows, base_path: str):
@@ -228,7 +231,10 @@ def load_transcripts(
         else:
             return text_document_id
 
-    with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "missing_files.json"), "r") as fh:
+    with open(
+        os.path.join(os.path.dirname(os.path.realpath(__file__)), "missing_files.json"),
+        "r",
+    ) as fh:
         missing_text_document_ids = set(json.load(fh))
     text_document_ids = [
         os.path.join(
