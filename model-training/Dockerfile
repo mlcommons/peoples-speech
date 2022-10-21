@@ -12,7 +12,7 @@ RUN apt-get update && \
 
 # Install NeMo from fork
 WORKDIR /workspace
-RUN git clone https://github.com/JFCeron/NeMo --single-branch --branch peoples-speech --depth=1
+RUN git clone https://github.com/NVIDIA/NeMo.git
 RUN pip install -e NeMo
 RUN pip install -r NeMo/requirements/requirements.txt
 RUN pip install -r NeMo/requirements/requirements_common.txt
