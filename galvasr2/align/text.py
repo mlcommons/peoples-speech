@@ -3,7 +3,7 @@ from __future__ import absolute_import, division, print_function
 import codecs
 from six.moves import range
 from collections import Counter
-from utils import enweight
+from galvasr2.align.utils import enweight
 
 
 class Alphabet(object):

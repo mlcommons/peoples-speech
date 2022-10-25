@@ -6,7 +6,7 @@ from os import path
 from pickle import load, dump
 from collections import Counter
 from datetime import timedelta
-from utils import log_progress
+from galvasr2.align.utils import log_progress
 
 
 def fail(message, code=1):

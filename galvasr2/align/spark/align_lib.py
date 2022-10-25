@@ -16,20 +16,19 @@ import threading
 from typing import List, Tuple
 import wave
 
-import ds_ctcdecoder
 from ftfy import fix_text, guess_bytes
 import langid
 import numpy as np
 import pandas as pd
+import pycld2 as cld2
 import pydub
 from pydub import AudioSegment
 import pyspark
 from matching.games import HospitalResident
-import tensorflow as tf
+import srt
 import tqdm
 
 import re
-import srt
 
 from pyspark.sql.functions import col, pandas_udf
 import pyspark.sql.types as T
@@ -70,7 +69,8 @@ def DecodeToWavPipe(input_bytes, fmt):
 
 def DecodeToRawPipe(input_bytes, fmt):
     cmd = (
-        f"sox -t {fmt} - -t raw --channels 1 --rate 16000 --encoding signed --bits 16 -"
+        f"ffmpeg -hide_banner -loglevel panic -f {fmt} -i - -f s16le -ar 16k -ac 1  -"
+        # f"sox -t {fmt} - -t raw --channels 1 --rate 16000 --encoding signed --bits 16 -"
     )
     p = subprocess.Popen(
         shlex.split(cmd),
@@ -84,7 +84,7 @@ def DecodeToRawPipe(input_bytes, fmt):
 
 
 def EncodeFlacFromRawPipe(input_bytes):
-    cmd = f"flac --compression-level-0 --stdout --force-raw-format --channels=1 --sample-rate=16000 --input-size={len(input_bytes)} --sign=signed --bps=16 -"
+    cmd = f"flac --totally-silent --compression-level-0 --force-raw-format --endian=little --channels=1 --sample-rate=16000 --input-size={len(input_bytes)} --sign=signed --bps=16 -f --stdout -"
     p = subprocess.Popen(
         shlex.split(cmd),
         stdin=subprocess.PIPE,
@@ -138,6 +138,16 @@ def srt_to_text(srt_file_contents: pd.Series) -> pd.Series:
     return srt_file_contents.apply(helper)
 
 
+def prepare_normalize_english_text_nemo_udf():
+    @pandas_udf(StringType())
+    def normalize_english_text_nemo_udf(
+        unnormalized_text_series: pd.Series,
+    ) -> pd.Series:
+        normalizer.split_text_into_sentences
+
+    return normalize_english_text_nemo_udf
+
+
 @pandas_udf(StringType())
 def normalize_english_text_udf(unnormalized_text_series: pd.Series) -> pd.Series:
     from gruut.lang import get_tokenizer
@@ -163,6 +173,20 @@ def normalize_english_text_udf(unnormalized_text_series: pd.Series) -> pd.Series
 def infer_language_udf(text_column: pd.Series) -> pd.Series:
     return text_column.apply(
         lambda string: langid.classify(string)[0] if string else ""
+    )
+
+
+@pandas_udf(StringType())
+def infer_language_cld2_udf(text_column: pd.Series) -> pd.Series:
+    def infer_single_sample(string):
+        _is_reliable, _text_bytes_found, details = cld2.detect(
+            string,
+        )
+        language, _code, _range, _score = details[0]
+        return language
+
+    return text_column.apply(
+        lambda string: infer_single_sample(string) if string else ""
     )
 
 
@@ -207,8 +231,10 @@ def load_transcripts(
         else:
             return text_document_id
 
-    # TODO: Upload this file
-    with open("/development/lingvo-source/missing_files.json", "r") as fh:
+    with open(
+        os.path.join(os.path.dirname(os.path.realpath(__file__)), "missing_files.json"),
+        "r",
+    ) as fh:
         missing_text_document_ids = set(json.load(fh))
     text_document_ids = [
         os.path.join(
@@ -315,109 +341,6 @@ def prepare_vad_udf(num_padding_frames, threshold, aggressiveness, frame_duratio
 
 
 GENERATE_LM_OUTPUT_SCHEMA = StructType([StructField("path", StringType())])
-
-
-def prepare_generate_lm_udf(kenlm_path: str, debug_work_dir: str, alphabet_path: str):
-    # @pandas_udf(GENERATE_LM_OUTPUT_SCHEMA)
-    # TODO: Need to sort the log_probabilities by int64_uttid (right?)
-    def generate_lm(
-        grouping_key: Tuple[np.str, np.str], data_df: pd.DataFrame
-    ) -> pd.DataFrame:
-        (
-            identifier,
-            text_document_id,
-        ) = grouping_key
-        identifier = str(identifier)
-        text_document_id = str(text_document_id)
-
-        transcript = data_df.transcript[0]
-        with tempfile.NamedTemporaryFile("w+t", dir=debug_work_dir) as input_txt:
-            input_txt.write(transcript)
-            input_txt.flush()
-            os.makedirs(os.path.join(debug_work_dir, identifier), exist_ok=True)
-            scorer_path = os.path.join(
-                debug_work_dir, identifier, text_document_id + ".scorer"
-            )
-            data_lower, vocab_str = convert_and_filter_topk(
-                scorer_path, input_txt.name, 500000
-            )
-            build_lm(
-                scorer_path,
-                kenlm_path,
-                5,
-                "85%",
-                "0|0|1",
-                True,
-                255,
-                8,
-                "trie",
-                data_lower,
-                vocab_str,
-            )
-            os.remove(scorer_path + "." + "lower.txt.gz")
-            os.remove(scorer_path + "." + "lm.arpa")
-            os.remove(scorer_path + "." + "lm_filtered.arpa")
-
-            create_bundle(
-                alphabet_path,
-                scorer_path + "." + "lm.binary",
-                scorer_path + "." + "vocab-500000.txt",
-                scorer_path,
-                False,
-                0.931289039105002,
-                1.1834137581510284,
-            )
-            os.remove(scorer_path + "." + "lm.binary")
-            os.remove(scorer_path + "." + "vocab-500000.txt")
-
-        with open(alphabet_path) as fh:
-            num_output_symbols = len(fh.readlines()) + 1
-        assert num_output_symbols == 32, f"GALVEZ:{num_output_symbols}"
-        transcripts = []
-
-        id_to_symbol = {}
-        with open(alphabet_path) as fh:
-            for i, line in enumerate(fh):
-                id_to_symbol[i] = line.rstrip()
-        id_to_symbol[31] = "blank"
-
-        for row in data_df.itertuples():
-            log_probabilities = row.log_probabilities.reshape(-1, num_output_symbols)
-            probabilities = np.exp(log_probabilities)
-            # np.exp(probabilities, out=probabilities)
-            np.testing.assert_allclose(probabilities.sum(axis=1), 1.0, atol=1e-3)
-            # simple_decoder_output = []
-            # for t in range(probabilities.shape[0]):
-            #   best = np.argmax(probabilities[t,:])
-            #   print(np.max(probabilities[t,:]))
-            #   if (id_to_symbol[best] != "blank"):
-            #     simple_decoder_output.append(id_to_symbol[best])
-
-            # print("GALVEZ simple output:", "".join(simple_decoder_output))
-
-            cutoff_prob = 1.0
-            cutoff_top_n = 100
-            scorer = ds_ctcdecoder.Scorer()
-            result = scorer.init(
-                scorer_path.encode("utf-8"), alphabet_path.encode("utf-8")
-            )
-            scorer.set_utf8_mode(False)
-            assert result == 0, result
-            alphabet = ds_ctcdecoder.Alphabet()
-            result = alphabet.init(alphabet_path.encode("utf-8"))
-            assert not scorer.is_utf8_mode()
-            assert result == 0, result
-            scorer = None
-            outputs = ds_ctcdecoder.ctc_beam_search_decoder(
-                probabilities, alphabet, 100, cutoff_prob, cutoff_top_n, scorer
-            )
-            print(f"GALVEZ:output={outputs[0][1]}")
-            print(f"GALVEZ:length={probabilities.shape[0] * 30. / 1000.}")
-            transcripts.append(outputs[0][1])
-
-        return pd.DataFrame({"path": pd.Series(transcripts)})
-
-    return generate_lm
 
 
 def load_audio_and_text_dfs(spark, input_catalogue_path: str):
@@ -711,7 +634,8 @@ def create_audio_segments_udf(
             ) <= 1.0, (
                 f"{(len(chunk.raw_data) / 16_000 / 2) * 1000} vs. {end_ms - start_ms}"
             )
-            segment_flac_bytes = EncodeFromRawPipe(chunk.raw_data, output_audio_codec)
+            assert output_audio_codec == "flac"
+            segment_flac_bytes = EncodeFlacFromRawPipe(chunk.raw_data)
             segmented_audio["audio"].append(segment_flac_bytes)
         output_array.append(segmented_audio)
     audio_segment_names_series = create_audio_segment_names_udf.func(
@@ -727,6 +651,7 @@ def create_audio_segments_udf(
 AUDIO_SEGMENT_NAMES_RETURN_TYPE = T.ArrayType(T.StringType())
 
 
+# Change based on keys_256_characters
 @F.pandas_udf(AUDIO_SEGMENT_NAMES_RETURN_TYPE)
 def create_audio_segment_names_udf(
     audio_name_series: pd.Series,
@@ -744,7 +669,9 @@ def create_audio_segment_names_udf(
     ):
         audio_segment_names.append([])
         for i in range(num_aligned_utterances):
-            audio_segment_names[-1].append(f"{audio_name}_{i:05d}.{suffix}")
+            name = f"{audio_name}_{i:05d}.{suffix}"
+            assert len(name) < 256, name
+            audio_segment_names[-1].append(name)
     return pd.Series(audio_segment_names)
 
 

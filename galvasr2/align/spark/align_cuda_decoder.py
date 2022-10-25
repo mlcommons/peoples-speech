@@ -4,6 +4,7 @@ New forced alignment systemusing kaldi's cudadecoder implementation.
 
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
+import glob
 import shlex
 import subprocess
 import logging
@@ -18,8 +19,8 @@ import pandas as pd
 import pyspark
 import pyspark.sql.functions as F
 import pyspark.sql.types as T
-import tensorflow as tf
 
+import galvasr2
 from galvasr2.align.spark.align_lib import (
     create_audio_segments_udf,
     create_audio_segment_names_udf,
@@ -35,11 +36,12 @@ from galvasr2.align.spark.align_lib import (
 from galvasr2.align.spark.dsalign_lib import prepare_align_udf
 from galvasr2.align.spark.schemas import ARCHIVE_ORG_SCHEMA
 from galvasr2.utils import find_runfiles
-import dsalign_main
+from galvasr2.align import dsalign_main
 
 FLAGS = flags.FLAGS
 
 flags.DEFINE_integer("stage", 2, "")
+flags.DEFINE_integer("end_stage", sys.maxsize, "")
 flags.DEFINE_string(
     "input_catalogue",
     "gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS.jsonl.gz",
@@ -83,11 +85,6 @@ flags.DEFINE_integer(
     "min_duration_ms",
     1_000,
     "Aligned utterances shorter than min_duration_ms in length (in milliseconds) will be removed",
-)
-flags.DEFINE_integer(
-    "number_of_shards",
-    1024,
-    "Aligned utterances longer than max_duration_ms in length (in milliseconds) will be removed",
 )
 
 flags.DEFINE_string("license_filter", "", "")
@@ -146,13 +143,18 @@ def main(argv):
         "SC_PHYS_PAGES"
     )  # e.g. 4015976448
     mem_gib = int((mem_bytes / (1024.0**3)) * 0.9)
-    tar_jar = os.path.join(
-        find_runfiles(), "__main__/galvasr2/spark/tar_spark_datasource.jar"
-    )
+    (jar_path,) = galvasr2.__path__
+    jars = ",".join(glob.glob(os.path.join(jar_path, "*.jar")))
+    print("GALVEZ:jars=", jars)
+    os.makedirs("/tmp/spark-events", exist_ok=True)
     spark = (
-        pyspark.sql.SparkSession.builder.master(f"local[{os.cpu_count() - 1}]")
+        pyspark.sql.SparkSession.builder.master(f"local[{os.cpu_count()}]")
         .config("spark.eventLog.enabled", "true")
-        .config("spark.eventLog.dir", "/spark-events")
+        # .config("spark.eventLog.dir", "/spark-events")
+        .config(
+            "spark.hadoop.fs.AbstractFileSystem.gs.impl",
+            "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS",
+        )
         .config("spark.sql.execution.arrow.pyspark.enabled", "true")
         .config(
             "spark.driver.extraJavaOptions",
@@ -163,16 +165,39 @@ def main(argv):
             "-Dio.netty.tryReflectionSetAccessible=true",
         )
         .config("spark.driver.memory", f"{mem_gib}g")
-        .config("spark.history.fs.logDirectory", "/spark-events")
+        # .config("spark.history.fs.logDirectory", "/spark-events")
         .config("spark.sql.execution.arrow.maxRecordsPerBatch", "1")
-        .config("spark.jars", tar_jar)
+        .config("spark.jars", jars)
         .config("spark.local.dir", "/mnt/disks/spark-scratch/")
         .getOrCreate()
     )
-    spark.sparkContext.setLogLevel("INFO")  # "ALL" for very verbose logging
+    # spark.sparkContext.setLogLevel("INFO")  # "ALL" for very verbose logging
     logging.getLogger("py4j").setLevel(logging.ERROR)
 
     catalogue_df = load_audio_id_text_id_mapping(spark, FLAGS.input_catalogue)
+    audio_paths = F.concat(
+        F.lit(FLAGS.input_gcs_path),
+        F.lit("/"),
+        F.col("identifier"),
+        F.lit("/"),
+        F.col("audio_document_id"),
+    )
+    srt_paths = F.concat(
+        F.lit(FLAGS.input_gcs_path),
+        F.lit("/"),
+        F.col("identifier"),
+        F.lit("/"),
+        F.col("text_document_id"),
+    )
+    temp_catalogue_df = catalogue_df.withColumn("audio_paths", audio_paths).withColumn(
+        "srt_paths", srt_paths
+    )
+    # print("GALVEZ:count=", catalogue_df.count())
+    # print("GALVEZ:schema=")
+    temp_catalogue_df.printSchema()
+    temp_catalogue_df.toPandas().to_json(
+        "audio_id_text_id_mapping.json", orient="records", lines=True
+    )
 
     _, licenseurl_df = load_audio_and_text_dfs(spark, FLAGS.input_catalogue)
     licenseurl_df = licenseurl_df.select(
@@ -194,7 +219,7 @@ def main(argv):
         os.makedirs(FLAGS.work_dir, exist_ok=True)
     wav_scp = os.path.join(FLAGS.work_dir, "wav.scp")
     ctm_out_dir = os.path.join(FLAGS.work_dir, "decoder_ctm_dir")
-    if FLAGS.stage <= 0:
+    if FLAGS.stage <= 0 and FLAGS.end_stage >= 0:
         catalogue_df = catalogue_df.cache()
         # catalogue_df.write.mode("overwrite").format("csv").options(header="true").save(key_int_mapping)
         training_sample_rows = catalogue_df.collect()
@@ -223,7 +248,7 @@ def main(argv):
     # Can get 266x RTF with this configuration. Keep it?
     # bath size of 100 and num channels of 100 works just fine
 
-    if FLAGS.stage <= 1:
+    if FLAGS.stage <= 1 and FLAGS.end_stage >= 1:
         if not FLAGS.work_dir.startswith("gs://"):
             os.makedirs(ctm_out_dir, exist_ok=True)
         with TemporaryMountDirectory(
@@ -282,7 +307,7 @@ def main(argv):
             executor.shutdown(wait=True)
 
     alignments_dir = os.path.join(FLAGS.alignments_work_dir, "alignments_json_jul_28")
-    if FLAGS.stage <= 2:
+    if FLAGS.stage <= 2 and FLAGS.end_stage >= 2:
         # TODO: Add options to DSAlign here
         dsalign_args = dsalign_main.parse_args(
             ["--output-wer", "--output-cer"]
@@ -315,6 +340,7 @@ def main(argv):
         transcripts_df = load_transcripts(
             spark, FLAGS.input_gcs_path, training_sample_rows
         )
+        # TODO: Need to replace this with nemo-based text norm...
         transcripts_df = transcripts_df.withColumn(
             "transcript", normalize_english_text_udf(transcripts_df.transcript)
         )
@@ -342,11 +368,14 @@ def main(argv):
 
     manifest_dir = os.path.join(FLAGS.work_dir, "dataset_manifest")
     tars_dir = os.path.join(FLAGS.work_dir, "dataset_tars")
-    if FLAGS.stage <= 3:
+    if FLAGS.stage <= 3 and FLAGS.end_stage >= 3:
         duplicate_data_path = "gs://the-peoples-speech-west-europe/forced-aligner/data_deduplication/data_deduplication_v2_lines.json"
         duplicates_df = spark.read.format("json").load(duplicate_data_path)
 
         alignments_df = spark.read.json(alignments_dir)
+
+        print("GALVEZ:schema=")
+        alignments_df.printSchema()
 
         alignments_df = alignments_df.join(
             duplicates_df,
@@ -354,7 +383,27 @@ def main(argv):
             & (alignments_df.text_document_id == duplicates_df.text_document_id),
             how="anti",
         )
+        alignments_df.printSchema()
+        # TODO: Add anti join with our test set ids.
 
+        test_and_dev_df = spark.read.format("json").load(
+            [
+                "gs://the-peoples-speech-west-europe/forced-aligner/dev_and_test_manifests/dev.json",
+                "gs://the-peoples-speech-west-europe/forced-aligner/dev_and_test_manifests/test.json",
+            ]
+        )
+
+        test_and_dev_df = test_and_dev_df.select(
+            test_and_dev_df.identifier, test_and_dev_df.text_document_id
+        )
+
+        alignments_df = alignments_df.join(
+            test_and_dev_df,
+            on=(alignments_df.identifier == test_and_dev_df.identifier)
+            & (alignments_df.text_document_id == test_and_dev_df.text_document_id),
+            how="anti",
+        )
+        alignments_df.printSchema()
         if FLAGS.license_filter == "":
             pass
         else:
@@ -382,7 +431,7 @@ def main(argv):
             alignments_df = alignments_df.drop(filtered_licenseurl_df.identifier).drop(
                 filtered_licenseurl_df.text_document_id
             )
-
+        alignments_df.printSchema()
         # We would like the number of partitions to be some large multiple
         # of the number of executors. Not every audio file is the same
         # length, so this helps with load balancing.
@@ -493,40 +542,41 @@ def main(argv):
         alignments_audio_df = alignments_df.join(audio_df, audio_paths == audio_df.path)
         # from IPython import embed; embed()
 
-        # Remove "/" so that, if someat untars the tar files, everything will be dumped into one directory
+        # Remove "/" because NeMo dislikes it: https://github.com/NVIDIA/NeMo/issues/4455
         # Remove "." becasue it has special meaning in webdataset format.
         # Remove " " because kaldi keys may not contain " " (this is not striclty necessary, but convenient)
-        name = F.concat(F.col("identifier"), F.lit("/"), F.col("audio_document_id"))
-        # name = F.regexp_replace(name, r"/", "_SLASH_")
-        name = F.regexp_replace(name, r"\.", "_DOT_")
-        name = F.regexp_replace(name, r" ", "_SPACE_")
-        # glob.glob("**/*.flac")
+        key_name = F.concat(F.col("identifier"), F.lit("/"), F.col("audio_document_id"))
+        key_name = F.regexp_replace(key_name, r"/", "_SLASH_")
+        key_name = F.regexp_replace(key_name, r"\.", "_DOT_")
+        key_name = F.regexp_replace(key_name, r" ", "_SPACE_")
 
-        pdf = df.select(name).collect()
-        for name in pdf.name:
-            assert len(name) < 4096
-            for chunk in "/".split(name):
-                assert len(chunk) < 256
-        # name = F.regexp_replace(F.concat(F.col("identifier"),
-        #                                  F.lit("-"),
-        #                                  F.col("audio_document_id")),
-        #                         r"(\.|/)",
-        #                         "_"
-        # )
+        # Each output string is always 64 bytes long
+        # Note that sha256 has no known collisions
+        sha256 = F.sha2(key_name, 256)
 
-        # The name of each thing in the tar file. May not exceed 100 characters in length
-        # substr indexes from 1!
-        # name = name.substr(
-        #     F.length(name) - F.least(F.length(name), F.lit(88)) + 1,
-        #     F.least(F.length(name), F.lit(88))
-        # )
+        key_name_256_char_max = F.concat(key_name.substr(0, 256 - 64 - 20), sha256)
+
+        key_name = F.when(F.length(key_name) < 256 - 20, key_name).otherwise(
+            key_name_256_char_max
+        )
+
+        key_name_rows = alignments_audio_df.select(
+            key_name,
+            alignments_audio_df.identifier,
+            alignments_audio_df.audio_document_id,
+        ).collect()
+        for i, row in enumerate(key_name_rows):
+            row_key_name = row[0]
+            assert len(row_key_name) < 4096, row_key_name
+            # assert len(row_key_name) < 256 - 21, row_key_name
+            assert "/" not in row_key_name, row_key_name
 
         alignments_audio_df = alignments_audio_df.withColumn(
             "aligned_chunks",
             create_audio_segments_udf(
                 alignments_audio_df.content,
                 F.lit("mp3"),
-                name,
+                key_name,
                 alignments_audio_df.alignments.start_ms,
                 alignments_audio_df.alignments.end_ms,
                 F.lit("flac"),
@@ -544,8 +594,7 @@ def main(argv):
             F.struct(
                 alignments_audio_df.alignments.label.alias("label"),
                 create_audio_segment_names_udf(
-                    # Is F.size right here?
-                    name,
+                    key_name,
                     F.size(alignments_audio_df.alignments.start_ms),
                     F.lit("flac"),
                 ).alias("name"),
@@ -558,66 +607,40 @@ def main(argv):
         output_df.write.mode("overwrite").json(manifest_dir)
 
     repartitioned_tars_dir = os.path.join(FLAGS.work_dir, "repartitioned_dataset_tars")
-    tmp_tars_dir = os.path.join(FLAGS.work_dir, "repartitioned_dataset_tmp_dir")
-    if FLAGS.stage <= 4:
+    if FLAGS.stage <= 4 and FLAGS.end_stage >= 4:
         tars_df = spark.read.format("tar").load(tars_dir)  # .limit(100)
         number_of_rows = tars_df.count()
+
+        # This magic number gives us about 100 MiB per tar file.  The
+        # next few lines of code try to give us about 100 MiB per tar
+        # file. However, we will go over this amount if that would
+        # give us more than MAX_FILES_IN_DIRECTORY_IN_GIT_WITH_SLACK
+        # tar files in total, which we cannot add to a git lfs repo.
+        ROWS_PER_TAR_FILE = 335
+        # git allows at most 10,000 files in a directory. Subtract 100
+        # in case someone puts something else in this output
+        # directory.
+        MAX_FILES_IN_DIRECTORY_IN_GIT_WITH_SLACK = 10_000 - 100
+        number_of_tar_files = min(
+            number_of_rows // ROWS_PER_TAR_FILE,
+            MAX_FILES_IN_DIRECTORY_IN_GIT_WITH_SLACK,
+        )
 
         spark2 = spark.newSession()
         spark2.conf.set(
             "spark.sql.execution.rangeExchange.sampleSizePerPartition", number_of_rows
         )
-        spark2.conf.set("spark.sql.files.minPartitionNum", FLAGS.number_of_shards)
-        # tars_df = spark2.read.format("tar").load(tars_dir)#.limit(100)
-
-        # print("GALVEZ:", tars_df.select(F.col("key")).collect())
-        # import sys; sys.exit()
+        spark2.conf.set("spark.sql.files.minPartitionNum", number_of_tar_files)
         tars_df = spark2.read.format("tar").load(tars_dir)  # .limit(100)
-        tars_df = tars_df.repartitionByRange(FLAGS.number_of_shards, F.col("key"))
-        # # May need to write this out to GCS, and then delete it, to prevent different behavior between runs.
-        # # tars_df = tars_df.persist()
-        tars_df.write.mode("overwrite").format("tar").save(tmp_tars_dir)
-        tars_df = spark2.read.format("tar").load(
-            tmp_tars_dir
-        )  # .repartitionByRange()  # coalesce(1024)
-        # counts_df = (
-        #     tars_df.withColumn("partitionId", F.spark_partition_id())
-        #     .groupBy("partitionId")
-        #     .count()
-        # )
-        # num_rows_to_keep = counts_df.select(F.min(F.col("count"))).collect()[0][0]
-        # # Consider doing this in java
-        # def drop_final_rows(rows):
-        #     for _ in range(num_rows_to_keep):
-        #         yield next(rows)
-        #     for _ in rows:
-        #         pass
-        #     return
-
-        # print("GALVEZ:before=", tars_df.rdd.getNumPartitions())
-        # # , preservesPartitioning=True
-        # tars_df = spark2.createDataFrame(
-        #     tars_df.rdd.mapPartitions(drop_final_rows), schema=tars_df.schema
-        # )
-        # print("GALVEZ:after=", tars_df.rdd.getNumPartitions())
-        # import sys
-
-        # sys.stdout.flush()
-        # # Don't actually write this out right now. It doesn't benefit us unless we are doing nemo training in a specific mode.
-        # tars_df.write.mode("overwrite").format("tar").save(repartitioned_tars_dir)
-
-        # manifest_df = spark2.read.json(manifest_dir)
-        # number_of_utterances = manifest_df.select(F.explode(F.col("training_data.name"))).count()
-        # print(f"GALVEZ:number_of_utterances={number_of_utterances}")
-        # utterances_per_shard = number_of_utterances // FLAGS.number_of_shards
-        # repartition_tar_files(os.path.join(tars_dir, "*.tar"), repartitioned_tars_dir, utterances_per_shard)
+        tars_df = tars_df.repartitionByRange(number_of_tar_files, F.col("key"))
+        tars_df.write.mode("overwrite").format("tar").save(repartitioned_tars_dir)
 
     nemo_manifest_dir = os.path.join(FLAGS.work_dir, "dataset_manifest_nemo")
     nemo_single_manifest_dir = os.path.join(
         FLAGS.work_dir, "dataset_manifest_nemo_single"
     )
 
-    if FLAGS.stage <= 5:
+    if FLAGS.stage <= 5 and FLAGS.end_stage >= 5:
         json_df = spark.read.format("json").load(manifest_dir)
         nemo_df = json_df.select(
             F.explode(
@@ -634,13 +657,6 @@ def main(argv):
             (F.col("col.duration_ms").cast(T.DoubleType()) / 1000.0).alias("duration"),
             F.lit(-1).alias("shard_id"),
         )
-        if False:
-            tars_df = spark.read.format("tar").load(repartitioned_tars_dir)
-            tars_df = tars_df.select(tars_df.key)
-            nemo_df = F.broadcast(nemo_df)
-            nemo_df = nemo_df.join(
-                tars_df, F.col("audio_filepath") == F.col("key")
-            ).drop(F.col("key"))
 
         # TODO: Join against tar files that have been made to contain the
         # same number of files to filter out removed files
@@ -652,30 +668,13 @@ def main(argv):
         )
 
     single_manifest_dir = os.path.join(FLAGS.work_dir, "dataset_manifest_single")
-    single_tar_dir = os.path.join(FLAGS.work_dir, "dataset_tars_single")
-    # Create single tar file and single json file
-    if FLAGS.stage <= 6:
+    # Create single json file
+    if FLAGS.stage <= 6 and FLAGS.end_stage >= 6:
         json_df = spark.read.format("json").load(manifest_dir)
         json_df.coalesce(1).write.format("json").mode("overwrite").save(
             single_manifest_dir
         )
 
-        tars_df = spark.read.format("tar").load(tmp_tars_dir)
-        tars_df.coalesce(1).write.format("tar").mode("overwrite").save(single_tar_dir)
-
 
 if __name__ == "__main__":
     app.run(main)
-
-
-# GALVEZ: [
-# Row(key='\x1d\x0c\x00\x00`\x00\x00\x00urts_ca9_04-55168-gov_uscourts_ca9_04-55168_2005-07-11_mp3_0.flac'),
-# Row(key='�\x03\x00\x00`\x00\x00\x00urts_ca9_04-55168-gov_uscourts_ca9_04-55168_2005-07-11_mp3_1.flac'),
-# Row(key='X\x05\x00\x00`\x00\x00\x00urts_ca9_04-55168-gov_uscourts_ca9_04-55168_2005-07-11_mp3_2.flac'),
-# Row(key='�\x01\x00\x00`\x00\x00\x00urts_ca9_04-55168-gov_uscourts_ca9_04-55168_2005-07-11_mp3_3.flac'),
-# Row(key='�\r\x00\x00`\x00\x00\x00urts_ca9_04-55168-gov_uscourts_ca9_04-55168_2005-07-11_mp3_4.flac'),
-# Row(key='�\x03\x00\x00`\x00\x00\x00urts_ca9_04-55168-gov_uscourts_ca9_04-55168_2005-07-11_mp3_5.flac'),
-# Row(key='&\x04\x00\x00`\x00\x00\x00urts_ca9_04-55168-gov_uscourts_ca9_04-55168_2005-07-11_mp3_6.flac'),
-# Row(key='�\x00\x00\x00`\x00\x00\x00urts_ca9_04-55168-gov_uscourts_ca9_04-55168_2005-07-11_mp3_7.flac'),
-# Row(key='�\x07\x00\x00`\x00\x00\x00urts_ca9_04-55168-gov_uscourts_ca9_04-55168_2005-07-11_mp3_8.flac'),
-# Row(key=';\x0e\x00\x00`\x00\x00\x00urts_ca9_04-55168-gov_uscourts_ca9_04-55168_2005-07-11_mp3_9.flac')]

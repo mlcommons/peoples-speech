@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 
 from absl import app
@@ -12,6 +13,7 @@ from galvasr2.align.spark.align_lib import (
     load_transcripts,
     get_audio_seconds_udf,
     infer_language_udf,
+    infer_language_cld2_udf,
 )
 
 FLAGS = flags.FLAGS
@@ -21,12 +23,6 @@ flags.DEFINE_string(
     "gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS.jsonl.gz",
     "Input catalogue. Basically just a dump of archive.org metadata for now.",
 )
-# input_dir and input_gcs_path must be kept in sync!
-flags.DEFINE_string(
-    "input_dir",
-    "/root/the-peoples-speech-west-europe-bucket/archive_org/Mar_7_2021/CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS",
-    "Input directory. Exact format of this is a bit undefined right now and will likely change.",
-)
 flags.DEFINE_string(
     "input_gcs_path",
     "gs://the-peoples-speech-west-europe/archive_org/Mar_7_2021/CC_BY_SA_EXPANDED_LICENSES_FILTERED_ACCESS",
@@ -35,6 +31,10 @@ flags.DEFINE_string(
 
 
 def main(argv):
+    mem_bytes = os.sysconf("SC_PAGE_SIZE") * os.sysconf(
+        "SC_PHYS_PAGES"
+    )  # e.g. 4015976448
+    mem_gib = int((mem_bytes / (1024.0**3)) * 0.9)
     spark = (
         SparkSession.builder.master("local[*]")
         .appName("Hours Per Language")
@@ -50,23 +50,15 @@ def main(argv):
             "spark.executor.extraJavaOptions",
             "-Dio.netty.tryReflectionSetAccessible=true",
         )
-        .config("spark.driver.memory", "40g")
-        .config("spark.executor.memory", "40g")
+        .config("spark.driver.memory", f"{mem_gib}g")
         .config("spark.task.maxFailures", "2")
         .config("spark.rpc.askTimeout", "480s")
         .config("spark.executor.heartbeatInterval", "20000ms")
-        .config("spark.eventLog.enabled", "true")
-        .config("spark.eventLog.dir", "/development/lingvo-source/spark-events")
-        .config(
-            "spark.history.fs.logDirectory", "/development/lingvo-source/spark-events"
-        )
         .getOrCreate()
     )
-    spark.sparkContext.setLogLevel("INFO")  # "ALL" for very verbose logging
+    spark.sparkContext.setLogLevel("WARN")  # "ALL" for very verbose logging
     logging.getLogger("py4j").setLevel(logging.ERROR)
     catalogue_df = load_audio_id_text_id_mapping(spark, FLAGS.input_catalogue)
-    # Uncomment this line if you want to run the entire pipeline in a relatively short amount of time.
-    # training_sample_rows = training_sample_rows[:100]
 
     catalogue_df = catalogue_df.withColumn(
         "duration",
@@ -82,16 +74,15 @@ def main(argv):
         / 60.0
         / 60.0,
     )
-    catalogue_df = catalogue_df.cache()
-    catalogue_df.select(catalogue_df.duration).summary().show()
-    catalogue_df.write.mode("overwrite").format("csv").options(header="true").save(
-        "gs://the-peoples-speech-west-europe/forced-aligner/durations_csv_dump"
-    )
+    # catalogue_df = catalogue_df.cache()
+    # Uncomment this line if you want to run the entire pipeline in a relatively short amount of time.
+    # catalogue_df = catalogue_df.limit(10)
+    catalogue_df = catalogue_df.collect()
     transcripts_df = load_transcripts(spark, FLAGS.input_gcs_path, training_sample_rows)
     languages_df = transcripts_df.select(
         transcripts_df.identifier,
         transcripts_df.text_document_id,
-        infer_language_udf(transcripts_df.transcript).alias("language"),
+        infer_language_cld2_udf(transcripts_df.transcript).alias("language"),
     )
 
     catalogue_df = catalogue_df.join(languages_df, ["identifier", "text_document_id"])

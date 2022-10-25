@@ -7,7 +7,7 @@ import collections
 import numpy as np
 
 from webrtcvad import Vad
-from utils import LimitingPool
+from galvasr2.align.utils import LimitingPool
 
 DEFAULT_RATE = 16000
 DEFAULT_CHANNELS = 1

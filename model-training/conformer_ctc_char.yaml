@@ -24,7 +24,7 @@ model:
     sample_rate: ${model.sample_rate}
     batch_size: 16 # you may increase batch_size if your memory allows
     shuffle: true
-    num_workers: 8
+    num_workers: 1
     pin_memory: true
     trim_silence: false
     max_duration: 16.7 # it is set for LibriSpeech, you may need to update it for your dataset
@@ -33,7 +33,7 @@ model:
     tarred_shard_strategy: "replicate"
 
   validation_ds:
-    manifest_filepath: ???
+    manifest_filepath: null
     sample_rate: ${model.sample_rate}
     labels: ${model.labels}
     batch_size: 1
@@ -149,7 +149,7 @@ trainer:
   resume_from_checkpoint: null # The path to a checkpoint file to continue the training, restores the whole state including the epoch, step, LR schedulers, apex, etc.
   num_sanity_val_steps: 0 # number of steps to perform validation steps for sanity check the validation process before starting the training, setting to 0 disables it
   check_val_every_n_epoch: 1 # number of evaluations on validation every n epochs
-  sync_batchnorm: true
+  sync_batchnorm: false
   checkpoint_callback: false  # Provided by exp_manager
   logger: false  # Provided by exp_manager
 
