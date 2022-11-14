@@ -43,6 +43,13 @@ def download_file(url,file_name):
                 f.write(chunk)
     return file_name
 
+def split_with_last_dot(string):
+    for character in range(len(string)-1,0,-1):
+        if string[character]==".":
+            left = string[:character]
+            right = string[character+1:]
+            return [left,right] 
+
 
 # Download, convert and upload files to GCP
 
@@ -56,12 +63,9 @@ database = {}
 for i in range(1):
     link = previous_json[i]["page"]["title"]
     dots = 0
-    for character in reversed(range(len(link))):
-        if link[character]==".":
-            dots+=1
-        if dots == 2:
-            true_link = link[:character]
-            break
+    left,_ = split_with_last_dot(link)
+    true_link, _ = split_with_last_dot(link)
+    
     
     with open(link+".txt", 'w') as f:
         f.write(previous_json[i]["text"])
@@ -76,11 +80,14 @@ for i in range(1):
             url = pyWikiCommons.get_commons_url("File:" + true_link)
             download_file(url, true_link)
             change_format(true_link)
+            
 #            upload_and_delete_video()
+
             f = open("uploaded.txt", "a")
             f.write(f"{i},{true_link}\n")
             f.close()
         except:
             f = open("error.txt", "a")
             f.write(f"{i},{true_link}\n")
-            f.close()   
+            f.close()
+            
