@@ -17,6 +17,7 @@
 
 from dataclasses import dataclass
 
+
 # The following hyperparameters (except patch_hop_seconds) were used to train YAMNet,
 # so expect some variability in performance if you change these. The patch hop can
 # be changed arbitrarily: a smaller hop should give you more patches from the same

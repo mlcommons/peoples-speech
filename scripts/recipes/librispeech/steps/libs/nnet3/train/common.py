@@ -143,7 +143,6 @@ def get_successful_models(num_models, log_file_pattern, difference_threshold=1.0
 
 
 def get_average_nnet_model(dir, iter, nnets_list, run_opts, get_raw_nnet_from_am=True):
-
     next_iter = iter + 1
     if get_raw_nnet_from_am:
         out_model = """- \| nnet3-am-copy --set-raw-nnet=-  \
@@ -169,7 +168,6 @@ def get_average_nnet_model(dir, iter, nnets_list, run_opts, get_raw_nnet_from_am
 def get_best_nnet_model(
     dir, iter, best_model_index, run_opts, get_raw_nnet_from_am=True
 ):
-
     best_model = "{dir}/{next_iter}.{best_model_index}.raw".format(
         dir=dir, next_iter=iter + 1, best_model_index=best_model_index
     )
@@ -550,7 +548,6 @@ def verify_egs_dir(
 def compute_presoftmax_prior_scale(
     dir, alidir, num_jobs, run_opts, presoftmax_prior_scale_power=-0.25
 ):
-
     # getting the raw pdf count
     common_lib.execute_command(
         """{command} JOB=1:{num_jobs} {dir}/log/acc_pdf.JOB.log \
@@ -707,7 +704,6 @@ def get_learning_rate(
 def should_do_shrinkage(
     iter, model_file, shrink_saturation_threshold, get_raw_nnet_from_am=True
 ):
-
     if iter == 0:
         return True
 

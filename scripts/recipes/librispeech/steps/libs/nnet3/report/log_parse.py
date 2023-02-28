@@ -218,7 +218,6 @@ def fill_nonlin_stats_table_with_regex_result(groups, gate_index, stats_table):
 
 
 def parse_progress_logs_for_nonlinearity_stats(exp_dir):
-
     """Parse progress logs for mean and std stats for non-linearities.
     e.g. for a line that is parsed from progress.*.log:
     exp/nnet3/lstm_self_repair_ld5_sp/log/progress.9.log:component name=Lstm3_i

@@ -15,7 +15,6 @@ def convert_and_filter_topk(output_dir, input_txt, top_k):
     with io.TextIOWrapper(
         io.BufferedWriter(gzip.open(data_lower, "w+")), encoding="utf-8"
     ) as file_out:
-
         # Open the input file either from input.txt or input.txt.gz
         _, file_extension = os.path.splitext(input_txt)
         if file_extension == ".gz":

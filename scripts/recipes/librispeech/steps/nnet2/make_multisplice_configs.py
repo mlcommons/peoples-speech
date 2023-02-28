@@ -8,6 +8,7 @@ from __future__ import division
 from __future__ import print_function
 import re, argparse, sys, math, warnings
 
+
 # returns the set of frame indices required to perform the convolution
 # between sequences with frame indices in x and y
 def get_convolution_index_set(x, y):

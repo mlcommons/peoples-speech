@@ -703,7 +703,6 @@ def get_realign_iters(realign_times, num_iters, num_jobs_initial, num_jobs_final
 
 
 def align(dir, data, lang, run_opts, iter=None, online_ivector_dir=None):
-
     alidir = "{dir}/ali{ali_suffix}".format(
         dir=dir, ali_suffix="_iter_{0}".format(iter) if iter is not None else ""
     )

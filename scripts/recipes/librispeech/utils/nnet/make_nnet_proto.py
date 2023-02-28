@@ -164,6 +164,7 @@ if o.block_softmax_dims:
         sum(map(int, re.split("[,:]", o.block_softmax_dims))) == num_leaves
     )  # posible separators : ',' ':'
 
+
 # Optionaly scale
 def Glorot(dim1, dim2):
     if o.with_glorot:
