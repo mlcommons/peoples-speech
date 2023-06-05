@@ -359,7 +359,6 @@ class NgramCounts(object):
         if args.verbose >= 1:
             num_ngrams_initial = self.GetNumNgrams()
         for n in reversed(list(range(args.no_backoff_ngram_order, args.ngram_order))):
-
             for hist, counts_for_hist in self.counts[n].items():
                 # This loop ensures that if we have an n-gram like (6, 7, 8) -> 9,
                 # then, say, (7, 8) -> 9 and (8) -> 9 exist.

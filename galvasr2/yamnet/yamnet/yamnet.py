@@ -108,7 +108,7 @@ def yamnet(features, params):
         (params.patch_frames, params.patch_bands, 1),
         input_shape=(params.patch_frames, params.patch_bands),
     )(features)
-    for (i, (layer_fun, kernel, stride, filters)) in enumerate(_YAMNET_LAYER_DEFS):
+    for i, (layer_fun, kernel, stride, filters) in enumerate(_YAMNET_LAYER_DEFS):
         net = layer_fun("layer{}".format(i + 1), kernel, stride, filters, params)(net)
     embeddings = layers.GlobalAveragePooling2D()(net)
     logits = layers.Dense(units=params.num_classes, use_bias=True)(embeddings)

@@ -1411,6 +1411,7 @@ class XconfigRes2Block(XconfigLayerBase):
 # An example line using this layer is:
 # channel-average-layer name=channel-average input=Append(2, 4, 6, 8) dim=64
 
+
 # the configuration value 'dim' is the output dimension of this layer.
 # The input dimension is expected to be a multiple of 'dim'.  The output
 # will be the average of 'dim'-sized blocks of the input.

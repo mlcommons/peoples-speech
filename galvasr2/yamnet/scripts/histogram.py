@@ -127,7 +127,6 @@ def config_path():
 
 
 def setup_logging(arguments):
-
     logging_format = "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
 
     if arguments["verbose"]:

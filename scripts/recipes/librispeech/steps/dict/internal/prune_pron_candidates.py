@@ -146,7 +146,7 @@ def PruneProns(
     # have stats, we append them to the "stats" dict, with a zero count.
     for word, entry in stats.iteritems():
         prons_with_stats = set()
-        for (pron, count) in entry:
+        for pron, count in entry:
             prons_with_stats.add(pron)
         for pron in lexicon_g2p[word]:
             if pron not in prons_with_stats:

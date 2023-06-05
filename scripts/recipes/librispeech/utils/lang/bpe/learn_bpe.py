@@ -105,7 +105,6 @@ def update_pair_statistics(pair, changed, stats, indices):
     first, second = pair
     new_pair = first + second
     for j, word, old_word, freq in changed:
-
         # find all instances of pair, and update frequency/indices around it
         i = 0
         while True:
@@ -266,7 +265,6 @@ def main(infile, outfile, num_symbols, min_frequency=2, verbose=False, is_dict=F
 
 
 if __name__ == "__main__":
-
     # python 2/3 compatibility
     if sys.version_info < (3, 0):
         sys.stderr = codecs.getwriter("UTF-8")(sys.stderr)

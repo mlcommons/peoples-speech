@@ -217,7 +217,6 @@ def generate_acc_logprob_plots(
     latex_report=None,
     output_name="output",
 ):
-
     assert start_iter >= 1
 
     if plot:
@@ -292,6 +291,7 @@ if g_plot:
     extra = Rectangle(
         (0, 0), 1, 1, facecolor="w", fill=False, edgecolor="none", linewidth=0
     )
+
 
 # This function is used to insert a column to the legend, the column_index is 1-based
 def insert_a_column_legend(
@@ -996,7 +996,7 @@ def generate_plots(
     else:
         latex_report = None
 
-    for (output_name, objective_type) in output_names:
+    for output_name, objective_type in output_names:
         if objective_type == "linear":
             logger.info("Generating accuracy plots for '%s'", output_name)
             generate_acc_logprob_plots(
