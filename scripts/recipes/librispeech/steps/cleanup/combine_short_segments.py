@@ -133,7 +133,6 @@ def GetCombinedUttIndexRange(utt_index, utts, utt_durs, minimum_duration):
     cur_utt_dur = utt_durs[utts[utt_index]]
 
     while num_remaining_segments > 0:
-
         left_utt_dur = 0
         if left_index >= 0:
             left_utt_dur = utt_durs[utts[left_index]]
@@ -267,7 +266,6 @@ def CombineSegments(input_dir, output_dir, minimum_duration):
     speakers = spk2utt.keys()
     speakers.sort()
     for speaker in speakers:
-
         utts = spk2utt[speaker]  # this is an assignment of the reference
         # In WriteCombinedDirFiles the values of spk2utt will have the list
         # of combined utts which will be used as reference

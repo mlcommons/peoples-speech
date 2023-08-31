@@ -57,6 +57,7 @@ except:
         )
     )
 
+
 # This processes one group of input lines; 'group_of_lines' is
 # an array of lines of input integerized text, e.g.
 # [ 'utt1 67 89 432', 'utt2 89 48 62' ]

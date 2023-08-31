@@ -84,6 +84,7 @@ if args.seconds_per_spk_max > 0:
     except Exception as e:
         sys.exit("modify_speaker_info.py: problem reading utt2dur info: " + str(e))
 
+
 # splits a list of utts into a list of lists, based on constraints from the
 # command line args.  Note: the last list will tend to be shorter than the others,
 # we make no attempt to fix this.
