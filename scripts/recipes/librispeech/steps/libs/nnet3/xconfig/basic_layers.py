@@ -335,39 +335,32 @@ class XconfigInputLayer(XconfigLayerBase):
     """
 
     def __init__(self, first_token, key_to_value, prev_names=None):
-
         assert first_token == "input"
         XconfigLayerBase.__init__(self, first_token, key_to_value, prev_names)
 
     def set_default_configs(self):
-
         self.config = {"dim": -1}
 
     def check_configs(self):
-
         if self.config["dim"] <= 0:
             raise RuntimeError(
                 "Dimension of input-layer '{0}'" "should be positive.".format(self.name)
             )
 
     def get_input_descriptor_names(self):
-
         return []  # there is no 'input' field in self.config.
 
     def output_name(self, auxiliary_outputs=None):
-
         # there are no auxiliary outputs as this layer will just pass the input
         assert auxiliary_outputs is None
         return self.name
 
     def output_dim(self, auxiliary_outputs=None):
-
         # there are no auxiliary outputs as this layer will just pass the input
         assert auxiliary_outputs is None
         return self.config["dim"]
 
     def get_full_config(self):
-
         # unlike other layers the input layers need to be printed in
         # 'init.config' (which initializes the neural network prior to the LDA)
         ans = []
@@ -399,12 +392,10 @@ class XconfigTrivialOutputLayer(XconfigLayerBase):
     """
 
     def __init__(self, first_token, key_to_value, prev_names=None):
-
         assert first_token == "output"
         XconfigLayerBase.__init__(self, first_token, key_to_value, prev_names)
 
     def set_default_configs(self):
-
         # note: self.config['input'] is a descriptor, '[-1]' means output
         # the most recent layer.
         self.config = {
@@ -415,7 +406,6 @@ class XconfigTrivialOutputLayer(XconfigLayerBase):
         }
 
     def check_configs(self):
-
         if (
             self.config["objective-type"] != "linear"
             and self.config["objective-type"] != "quadratic"
@@ -427,20 +417,17 @@ class XconfigTrivialOutputLayer(XconfigLayerBase):
             )
 
     def output_name(self, auxiliary_outputs=None):
-
         # there are no auxiliary outputs as this layer will just pass the output
         # of the previous layer
         assert auxiliary_outputs is None
         return self.name
 
     def output_dim(self, auxiliary_outputs=None):
-
         assert auxiliary_outputs is None
         # note: each value of self.descriptors is (descriptor, dim, normalized-string, output-string).
         return self.descriptors["input"]["dim"]
 
     def get_full_config(self):
-
         # the input layers need to be printed in 'init.config' (which
         # initializes the neural network prior to the LDA), in 'ref.config',
         # which is a version of the config file used for getting left and right
@@ -515,12 +502,10 @@ class XconfigOutputLayer(XconfigLayerBase):
     """
 
     def __init__(self, first_token, key_to_value, prev_names=None):
-
         assert first_token == "output-layer"
         XconfigLayerBase.__init__(self, first_token, key_to_value, prev_names)
 
     def set_default_configs(self):
-
         # note: self.config['input'] is a descriptor, '[-1]' means output
         # the most recent layer.
         self.config = {
@@ -551,7 +536,6 @@ class XconfigOutputLayer(XconfigLayerBase):
         }
 
     def check_configs(self):
-
         if self.config["dim"] <= -1:
             raise RuntimeError(
                 "In output-layer, dim has invalid value {0}"
@@ -576,7 +560,6 @@ class XconfigOutputLayer(XconfigLayerBase):
             )
 
     def auxiliary_outputs(self):
-
         auxiliary_outputs = ["affine"]
         if self.config["include-log-softmax"]:
             auxiliary_outputs.append("log-softmax")
@@ -584,7 +567,6 @@ class XconfigOutputLayer(XconfigLayerBase):
         return auxiliary_outputs
 
     def output_name(self, auxiliary_output=None):
-
         if auxiliary_output is None:
             # Note: nodes of type output-node in nnet3 may not be accessed in
             # Descriptors, so calling this with auxiliary_outputs=None doesn't
@@ -601,7 +583,6 @@ class XconfigOutputLayer(XconfigLayerBase):
             )
 
     def output_dim(self, auxiliary_output=None):
-
         if auxiliary_output is None:
             # Note: nodes of type output-node in nnet3 may not be accessed in
             # Descriptors, so calling this with auxiliary_outputs=None doesn't
@@ -623,7 +604,6 @@ class XconfigOutputLayer(XconfigLayerBase):
         return ans
 
     def _generate_config(self):
-
         configs = []
 
         # note: each value of self.descriptors is (descriptor, dim,
@@ -776,7 +756,6 @@ class XconfigBasicLayer(XconfigLayerBase):
         XconfigLayerBase.__init__(self, first_token, key_to_value, prev_names)
 
     def set_default_configs(self):
-
         # note: self.config['input'] is a descriptor, '[-1]' means output
         # the most recent layer.
         self.config = {
@@ -1345,7 +1324,6 @@ class XconfigIdctLayer(XconfigLayerBase):
         return ans
 
     def _generate_config(self):
-
         # note: each value of self.descriptors is (descriptor, dim,
         # normalized-string, output-string).
         # by 'descriptor_final_string' we mean a string that can appear in
@@ -1398,7 +1376,6 @@ class XconfigExistingLayer(XconfigLayerBase):
     """
 
     def __init__(self, first_token, key_to_value, prev_names=None):
-
         assert first_token == "existing"
         XconfigLayerBase.__init__(self, first_token, key_to_value, prev_names)
 

@@ -79,7 +79,7 @@ def write_position_dependent_lexicon(lexiconp, separator):
     So the suffix_list is initialized with all _I and we only replace the first and last phone suffix when
     dealing with different cases when necessary.
     """
-    for (word, prob, phones) in lexiconp:
+    for word, prob, phones in lexiconp:
         phones_length = len(phones)
 
         # suffix_list is initialized by all "_I"s.

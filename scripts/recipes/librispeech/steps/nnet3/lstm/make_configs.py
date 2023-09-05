@@ -380,7 +380,6 @@ def MakeConfigs(
     max_change_per_component,
     max_change_per_component_final,
 ):
-
     config_lines = {"components": [], "component-nodes": []}
 
     config_files = {}

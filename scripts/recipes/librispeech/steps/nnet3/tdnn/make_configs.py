@@ -556,7 +556,6 @@ def MakeConfigs(
     max_change_per_component_final,
     objective_type,
 ):
-
     parsed_splice_output = ParseSpliceString(splice_indexes_string.strip())
 
     left_context = parsed_splice_output["left_context"]

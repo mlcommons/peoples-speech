@@ -201,6 +201,7 @@ def convert_value_to_type(key, dest_type, string_value):
 # they are interpreted as Offset(prev_layer, -3) where 'prev_layer'
 # is the previous layer in the config file.
 
+
 # Also, in any place a raw input/layer/output name can appear, we accept things
 # like [-1] meaning the previous input/layer/output's name, or [-2] meaning the
 # last-but-one input/layer/output, and so on.

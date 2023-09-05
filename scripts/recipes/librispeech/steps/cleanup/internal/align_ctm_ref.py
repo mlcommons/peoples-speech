@@ -530,7 +530,7 @@ def get_ctm_edits(
     # current_time is the end of the last ctm segment we processesed.
     current_time = ctm_array[0][0] if ctm_len > 0 else 0.0
 
-    for (ref_word, hyp_word, ref_prev_i, hyp_prev_i, ref_i, hyp_i) in alignment_output:
+    for ref_word, hyp_word, ref_prev_i, hyp_prev_i, ref_i, hyp_i in alignment_output:
         try:
             ctm_pos = hyp_prev_i
             # This is true because we cannot have errors at the end because

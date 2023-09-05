@@ -186,7 +186,8 @@ class Interleaved:
 class LimitingPool:
     """Limits unbound ahead-processing of multiprocessing.Pool's imap method
     before items get consumed by the iteration caller.
-    This prevents OOM issues in situations where items represent larger memory allocations."""
+    This prevents OOM issues in situations where items represent larger memory allocations.
+    """
 
     def __init__(self, processes=None, limit_factor=2, sleeping_for=0.1):
         self.processes = os.cpu_count() if processes is None else processes
