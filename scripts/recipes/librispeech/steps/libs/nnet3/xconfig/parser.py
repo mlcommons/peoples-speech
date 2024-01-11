@@ -89,6 +89,7 @@ config_to_layer = {
     "delta-layer": xlayers.XconfigDeltaLayer,
 }
 
+
 # Turn a config line and a list of previous layers into
 # either an object representing that line of the config file; or None
 # if the line was empty after removing comments.

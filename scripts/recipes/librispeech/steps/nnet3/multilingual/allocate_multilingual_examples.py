@@ -60,7 +60,6 @@ logger.info("Start generating multilingual examples")
 
 
 def get_args():
-
     parser = argparse.ArgumentParser(
         description=""" This script generates examples for multilingual training
         of neural network by producing 3 sets of primary files

@@ -82,7 +82,6 @@ def run_inference(config):
 
 
 def get_dataset(config):
-
     logger.debug("Getting file paths")
     files, filenames = list_files(config["input_path"], config)
 
@@ -237,9 +236,7 @@ def download(url, path):
 
 
 def run_model_on_dataset(yamnet, classes, params, dataset, filenames, config):
-
     with jsonlines.open(config["output_path"], mode="w") as writer:
-
         for batch, filename in zip(dataset, filenames):
             logger.debug(filename)
             items = split_into_items(batch, config)
@@ -295,7 +292,6 @@ def print_results(writer, filename, results, yamnet_classes, index, config):
 
 
 def run_model_on_batch(yamnet, classes, params, pair):
-
     batch, sr = pair
 
     waveform = batch / 32768.0  # Convert to [-1.0, +1.0]
@@ -339,7 +335,6 @@ def config_path():
 
 
 def setup_logging(arguments):
-
     logging_format = "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
 
     if arguments["verbose"]:

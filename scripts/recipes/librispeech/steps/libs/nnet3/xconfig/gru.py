@@ -13,6 +13,7 @@ import re
 import sys
 from libs.nnet3.xconfig.basic_layers import XconfigLayerBase
 
+
 # This class is for lines like
 #   'gru-layer name=gru1 input=[-1] delay=-3'
 # It generates an GRU sub-graph without output projections.
@@ -91,7 +92,6 @@ class XconfigGruLayer(XconfigLayerBase):
 
     # convenience function to generate the GRU config
     def generate_gru_config(self):
-
         # assign some variables to reduce verbosity
         name = self.name
         # in the below code we will just call descriptor_strings as descriptors for conciseness
@@ -397,7 +397,6 @@ class XconfigPgruLayer(XconfigLayerBase):
 
     # convenience function to generate the PGRU config
     def generate_pgru_config(self):
-
         # assign some variables to reduce verbosity
         name = self.name
         # in the below code we will just call descriptor_strings as descriptors for conciseness
@@ -736,7 +735,6 @@ class XconfigNormPgruLayer(XconfigLayerBase):
 
     # convenience function to generate the Norm-PGRU config
     def generate_pgru_config(self):
-
         # assign some variables to reduce verbosity
         name = self.name
         # in the below code we will just call descriptor_strings as descriptors for conciseness
@@ -1125,7 +1123,6 @@ class XconfigOpgruLayer(XconfigLayerBase):
 
     # convenience function to generate the OPGRU config
     def generate_pgru_config(self):
-
         # assign some variables to reduce verbosity
         name = self.name
         # in the below code we will just call descriptor_strings as descriptors for conciseness
@@ -1336,6 +1333,7 @@ class XconfigOpgruLayer(XconfigLayerBase):
 # Different from the vanilla OPGRU, the NormOPGRU uses batchnorm in the forward direction
 # and renorm in the recurrence.
 
+
 # The output dimension of the layer may be specified via 'cell-dim=xxx', but if not specified,
 # the dimension defaults to the same as the input.
 # See other configuration values below.
@@ -1475,7 +1473,6 @@ class XconfigNormOpgruLayer(XconfigLayerBase):
 
     # convenience function to generate the Norm-OPGRU config
     def generate_pgru_config(self):
-
         # assign some variables to reduce verbosity
         name = self.name
         # in the below code we will just call descriptor_strings as descriptors for conciseness
@@ -1841,7 +1838,6 @@ class XconfigFastGruLayer(XconfigLayerBase):
 
     # convenience function to generate the GRU config
     def generate_gru_config(self):
-
         # assign some variables to reduce verbosity
         name = self.name
         # in the below code we will just call descriptor_strings as descriptors for conciseness
@@ -2123,7 +2119,6 @@ class XconfigFastPgruLayer(XconfigLayerBase):
 
     # convenience function to generate the PGRU config
     def generate_pgru_config(self):
-
         # assign some variables to reduce verbosity
         name = self.name
         # in the below code we will just call descriptor_strings as descriptors for conciseness
@@ -2299,6 +2294,7 @@ class XconfigFastPgruLayer(XconfigLayerBase):
 # Different from the vanilla PGRU, the NormPGRU uses batchnorm in the forward direction
 # and renorm in the recurrence.
 
+
 # The output dimension of the layer may be specified via 'cell-dim=xxx', but if not specified,
 # the dimension defaults to the same as the input.
 # See other configuration values below.
@@ -2444,7 +2440,6 @@ class XconfigFastNormPgruLayer(XconfigLayerBase):
 
     # convenience function to generate the Norm-PGRU config
     def generate_pgru_config(self):
-
         # assign some variables to reduce verbosity
         name = self.name
         # in the below code we will just call descriptor_strings as descriptors for conciseness
@@ -2824,7 +2819,6 @@ class XconfigFastOpgruLayer(XconfigLayerBase):
 
     # convenience function to generate the OPGRU config
     def generate_pgru_config(self):
-
         # assign some variables to reduce verbosity
         name = self.name
         # in the below code we will just call descriptor_strings as descriptors for conciseness
@@ -3013,6 +3007,7 @@ class XconfigFastOpgruLayer(XconfigLayerBase):
 # Different from the vanilla OPGRU, the NormOPGRU uses batchnorm in the forward direction
 # and renorm in the recurrence.
 
+
 # The output dimension of the layer may be specified via 'cell-dim=xxx', but if not specified,
 # the dimension defaults to the same as the input.
 # See other configuration values below.
@@ -3158,7 +3153,6 @@ class XconfigFastNormOpgruLayer(XconfigLayerBase):
 
     # convenience function to generate the Norm-OPGRU config
     def generate_pgru_config(self):
-
         # assign some variables to reduce verbosity
         name = self.name
         # in the below code we will just call descriptor_strings as descriptors for conciseness

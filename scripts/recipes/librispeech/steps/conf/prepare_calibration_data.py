@@ -85,7 +85,7 @@ other_feats = {
 # Build the targets,
 if o.conf_targets != "":
     with open(o.conf_targets, "w") as f:
-        for (utt, chan, beg, dur, wrd_id, conf, score_tag) in ctm:
+        for utt, chan, beg, dur, wrd_id, conf, score_tag in ctm:
             # Skip the words we don't know if being correct,
             if score_tag == "U":
                 continue
@@ -124,7 +124,7 @@ wrd_cat_num = max(wrd_to_cat.values()) + 1
 
 # Build the input features,
 with open(o.conf_feats, "w") as f:
-    for (utt, chan, beg, dur, wrd_id, conf, score_tag) in ctm:
+    for utt, chan, beg, dur, wrd_id, conf, score_tag in ctm:
         # Build the key, same as previously,
         key = "%s^%s^%s^%s^%s,%s,%s" % (utt, chan, beg, dur, wrd_id, conf, score_tag)
 

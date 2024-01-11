@@ -256,7 +256,7 @@ def write_fst_no_silence(lexicon, nonterminals=None, left_context_phones=None):
 
     loop_state = 0
     next_state = 1  # the next un-allocated state, will be incremented as we go.
-    for (word, pronprob, pron) in lexicon:
+    for word, pronprob, pron in lexicon:
         cost = -math.log(pronprob)
         cur_state = loop_state
         for i in range(len(pron) - 1):
@@ -367,7 +367,7 @@ def write_fst_with_silence(
             )
         )
 
-    for (word, pronprob, pron) in lexicon:
+    for word, pronprob, pron in lexicon:
         pron_cost = -math.log(pronprob)
         cur_state = loop_state
         for i in range(len(pron) - 1):

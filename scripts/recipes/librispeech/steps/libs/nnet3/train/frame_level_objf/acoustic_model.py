@@ -33,7 +33,6 @@ def generate_egs(
     egs_opts=None,
     cmvn_opts=None,
 ):
-
     """Wrapper for calling steps/nnet3/get_egs.sh
 
     Generates targets from alignment directory 'alidir', which contains
