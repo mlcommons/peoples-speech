@@ -237,7 +237,7 @@ def OneEMIter(args, word, stats, prons, pron_probs, debug=False):
     for i in range(len(pron_probs)):
         pron_probs[i] = pron_probs[i] / s
     log_like = 0.0
-    for (utt, start_frame) in stats[word]:
+    for utt, start_frame in stats[word]:
         prob = []
         soft_counts = []
         for i in range(len(prons[word])):

@@ -651,7 +651,6 @@ def compute_train_cv_probabilities(
 
 
 def compute_progress(dir, iter, run_opts):
-
     prev_model = "{0}/{1}.mdl".format(dir, iter - 1)
     model = "{0}/{1}.mdl".format(dir, iter)
 

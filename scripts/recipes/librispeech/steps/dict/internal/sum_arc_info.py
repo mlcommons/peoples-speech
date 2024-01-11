@@ -133,7 +133,7 @@ def Main():
         if phones not in prons[word]:
             prons[word].append(phones)
 
-    for (word, utt) in stats:
+    for word, utt in stats:
         count_sum = 0.0
         counts = dict()
         for phones in stats[(word, utt)]:

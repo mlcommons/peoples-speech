@@ -123,7 +123,6 @@ class XconfigLstmLayer(XconfigLayerBase):
 
     # convenience function to generate the LSTM config
     def _generate_lstm_config(self):
-
         # assign some variables to reduce verbosity
         name = self.name
         # in the below code we will just call descriptor_strings as descriptors for conciseness
@@ -530,7 +529,6 @@ class XconfigLstmpLayer(XconfigLayerBase):
 
     # convenience function to generate the LSTM config
     def _generate_lstm_config(self):
-
         # assign some variables to reduce verbosity
         name = self.name
         # in the below code we will just call descriptor_strings as descriptors for conciseness
@@ -995,7 +993,6 @@ class XconfigFastLstmLayer(XconfigLayerBase):
 
     # convenience function to generate the LSTM config
     def _generate_lstm_config(self):
-
         # assign some variables to reduce verbosity
         name = self.name
         # in the below code we will just call descriptor_strings as descriptors for conciseness
@@ -1138,6 +1135,7 @@ class XconfigFastLstmLayer(XconfigLayerBase):
 # And the LSTM is followed by a batchnorm component (this is by default; it's not
 # part of the layer name, like lstmb-batchnorm-layer).
 
+
 #
 # The output dimension of the layer may be specified via 'cell-dim=xxx', but if not specified,
 # the dimension defaults to the same as the input.
@@ -1233,7 +1231,6 @@ class XconfigLstmbLayer(XconfigLayerBase):
 
     # convenience function to generate the LSTM config
     def _generate_lstm_config(self):
-
         # assign some variables to reduce verbosity
         name = self.name
         # in the below code we will just call descriptor_strings as descriptors for conciseness

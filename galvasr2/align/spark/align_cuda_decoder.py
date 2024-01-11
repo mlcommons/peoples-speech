@@ -259,7 +259,6 @@ def main(argv):
             ],
             unmount_cmd=["fusermount", "-u"],
         ) as temp_dir_name:
-
             posix_ctm_out_dir = re.sub(
                 r"^{0}".format(FLAGS.input_gcs_bucket), temp_dir_name, ctm_out_dir
             )

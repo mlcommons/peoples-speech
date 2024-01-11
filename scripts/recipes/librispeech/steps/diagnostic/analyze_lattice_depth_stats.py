@@ -169,7 +169,6 @@ print(
 for phone, depths in sorted(
     phone_depth_counts.items(), key=lambda x: -sum(x[1].values())
 ):
-
     frequency_percentage = sum(depths.values()) * 100.0 / total_frames
     if frequency_percentage < args.frequency_cutoff_percentage:
         continue

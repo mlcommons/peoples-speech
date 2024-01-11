@@ -535,7 +535,6 @@ def train(args, run_opts):
     )
 
     for iter in range(num_iters):
-
         percent = num_archives_processed * 100.0 / num_archives_to_process
         epoch = num_archives_processed * args.num_epochs / num_archives_to_process
 

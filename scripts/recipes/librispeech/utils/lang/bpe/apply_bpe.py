@@ -28,7 +28,6 @@ argparse.open = open
 
 class BPE(object):
     def __init__(self, codes, merges=-1, separator="@@", vocab=None, glossaries=None):
-
         codes.seek(0)
 
         # check version information
@@ -387,7 +386,6 @@ def isolate_glossary(word, glossary):
 
 
 if __name__ == "__main__":
-
     # python 2/3 compatibility
     if sys.version_info < (3, 0):
         sys.stderr = codecs.getwriter("UTF-8")(sys.stderr)

@@ -41,7 +41,7 @@ with open(prf_file) as f:
 
 # Parse the prf records into dictionary,
 prf_dict = dict()
-for (f, c, t, e) in prf:
+for f, c, t, e in prf:
     t_pos = 0  # position in the 't' string,
     while t_pos < len(t):
         t1 = t[t_pos:].split(" ", 1)[0]  # get 1st token at 't_pos'

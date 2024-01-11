@@ -8,6 +8,7 @@ import argparse
 import math
 import sys
 
+
 # see get_args() below for usage mesage
 def get_args():
     parser = argparse.ArgumentParser(
@@ -150,7 +151,7 @@ def write_fst_no_silence(lexicon, position_dependent, separator):
         word_internal_state = next_state
         next_state += 1
 
-    for (word, pron_prob, phones) in lexicon:
+    for word, pron_prob, phones in lexicon:
         pron_cost = 0.0  # do not support pron_prob
         phones_len = len(phones)
 
@@ -269,7 +270,7 @@ def write_fst_with_silence(
         word_internal_state = next_state
         next_state += 1
 
-    for (word, pron_prob, phones) in lexicon:
+    for word, pron_prob, phones in lexicon:
         pron_cost = 0.0  # do not support pron_prob
         phones_len = len(phones)
 
@@ -318,7 +319,7 @@ def write_fst_with_silence(
         phone = phones[i] if i >= 0 else "<eps>"
         word = word if i <= 0 else "<eps>"
         cost = pron_cost if i <= 0 else 0.0
-        for (end_state, end_cost) in zip(end_state_list, end_cost_list):
+        for end_state, end_cost in zip(end_state_list, end_cost_list):
             print_arc(current_state, end_state, phone, word, cost + end_cost)
 
     # set the final state
